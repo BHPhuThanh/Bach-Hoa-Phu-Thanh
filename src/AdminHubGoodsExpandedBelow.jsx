@@ -1,0 +1,713 @@
+﻿import { getComboBom } from './comboCatalog.js'
+import { findVariantContext } from './inboundFormUnitHelpers.js'
+import { sortVariantsSmallestUnitFirst } from './goodsUnitSetupModalLogic.js'
+import { normalizeCatalogUnitLabel } from './productUnits.js'
+
+/** Chi tiết hàng — hiển thị trong ô danh sách ảo (cùng markup tab Hàng hóa). */
+export function AdminHubGoodsExpandedBelow(props) {
+  const {
+    GOODS_DETAIL_VIEW_TONKHO,
+    GOODS_DETAIL_VIEW_LICHSU,
+    GOODS_DETAIL_VIEW_COMBO,
+    goodsDetailShelfTab,
+    setGoodsDetailShelfTab,
+    discardGoodsDetailDraft,
+    saveGoodsDetail,
+    v,
+    d,
+    goodsDetailCtx,
+    goodsDetailSelectedVid,
+    setGoodsDetailSelectedVid,
+    setGoodsDetailDraft,
+    buildGoodsDetailDraft,
+    copyGoodsDetail,
+    deleteGoodsDetailVariant,
+    formatMoneyDraftVi,
+    goodsDetailStockLedgerRows,
+    getStockLedgerDetailAbsoluteUrl,
+    openGoodsUnitModal,
+    catalogList,
+    isComboDetail,
+    comboDetailProduct,
+    onEditComboProduct,
+  } = props
+  return (
+    <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
+                                <div className="ah-goods-detail-panel ah-goods-detail-panel--card">
+                                  <div className="ah-goods-detail-card">
+                                    <div className="ah-goods-detail-sticky-header">
+                                      <div
+                                        className="ah-solo-product-tabs-bar ah-hub-tabstrip--dark ah-goods-detail-tabs-bar"
+                                        aria-label="Điều hướng chi tiết hàng"
+                                      >
+                                        <div className="ah-solo-product-tabstrip" role="tablist">
+                                          <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={goodsDetailShelfTab === GOODS_DETAIL_VIEW_TONKHO}
+                                            className={`ah-solo-product-tab${
+                                              goodsDetailShelfTab === GOODS_DETAIL_VIEW_TONKHO ? ' is-active' : ''
+                                            }`}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+                                            }}
+                                          >
+                                            Mô tả
+                                          </button>
+                                          <button
+                                            type="button"
+                                            role="tab"
+                                            aria-selected={goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU}
+                                            className={`ah-solo-product-tab${
+                                              goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU ? ' is-active' : ''
+                                            }`}
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_LICHSU)
+                                            }}
+                                          >
+                                            Lịch sử kho
+                                          </button>
+                                          {isComboDetail ? (
+                                            <button
+                                              type="button"
+                                              role="tab"
+                                              aria-selected={goodsDetailShelfTab === GOODS_DETAIL_VIEW_COMBO}
+                                              className={`ah-solo-product-tab${
+                                                goodsDetailShelfTab === GOODS_DETAIL_VIEW_COMBO ? ' is-active' : ''
+                                              }`}
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_COMBO)
+                                              }}
+                                            >
+                                              Thành phần combo
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                        <div
+                                          className="ah-solo-product-primary-tools ah-hub-tabstrip-tools--dark"
+                                          role="toolbar"
+                                          aria-label="Lưu và hủy thay đổi"
+                                        >
+                                          <button
+                                            type="button"
+                                            className="ah-solo-product-icon-btn ah-solo-product-icon-btn--discard"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              discardGoodsDetailDraft()
+                                            }}
+                                            title="Hủy thay đổi (khôi phục từ danh mục)"
+                                          >
+                                            <svg className="ah-solo-product-tool-svg" viewBox="0 0 24 24" aria-hidden>
+                                              <path
+                                                fill="currentColor"
+                                                d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                                              />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              saveGoodsDetail()
+                                            }}
+                                            title="Lưu"
+                                          >
+                                            <svg
+                                              width="22"
+                                              height="22"
+                                              viewBox="0 0 24 24"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="2.2"
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              aria-hidden
+                                            >
+                                              <path d="M20 6L9 17l-5-5" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div className="ah-goods-card-name-block">
+                                        <div className="ah-goods-card-top-split">
+                                          <div
+                                            className="ah-goods-card-photo"
+                                            aria-label="Ảnh sản phẩm (placeholder)"
+                                          />
+                                          <div className="ah-goods-card-title-row">
+                                            <div className="ah-goods-card-title-field">
+                                              <label
+                                                className="ah-goods-card-lbl ah-goods-card-lbl--title"
+                                                htmlFor={`gd-name-${v.id}`}
+                                              >
+                                                Tên sản phẩm
+                                              </label>
+                                              <input
+                                                id={`gd-name-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-title-input"
+                                                value={d?.name ?? ''}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) => {
+                                                    const base = x ?? buildGoodsDetailDraft(v)
+                                                    return base ? { ...base, name: e.target.value } : null
+                                                  })
+                                                }
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                aria-label="Tên sản phẩm"
+                                              />
+                                            </div>
+                                            <div
+                                              className="ah-goods-card-tools"
+                                              role="toolbar"
+                                              aria-label="Thao tác"
+                                            >
+                                              <button
+                                                type="button"
+                                                className="ah-goods-detail-icon-btn"
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  copyGoodsDetail()
+                                                }}
+                                                title="Sao chép"
+                                                aria-label="Sao chép"
+                                              >
+                                                <svg
+                                                  width="20"
+                                                  height="20"
+                                                  viewBox="0 0 24 24"
+                                                  fill="none"
+                                                  stroke="currentColor"
+                                                  strokeWidth="1.75"
+                                                  strokeLinecap="round"
+                                                  strokeLinejoin="round"
+                                                  aria-hidden
+                                                >
+                                                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                                </svg>
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="ah-goods-detail-icon-btn ah-goods-detail-icon-btn--danger"
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  deleteGoodsDetailVariant()
+                                                }}
+                                                title="Xóa"
+                                                aria-label="Xóa"
+                                              >
+                                                <svg
+                                                  width="20"
+                                                  height="20"
+                                                  viewBox="0 0 24 24"
+                                                  fill="none"
+                                                  stroke="currentColor"
+                                                  strokeWidth="1.75"
+                                                  strokeLinecap="round"
+                                                  strokeLinejoin="round"
+                                                  aria-hidden
+                                                >
+                                                  <path d="M3 6h18" />
+                                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                                  <path d="M10 11v6M14 11v6" />
+                                                </svg>
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {goodsDetailShelfTab === GOODS_DETAIL_VIEW_TONKHO && (
+                                      <>
+                                      {goodsDetailCtx.variants.length > 1 &&
+                                        (() => {
+                                          const ordered = sortVariantsSmallestUnitFirst(
+                                            goodsDetailCtx.variants
+                                          )
+                                          const baseV = ordered[0]
+                                          const rest = ordered.slice(1)
+                                          return (
+                                            <div
+                                              className="ah-goods-unit-smart-summary"
+                                              role="region"
+                                              aria-label="Tóm tắt đơn vị"
+                                            >
+                                              <p className="ah-goods-unit-smart-summary__base">
+                                                <strong>Đơn vị cơ bản:</strong>{' '}
+                                                {normalizeCatalogUnitLabel(baseV.unitLabel)} · Mã{' '}
+                                                <span className="ah-muted-code">
+                                                  {String(baseV.code || '').trim() || '—'}
+                                                </span>{' '}
+                                                · Giá bán{' '}
+                                                <strong>
+                                                  {Number(baseV.price || 0).toLocaleString('vi-VN')} đ
+                                                </strong>
+                                              </p>
+                                              {rest.length > 0 && (
+                                                <>
+                                                  <p className="ah-goods-unit-smart-summary__subhead">
+                                                    Đơn vị quy đổi
+                                                  </p>
+                                                  <ul className="ah-goods-unit-smart-summary__list">
+                                                    {rest.map((vv) => (
+                                                      <li key={vv.id}>
+                                                        <button
+                                                          type="button"
+                                                          className={`ah-goods-unit-smart-summary__btn${
+                                                            vv.id === goodsDetailSelectedVid
+                                                              ? ' is-active'
+                                                              : ''
+                                                          }`}
+                                                          onClick={() => setGoodsDetailSelectedVid(vv.id)}
+                                                        >
+                                                          <span className="ah-goods-unit-smart-summary__u">
+                                                            {normalizeCatalogUnitLabel(vv.unitLabel)}
+                                                          </span>
+                                                          <span className="ah-goods-unit-smart-summary__meta">
+                                                            {String(vv.code || '').trim() || '—'} —{' '}
+                                                            {Number(vv.price || 0).toLocaleString('vi-VN')} đ
+                                                            {vv.conversion != null &&
+                                                            Number(vv.conversion) > 1
+                                                              ? ` · quy đổi ×${vv.conversion}`
+                                                              : ''}
+                                                          </span>
+                                                        </button>
+                                                      </li>
+                                                    ))}
+                                                  </ul>
+                                                </>
+                                              )}
+                                            </div>
+                                          )
+                                        })()}
+                                      <div className="ah-goods-card-unit-row ah-goods-card-unit-row--below-tabs">
+                                        <span className="ah-goods-detail-unit-label">
+                                          Đang chỉnh
+                                        </span>
+                                        <select
+                                          className="ah-goods-detail-unit-select"
+                                          value={goodsDetailSelectedVid ?? ''}
+                                          onChange={(e) => {
+                                            setGoodsDetailSelectedVid(e.target.value)
+                                          }}
+                                        >
+                                          {goodsDetailCtx.variants.map((vv) => (
+                                            <option key={vv.id} value={vv.id}>
+                                              {normalizeCatalogUnitLabel(vv.unitLabel)}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      {d ? (
+                                        <div className="ah-goods-card-body ah-goods-card-body--below-tabs">
+                                          <div className="ah-goods-card-row">
+                                            <div className="ah-goods-card-field">
+                                              <label className="ah-goods-card-lbl" htmlFor={`gd-code-${v.id}`}>
+                                                Mã hàng
+                                              </label>
+                                              <input
+                                                id={`gd-code-${v.id}`}
+                                                className="ah-goods-card-input"
+                                                value={d.code}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, code: e.target.value } : x
+                                                  )
+                                                }
+                                                aria-label="Mã hàng"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-barcode-${v.id}`}
+                                              >
+                                                Mã vạch
+                                              </label>
+                                              <input
+                                                id={`gd-barcode-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--barcode"
+                                                value={d.barcode}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, barcode: e.target.value } : x
+                                                  )
+                                                }
+                                                onFocus={(e) => {
+                                                  requestAnimationFrame(() => {
+                                                    try {
+                                                      e.target.select()
+                                                    } catch {
+                                                      /* ignore */
+                                                    }
+                                                  })
+                                                }}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    e.stopPropagation()
+                                                  }
+                                                }}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                aria-label="Mã vạch"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-stock-${v.id}`}
+                                              >
+                                                Tồn kho
+                                              </label>
+                                              <input
+                                                id={`gd-stock-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--num"
+                                                inputMode="decimal"
+                                                value={d.stockQty}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, stockQty: e.target.value } : x
+                                                  )
+                                                }
+                                                aria-label="Tồn kho"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-norm-${v.id}`}
+                                              >
+                                                Tồn nhỏ nhất
+                                              </label>
+                                              <input
+                                                id={`gd-norm-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--num"
+                                                inputMode="decimal"
+                                                value={d.stockNormMin}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, stockNormMin: e.target.value } : x
+                                                  )
+                                                }
+                                                aria-label="Tồn nhỏ nhất"
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="ah-goods-card-row ah-goods-card-row--5">
+                                            <div className="ah-goods-card-field">
+                                              <label className="ah-goods-card-lbl" htmlFor={`gd-cost-${v.id}`}>
+                                                Giá vốn
+                                              </label>
+                                              <input
+                                                id={`gd-cost-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--num"
+                                                inputMode="numeric"
+                                                value={d.cost}
+                                                onChange={(e) => {
+                                                  const digits = e.target.value.replace(/\D/g, '')
+                                                  const n = digits === '' ? 0 : parseInt(digits, 10)
+                                                  setGoodsDetailDraft((x) =>
+                                                    x
+                                                      ? {
+                                                          ...x,
+                                                          cost:
+                                                            digits === ''
+                                                              ? ''
+                                                              : formatMoneyDraftVi(n),
+                                                        }
+                                                      : x
+                                                  )
+                                                }}
+                                                aria-label="Giá vốn"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-price-${v.id}`}
+                                              >
+                                                Giá bán lẻ
+                                              </label>
+                                              <input
+                                                id={`gd-price-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--num"
+                                                inputMode="numeric"
+                                                value={d.price}
+                                                onChange={(e) => {
+                                                  const digits = e.target.value.replace(/\D/g, '')
+                                                  const n = digits === '' ? 0 : parseInt(digits, 10)
+                                                  setGoodsDetailDraft((x) =>
+                                                    x
+                                                      ? {
+                                                          ...x,
+                                                          price:
+                                                            digits === ''
+                                                              ? ''
+                                                              : formatMoneyDraftVi(n),
+                                                        }
+                                                      : x
+                                                  )
+                                                }}
+                                                aria-label="Giá bán lẻ"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-wholesale-${v.id}`}
+                                              >
+                                                Giá sỉ
+                                              </label>
+                                              <input
+                                                id={`gd-wholesale-${v.id}`}
+                                                className="ah-goods-card-input ah-goods-card-input--num"
+                                                inputMode="numeric"
+                                                value={d.wholesalePrice ?? ''}
+                                                onChange={(e) => {
+                                                  const digits = e.target.value.replace(/\D/g, '')
+                                                  const n = digits === '' ? 0 : parseInt(digits, 10)
+                                                  setGoodsDetailDraft((x) =>
+                                                    x
+                                                      ? {
+                                                          ...x,
+                                                          wholesalePrice:
+                                                            digits === ''
+                                                              ? ''
+                                                              : formatMoneyDraftVi(n),
+                                                        }
+                                                      : x
+                                                  )
+                                                }}
+                                                aria-label="Giá sỉ"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-brand-${v.id}`}
+                                              >
+                                                Thương hiệu
+                                              </label>
+                                              <input
+                                                id={`gd-brand-${v.id}`}
+                                                className="ah-goods-card-input"
+                                                value={d.brand}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, brand: e.target.value } : x
+                                                  )
+                                                }
+                                                aria-label="Thương hiệu"
+                                              />
+                                            </div>
+                                            <div className="ah-goods-card-field">
+                                              <label
+                                                className="ah-goods-card-lbl"
+                                                htmlFor={`gd-weight-${v.id}`}
+                                              >
+                                                Trọng lượng
+                                              </label>
+                                              <input
+                                                id={`gd-weight-${v.id}`}
+                                                className="ah-goods-card-input"
+                                                value={d.weightRaw}
+                                                onChange={(e) =>
+                                                  setGoodsDetailDraft((x) =>
+                                                    x ? { ...x, weightRaw: e.target.value } : x
+                                                  )
+                                                }
+                                                aria-label="Trọng lượng"
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="ah-goods-unit-modal-open-wrap">
+                                            <button
+                                              type="button"
+                                              className="ah-goods-unit-modal-open-link"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                openGoodsUnitModal()
+                                              }}
+                                            >
+                                              + Thêm đơn vị tính
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="ah-goods-card-body ah-goods-card-body--loading ah-goods-card-body--below-tabs">
+                                          <span className="admin-hub-muted">Đang tải…</span>
+                                        </div>
+                                      )}
+                                      </>
+                                    )}
+                                    {goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU && (
+                                      <div className="ah-goods-card-stock-wrap">
+                                        <div className="admin-hub-table-wrap ah-solo-stock-table-wrap">
+                                          <table className="admin-hub-table ah-solo-stock-table">
+                                            <thead>
+                                              <tr>
+                                                <th>Ngày</th>
+                                                <th>Nhân viên</th>
+                                                <th>Thao tác</th>
+                                                <th className="ah-num">± Số lượng</th>
+                                                <th className="ah-num">Tồn kho</th>
+                                                <th>Mã chứng từ</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {goodsDetailStockLedgerRows.length === 0 ? (
+                                                <tr>
+                                                  <td colSpan={6} className="admin-hub-muted">
+                                                    Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán /
+                                                    nhập / hoàn trả).
+                                                  </td>
+                                                </tr>
+                                              ) : (
+                                                goodsDetailStockLedgerRows.map((row) => {
+                                                  const detailUrl = row.docLink
+                                                    ? getStockLedgerDetailAbsoluteUrl(row.docLink)
+                                                    : ''
+                                                  return (
+                                                    <tr key={row.key}>
+                                                      <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
+                                                      <td>{row.staff}</td>
+                                                      <td>{row.action}</td>
+                                                      <td
+                                                        className={`ah-num${
+                                                          row.delta > 0
+                                                            ? ' ah-solo-stock-delta--pos'
+                                                            : row.delta < 0
+                                                              ? ' ah-solo-stock-delta--neg'
+                                                              : ''
+                                                        }`}
+                                                      >
+                                                        {row.deltaLabel}
+                                                      </td>
+                                                      <td className="ah-num">{row.balanceLabel}</td>
+                                                      <td onClick={(e) => e.stopPropagation()}>
+                                                        {detailUrl ? (
+                                                          <a
+                                                            className="ah-solo-stock-doc-link"
+                                                            href={detailUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            title="Mở chi tiết chứng từ (tab mới)"
+                                                            onClick={(e) => {
+                                                              e.stopPropagation()
+                                                            }}
+                                                          >
+                                                            {row.docNo}
+                                                          </a>
+                                                        ) : (
+                                                          row.docNo
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  )
+                                                })
+                                              )}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {goodsDetailShelfTab === GOODS_DETAIL_VIEW_COMBO && isComboDetail ? (
+                                      <div className="ah-goods-card-stock-wrap ah-goods-combo-detail-wrap">
+                                        <div className="ah-goods-combo-detail-head">
+                                          <span className="admin-hub-muted ah-goods-combo-detail-lead">
+                                            Khi bán combo, tồn kho trừ theo từng thành phần (POS).
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="ah-goods-combo-edit-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              onEditComboProduct?.()
+                                            }}
+                                            title="Chỉnh sửa thành phần / giá combo"
+                                          >
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                              <path
+                                                d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+                                                stroke="currentColor"
+                                                strokeWidth="1.85"
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                              />
+                                            </svg>
+                                            Chỉnh sửa
+                                          </button>
+                                        </div>
+                                        <div className="admin-hub-table-wrap">
+                                          <table className="admin-hub-table ah-goods-combo-bom-table">
+                                            <thead>
+                                              <tr>
+                                                <th>STT</th>
+                                                <th>Tên sản phẩm</th>
+                                                <th>ĐVT</th>
+                                                <th className="ah-num">Số lượng</th>
+                                                <th className="ah-num">Giá bán lẻ</th>
+                                                <th className="ah-num">Thành tiền</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {(() => {
+                                                const bom = getComboBom(comboDetailProduct)
+                                                let sum = 0
+                                                const rows = bom.map((row, idx) => {
+                                                  const ctx = findVariantContext(catalogList || [], row.variantId)
+                                                  const vv = ctx?.clicked
+                                                  const name =
+                                                    String(vv?.name || row.nameSnap || '').trim() || '—'
+                                                  const u = normalizeCatalogUnitLabel(
+                                                    vv?.unitLabel || row.unitLabelSnap || 'Cái'
+                                                  )
+                                                  const pr = Number(vv?.price) || 0
+                                                  const q = Number(row.qty) || 0
+                                                  const line = Math.round(pr * q)
+                                                  sum += line
+                                                  return (
+                                                    <tr key={`${row.variantId}-${idx}`}>
+                                                      <td>{idx + 1}</td>
+                                                      <td>{name}</td>
+                                                      <td>{u}</td>
+                                                      <td className="ah-num">{q.toLocaleString('vi-VN')}</td>
+                                                      <td className="ah-num">{pr.toLocaleString('vi-VN')}</td>
+                                                      <td className="ah-num">{line.toLocaleString('vi-VN')}</td>
+                                                    </tr>
+                                                  )
+                                                })
+                                                return (
+                                                  <>
+                                                    {rows}
+                                                    <tr className="ah-goods-combo-bom-tfoot">
+                                                      <td colSpan={5} className="ah-goods-combo-bom-tfoot-lbl">
+                                                        Tổng tiền thành phần
+                                                      </td>
+                                                      <td className="ah-num ah-goods-combo-bom-tfoot-sum">
+                                                        {sum.toLocaleString('vi-VN')}
+                                                      </td>
+                                                    </tr>
+                                                  </>
+                                                )
+                                              })()}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    <p className="ah-goods-detail-hint ah-goods-detail-hint--card">
+                                      Nhấn Esc để đóng chi tiết.
+                                    </p>
+                                  </div>
+                                </div>
+    </div>
+  )
+}

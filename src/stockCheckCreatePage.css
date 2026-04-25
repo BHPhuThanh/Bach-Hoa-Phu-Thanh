@@ -1,0 +1,62 @@
+/* Tạo phiếu kiểm hàng — bảng nhiều cột, đồng bộ layout với Admin Hub / Điều chỉnh giá vốn */
+
+.scc-table-wrap {
+  min-width: 960px;
+}
+
+.scc-table .scc-col-stt {
+  width: 3.5%;
+}
+.scc-table .scc-col-img {
+  width: 5%;
+}
+.scc-table .scc-col-name {
+  width: 20%;
+}
+.scc-table .scc-col-unit {
+  width: 7%;
+}
+.scc-table .scc-col-br {
+  width: 9%;
+}
+.scc-table .scc-col-act {
+  width: 9%;
+}
+.scc-table .scc-col-delta {
+  width: 8%;
+}
+.scc-table .scc-col-reason {
+  width: 14%;
+}
+.scc-table .scc-col-note {
+  width: 12%;
+}
+.scc-table .scc-col-x {
+  width: 4.5%;
+}
+
+.scc-ph-img {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background: #334155;
+  vertical-align: middle;
+}
+
+.scc-delta-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.scc-table input.cac-in.scc-in-text {
+  text-align: left;
+}
+
+.scc-table th:nth-child(5),
+.scc-table th:nth-child(6),
+.scc-table th:nth-child(7),
+.scc-table td:nth-child(5),
+.scc-table td:nth-child(6),
+.scc-table td:nth-child(7) {
+  text-align: right;
+}

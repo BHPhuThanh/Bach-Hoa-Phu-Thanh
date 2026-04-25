@@ -1,0 +1,293 @@
+/**
+ * Dark mode — scoped khi gốc có .app--dark (đồng bộ với App.css).
+ * File nạp sau dashboard.css để ghi đè.
+ */
+.app--dark .dash {
+  color: #e8eaed;
+}
+
+.app--dark .admin-hub {
+  background: #0a0c0f;
+}
+
+.app--dark .admin-hub-main {
+  background: #0a0c0f;
+}
+
+.app--dark .dash-toolbar-meta {
+  color: #94a3b8;
+}
+
+.app--dark .dash-filter-chip {
+  background: #1c2128;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.app--dark .dash-filter-chip:hover {
+  background: #252b36;
+  border-color: #475569;
+}
+
+.app--dark .dash-filter-chip.is-active {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+}
+
+.app--dark .btn-dash {
+  background: #1c2128;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.app--dark .btn-dash:hover:not(:disabled) {
+  background: #252b36;
+  border-color: #475569;
+}
+
+.app--dark .btn-dash-danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(220, 38, 38, 0.12);
+  color: #fca5a5;
+}
+
+.app--dark .btn-dash-danger:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.2);
+}
+
+.app--dark .dash-stat-card {
+  background: #161b22;
+  border-color: #252b33;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.app--dark .dash-stat-label {
+  color: #94a3b8;
+}
+
+.app--dark .dash-stat-value {
+  color: #f1f5f9;
+}
+
+.app--dark .dash-stat-value-profit {
+  color: #5eead4 !important;
+}
+
+.app--dark .dash-list-section {
+  background: #161b22;
+  border-color: #252b33;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.app--dark .dash-list-title {
+  color: #f1f5f9;
+}
+
+.app--dark .dash-muted {
+  color: #94a3b8;
+}
+
+.app--dark .dash-order-row {
+  border-color: #334155;
+  background: #1a1f26;
+  color: #e2e8f0;
+}
+
+.app--dark .dash-order-row:hover {
+  border-color: #38bdf8;
+  background: #222830;
+}
+
+.app--dark .dash-order-row.is-active {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.app--dark .dash-order-no {
+  color: #f8fafc;
+}
+
+.app--dark .dash-order-time {
+  color: #94a3b8;
+}
+
+.app--dark .dash-order-total {
+  color: #fdba74;
+}
+
+.app--dark .dash-order-profit {
+  color: #5eead4;
+}
+
+.app--dark .dash-modal-backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.app--dark .dash-modal {
+  background: #1a1f26;
+  border-color: #334155;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.app--dark .dash-modal-head {
+  border-bottom-color: #252b33;
+}
+
+.app--dark .dash-modal-head h3 {
+  color: #f1f5f9;
+}
+
+.app--dark .dash-modal-close {
+  background: #252b36;
+  color: #cbd5e1;
+}
+
+.app--dark .dash-modal-close:hover {
+  background: #334155;
+}
+
+.app--dark .dash-detail-meta {
+  color: #94a3b8;
+}
+
+.app--dark .dash-detail-lines li {
+  border-bottom-color: #252b33;
+}
+
+.app--dark .dd-name {
+  color: #e2e8f0;
+}
+
+.app--dark .dd-sub {
+  color: #94a3b8;
+}
+
+.app--dark .dash-detail-total {
+  border-top-color: #475569;
+  color: #e2e8f0;
+}
+
+.app--dark .dash-detail-total.dash-detail-subrow {
+  border-top-color: #334155;
+}
+
+.app--dark .dash-detail-total strong {
+  color: #fdba74;
+}
+
+.app--dark .dash-modal-actions {
+  border-top-color: #252b33;
+}
+
+.app--dark .app-tabs {
+  background: #0f1218;
+  border-bottom-color: #252b33;
+}
+
+.app--dark .dash-chart-section {
+  background: #161b22;
+  border-color: #252b33;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+}
+
+.app--dark .dash-chart-mode {
+  background: #1c2128;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.app--dark .dash-chart-mode:hover {
+  background: #252b36;
+  border-color: #475569;
+}
+
+.app--dark .dash-chart-mode.is-active {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+}
+
+.app--dark .dash-chart-tooltip {
+  background: #1a1f26;
+  border-color: #334155;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.app--dark .dash-chart-tooltip-title {
+  color: #f1f5f9;
+  border-bottom-color: #334155;
+}
+
+.app--dark .dash-chart-tooltip-row {
+  color: #94a3b8;
+}
+
+.app--dark .dash-chart-tooltip-row strong {
+  color: #f8fafc;
+}
+
+/* Trang /doanh-thu — từ chối Nhân viên & liên kết về bán hàng */
+.dash-access-denied {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  min-height: 60vh;
+  background: #0a0c0f;
+}
+
+.dash-access-denied-card {
+  max-width: 28rem;
+  padding: 1.5rem 1.35rem;
+  border-radius: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  background: #151a21;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.dash-access-denied-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #fecaca;
+}
+
+.dash-access-denied-text,
+.dash-access-denied-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.dash-access-denied-hint {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.dash-access-denied-link {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  text-decoration: none;
+}
+
+.dash-access-denied-link:hover {
+  text-decoration: underline;
+}
+
+.dash-standalone-back {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dash-standalone-back:hover {
+  text-decoration: underline;
+}

@@ -1,0 +1,8383 @@
+import {
+  Fragment,
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { buildK80ReceiptHtml, RECEIPT_STORE_NAME } from './receiptHtml.js'
+import AdminHubRevenuePanel from './AdminHubRevenuePanel.jsx'
+import AdminHubTabErrorBoundary from './AdminHubTabErrorBoundary.jsx'
+import { AdminHubComboModal } from './AdminHubComboModal.jsx'
+import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
+import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
+import { AdminHubGoodsBrandHeaderFilter } from './AdminHubGoodsBrandHeaderFilter.jsx'
+import { AutoSizer } from 'react-virtualized-auto-sizer'
+import {
+  applyInboundLineUnitChange,
+  buildInboundDvtSelectOptions,
+  findVariantContext,
+  pickInboundBaseVariant,
+} from './inboundFormUnitHelpers.js'
+import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
+import { loadEInvoiceSettings } from './eInvoiceSettings.js'
+import { clearAllOrders, getAllOrders, saveOrder } from './ordersDb.js'
+import { exportOrdersToExcel } from './exportOrdersExcel.js'
+import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
+import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
+import { suggestNextProductCodeFromCatalog, allocateAutoHhSkuIfEmpty } from './autoProductSku.js'
+import { formatMoneyThousandsTyping } from './moneyInputFormat.js'
+import { parseCatalogBlobFile } from './catalogParseClient.js'
+import {
+  filterAndSortGoodsRowsSimple,
+  posQueryLooksLikeBarcodeKeyInput,
+  prepareCatalogForPosSearch,
+  suggestCatalogVariantPairsV9,
+} from './catalogSearchSimple.js'
+import { getComboBom, isComboCatalogProduct } from './comboCatalog.js'
+import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
+import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
+import {
+  buildVariantPosSearchHaystack,
+  normalizeCatalogSearchCompactKey,
+  normalizeCatalogSearchString,
+  normalizeCatalogUnitLabel,
+  refreshCatalogSearchTexts,
+} from './productUnits.js'
+import {
+  computePosOrderStatusFromItems,
+  normalizePosOrder,
+  posOrderCanPartialReturn,
+  posOrderLineReturnableQty,
+  posOrderSaleQtyDeltaMap,
+  posOrderStatusLabel,
+  resolvePosItemVariantId,
+} from './posOrderAdmin.js'
+import {
+  RANGE_CUSTOM,
+  RANGE_LABELS,
+  RANGE_LAST_7,
+  RANGE_THIS_MONTH,
+  RANGE_TODAY,
+  RANGE_YESTERDAY,
+  filterInboundOrdersForReport,
+  filterOrdersForReport,
+  filterPosReturnLedgerEntriesForReport,
+  getReportTimeWindow,
+  mapReturnLedgerToRevenueDisplayRows,
+  mergeRevenueTableRows,
+  orderLineCostTotal,
+  orderLineProfit,
+  orderLineRevenue,
+  orderTotalCost,
+  orderTotalProfit,
+} from './reportUtils.js'
+import {
+  appendPosReturnDayEntry,
+  clearPosReturnDayLedger,
+  loadPosReturnDayLedger,
+  sumPosReturnAdjustmentsInRange,
+} from './posReturnDayLedger.js'
+import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
+import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
+import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
+import AdminHubCostAdjustPanel from './AdminHubCostAdjustPanel.jsx'
+import {
+  STOCK_CHECK_STORAGE_KEY,
+  appendAutoCompletedStockCheck,
+  loadStockCheckVouchers,
+  saveStockCheckVouchers,
+  stockQtyMeaningfullyChanged,
+} from './stockCheckStorage.js'
+import {
+  COST_ADJUST_SYNC_BUMP_KEY,
+  appendCompletedCostAdjustFromGoods,
+  loadCostAdjustVouchersFromStore,
+  saveCostAdjustVouchersToStore,
+} from './costAdjustStorage.js'
+import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
+import './dashboard.css'
+import './dashboard-dark.css'
+import './adminHub.css'
+import './costAdjustCreatePage.css'
+import {
+  CATALOG_SNAPSHOT_STORAGE_KEY,
+  CATALOG_SYNC_BUMP_KEY,
+  fetchProducts,
+  readCatalogSnapshotSync,
+  saveCatalogSnapshot,
+} from './catalogRepository.js'
+import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
+import {
+  buildCatalogVariantsFromUnitModal,
+  createUnitModalLinesFromVariants,
+  newUnitModalRowKey,
+  parseMoneyDigitsVi,
+  parsePositiveConversion,
+  propagateBaseUnitMoney,
+  sortUnitModalLinesByConversion,
+  sortVariantsSmallestUnitFirst,
+  validateUnitModalLines,
+} from './goodsUnitSetupModalLogic.js'
+
+/** Đủ id để ghép URL deep-link Admin Hub (ah_pos_order / ah_inbound_order / ah_pos_return). */
+function stockLedgerDocLinkHasTarget(link) {
+  if (!link || typeof link !== 'object') return false
+  if (link.type === 'pos' && String(link.posOrderId || '').trim()) return true
+  if (link.type === 'inbound' && String(link.inboundOrderId || '').trim()) return true
+  if (link.type === 'pos_return' && String(link.returnLedgerId || '').trim()) return true
+  return false
+}
+
+/** URL tuyệt đối mở tab mới tới chi tiết chứng từ; rỗng nếu không hợp lệ (không dùng #). */
+function getStockLedgerDetailAbsoluteUrl(link) {
+  if (typeof window === 'undefined' || !stockLedgerDocLinkHasTarget(link)) return ''
+  const raw = buildAdminHubOrderDetailHref(link)
+  if (!raw || raw === '#') return ''
+  try {
+    return new URL(raw, window.location.href).toString()
+  } catch {
+    return ''
+  }
+}
+
+/** Mã vạch/QR đã chuẩn hóa có trùng bất kỳ biến thể nào trong catalog (snapshot IndexedDB / props). */
+function catalogHasNormalizedBarcode(catalogProducts, needleNorm) {
+  const n = String(needleNorm ?? '').trim()
+  if (!n) return false
+  const flat = (catalogProducts || []).flatMap((p) => p.groupVariants || [p])
+  return flat.some((v) => String(normalizeBarcodeValue(v.barcode ?? '')) === n)
+}
+
+const POS_CUSTOMERS_KEY = 'csv-preview-pos-customers-v1'
+
+function flattenCatalogToGoodsRows(products) {
+  const rows = []
+  for (const p of products || []) {
+    const vars = p.groupVariants || [p]
+    for (const v of vars) {
+      const id = v.id
+      const code = String(v.code || '').trim()
+      const name = String(v.name || '').trim() || '—'
+      const brand = String(v.brand || '').trim()
+      const price = Number(v.price) || 0
+      const cost = Number(v.cost) || 0
+      let stock = null
+      if (v.stockQty != null && Number.isFinite(Number(v.stockQty))) {
+        stock = Number(v.stockQty)
+      }
+      const createdAtMs = Number(v.createdAtMs)
+      const okTime = Number.isFinite(createdAtMs) && createdAtMs > 0
+      const displayTime = okTime ? new Date(createdAtMs).toLocaleString('vi-VN') : '—'
+      const unitLabel = normalizeCatalogUnitLabel(v.unitLabel)
+      const barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
+      rows.push({
+        id,
+        code,
+        name,
+        nameSearch: buildVariantPosSearchHaystack(
+          code,
+          v.nameRaw || p.nameRaw,
+          v.name || p.name,
+          unitLabel,
+          v.linkedMasterCode ?? p.linkedMasterCode
+        ),
+        unitLabel,
+        barcode,
+        brand,
+        price,
+        cost,
+        stock,
+        createdAtMs: okTime ? createdAtMs : 0,
+        displayTime,
+      })
+    }
+  }
+  rows.sort((a, b) => {
+    if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs
+    return String(a.code).localeCompare(String(b.code), 'vi')
+  })
+  return rows
+}
+
+/** `/hang-hoa/:id` hoặc `?id=` — khớp variant id, mã hàng, hoặc mã vạch sau khi catalog đã tải. */
+function resolveGoodsVariantIdFromGoodsDeepLink(catalogList, raw) {
+  const s = String(raw ?? '').trim()
+  if (!s || !catalogList?.length) return null
+  if (findVariantContext(catalogList, s)) return s
+  for (const p of catalogList) {
+    for (const v of p.groupVariants || [p]) {
+      if (String(v.code ?? '').trim() === s) return String(v.id)
+      const bc = normalizeBarcodeValue(v.barcode ?? '')
+      if (bc && String(bc).trim() === s) return String(v.id)
+    }
+  }
+  return null
+}
+
+function parseAdminStockNullable(raw) {
+  const s = String(raw ?? '').trim().replace(/\s/g, '').replace(/\./g, '').replace(',', '.')
+  if (s === '' || s === '-') return null
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Giá trong ô chỉnh sửa: phân tách hàng nghìn bằng dấu phẩy (vd. 132,000). */
+function formatMoneyDraftVi(n) {
+  const x = Math.round(Number(n))
+  if (!Number.isFinite(x)) return ''
+  return x.toLocaleString('en-US', { maximumFractionDigits: 0 })
+}
+
+function parseMoneyDraftVi(raw) {
+  const d = String(raw ?? '').replace(/[^\d]/g, '')
+  if (!d) return 0
+  const n = parseInt(d, 10)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Phần trăm chiết khấu đơn (0–100), cho phép dấu thập phân. */
+function parsePercentDraftVi(raw) {
+  const s = String(raw ?? '')
+    .replace(/,/g, '.')
+    .replace(/[^\d.]/g, '')
+  if (!s) return 0
+  const n = parseFloat(s)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(100, Math.max(0, n))
+}
+
+function buildGoodsDetailDraft(v) {
+  if (!v) return null
+  return {
+    name: String(v.name ?? ''),
+    code: String(v.code ?? ''),
+    barcode: String(v.barcode ?? ''),
+    stockQty:
+      v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? String(v.stockQty) : '',
+    stockNormMin:
+      v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
+        ? String(v.stockNormMin)
+        : '',
+    cost: formatMoneyDraftVi(Number(v.cost) || 0),
+    price: formatMoneyDraftVi(Number(v.price) || 0),
+    wholesalePrice: formatMoneyDraftVi(Number(v.wholesalePrice) || 0),
+    brand: String(v.brand ?? ''),
+    weightRaw: String(v.weightRaw ?? ''),
+  }
+}
+
+const TAB_OVERVIEW = 'overview'
+const TAB_GOODS = 'goods'
+const TAB_STOCK_CHECK = 'stock_check'
+const TAB_COST_ADJUST = 'cost_adjust'
+const TAB_INBOUND = 'inbound'
+/** Tab tạm: form tạo phiếu nhập (full width, đóng sau Lưu tạm / Hoàn thành). */
+const TAB_INBOUND_DRAFT = 'inbound_draft'
+const TAB_ORDERS = 'orders'
+const TAB_CUSTOMERS = 'customers'
+const TAB_STAFF = 'staff'
+
+const NAV_ITEMS = [
+  { id: TAB_OVERVIEW, label: 'Doanh thu' },
+  { id: TAB_GOODS, label: 'Hàng hóa' },
+  { id: TAB_STOCK_CHECK, label: 'Kiểm hàng' },
+  { id: TAB_COST_ADJUST, label: 'Điều chỉnh giá vốn' },
+  { id: TAB_INBOUND, label: 'Nhập hàng' },
+  { id: TAB_ORDERS, label: 'Đơn hàng' },
+  { id: TAB_CUSTOMERS, label: 'Khách hàng' },
+  { id: TAB_STAFF, label: 'Nhân viên' },
+]
+
+/** Tab chi tiết SP động: `solo_product:<encodeURIComponent(variantId)>` — có thể mở nhiều tab cạnh nhau. */
+const SOLO_PRODUCT_TAB_PREFIX = 'solo_product:'
+
+/** Đa nhiệm 5–7 tab SP; giới hạn nhẹ để tránh treo UI. */
+const MAX_OPEN_PRODUCT_DETAIL_TABS = 8
+
+function toSoloProductTabId(variantId) {
+  return `${SOLO_PRODUCT_TAB_PREFIX}${encodeURIComponent(String(variantId))}`
+}
+
+function parseSoloProductTabId(tab) {
+  const s = String(tab ?? '')
+  if (!s.startsWith(SOLO_PRODUCT_TAB_PREFIX)) return null
+  try {
+    return decodeURIComponent(s.slice(SOLO_PRODUCT_TAB_PREFIX.length))
+  } catch {
+    return null
+  }
+}
+
+function isSoloProductTabId(tab) {
+  return String(tab ?? '').startsWith(SOLO_PRODUCT_TAB_PREFIX)
+}
+
+/** Tab con chi tiết SP (dòng Hàng hóa mở rộng + tab solo): 'tonkho' = Mô tả, 'lichsu' = Lịch sử kho. */
+const GOODS_DETAIL_VIEW_TONKHO = 'tonkho'
+const GOODS_DETAIL_VIEW_LICHSU = 'lichsu'
+const GOODS_DETAIL_VIEW_COMBO = 'combo_tp'
+
+/** Tab chi tiết phiếu nhập: `inbound_detail:<encodeURIComponent(orderId)>`. */
+const INBOUND_DETAIL_TAB_PREFIX = 'inbound_detail:'
+const MAX_OPEN_INBOUND_DETAIL_TABS = 10
+
+function toInboundDetailTabId(orderId) {
+  return `${INBOUND_DETAIL_TAB_PREFIX}${encodeURIComponent(String(orderId))}`
+}
+
+function parseInboundDetailTabId(tab) {
+  const s = String(tab ?? '')
+  if (!s.startsWith(INBOUND_DETAIL_TAB_PREFIX)) return null
+  try {
+    return decodeURIComponent(s.slice(INBOUND_DETAIL_TAB_PREFIX.length))
+  } catch {
+    return null
+  }
+}
+
+function isInboundDetailTabId(tab) {
+  return String(tab ?? '').startsWith(INBOUND_DETAIL_TAB_PREFIX)
+}
+
+/** Tab chi tiết đơn bán POS: `pos_order_detail:<encodeURIComponent(orderId)>`. */
+const POS_ORDER_DETAIL_TAB_PREFIX = 'pos_order_detail:'
+const MAX_OPEN_POS_ORDER_DETAIL_TABS = 10
+
+function toPosOrderDetailTabId(orderId) {
+  return `${POS_ORDER_DETAIL_TAB_PREFIX}${encodeURIComponent(String(orderId))}`
+}
+
+function parsePosOrderDetailTabId(tab) {
+  const s = String(tab ?? '')
+  if (!s.startsWith(POS_ORDER_DETAIL_TAB_PREFIX)) return null
+  try {
+    return decodeURIComponent(s.slice(POS_ORDER_DETAIL_TAB_PREFIX.length))
+  } catch {
+    return null
+  }
+}
+
+function isPosOrderDetailTabId(tab) {
+  return String(tab ?? '').startsWith(POS_ORDER_DETAIL_TAB_PREFIX)
+}
+
+/** Tab chi tiết giao dịch hoàn trả (ledger): `pos_return_detail:<encodeURIComponent(ledgerEntryId)>`. */
+const POS_RETURN_DETAIL_TAB_PREFIX = 'pos_return_detail:'
+const MAX_OPEN_POS_RETURN_DETAIL_TABS = 8
+
+function toPosReturnDetailTabId(ledgerEntryId) {
+  return `${POS_RETURN_DETAIL_TAB_PREFIX}${encodeURIComponent(String(ledgerEntryId))}`
+}
+
+function parsePosReturnDetailTabId(tab) {
+  const s = String(tab ?? '')
+  if (!s.startsWith(POS_RETURN_DETAIL_TAB_PREFIX)) return null
+  try {
+    return decodeURIComponent(s.slice(POS_RETURN_DETAIL_TAB_PREFIX.length))
+  } catch {
+    return null
+  }
+}
+
+function isPosReturnDetailTabId(tab) {
+  return String(tab ?? '').startsWith(POS_RETURN_DETAIL_TAB_PREFIX)
+}
+
+/** Tổng tiền hàng + thanh toán từ dòng và chiết khấu đơn (giống logic phiếu nhập). */
+function computeInboundOrderTotalsFromDiscountedLines(lines, orderDiscountMode, orderDiscountValue) {
+  const goodsSubtotal = (lines || []).reduce(
+    (s, l) => s + inboundLineTotal(normalizeInboundLine(l)),
+    0
+  )
+  if (orderDiscountMode === 'percent') {
+    const p = Math.min(100, Math.max(0, Number(orderDiscountValue) || 0))
+    const orderDiscountAmount = Math.round((goodsSubtotal * p) / 100)
+    return {
+      goodsSubtotal,
+      totalValue: Math.max(0, goodsSubtotal - orderDiscountAmount),
+    }
+  }
+  const orderDiscountAmount = Math.min(goodsSubtotal, Math.max(0, Number(orderDiscountValue) || 0))
+  return {
+    goodsSubtotal,
+    totalValue: Math.max(0, goodsSubtotal - orderDiscountAmount),
+  }
+}
+
+const RANGE_PRESETS = [RANGE_TODAY, RANGE_YESTERDAY, RANGE_LAST_7, RANGE_THIS_MONTH, RANGE_CUSTOM]
+
+/** Tab Đơn hàng — nhãn tùy chọn lịch (Doanh thu dùng RANGE_LABELS[RANGE_CUSTOM]). */
+const ORDERS_TAB_CUSTOM_RANGE_LABEL = 'Khoảng ngày tự chọn'
+
+function todayYmd() {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+function safeMoney(n) {
+  const x = Number(n)
+  return Number.isFinite(x) ? x : 0
+}
+
+/** Số lượng trả từ ô nhập (hỗ trợ số thập phân), không vượt max. */
+function parseReturnQtyDraft(raw, maxVal) {
+  const max = Math.max(0, Number(maxVal) || 0)
+  if (max <= 0) return 0
+  const s = String(raw ?? '')
+    .trim()
+    .replace(/\s/g, '')
+    .replace(/,/g, '.')
+  if (!s) return 0
+  const n = Number.parseFloat(s)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.min(max, n)
+}
+
+function loadCustomersFromStorage() {
+  try {
+    const raw = localStorage.getItem(POS_CUSTOMERS_KEY)
+    const j = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(j)) return []
+    return j
+      .filter((c) => c && typeof c.name === 'string')
+      .map((c) => ({
+        name: String(c.name || '').trim(),
+        phone: String(c.phone || '').trim(),
+        address: String(c.address || '').trim(),
+        cccd: String(c.cccd || '').trim(),
+      }))
+      .filter((c) => c.name)
+  } catch {
+    return []
+  }
+}
+
+function orderToCartLines(order) {
+  return (order.items || []).map((it, i) => ({
+    id: `re-${order.id}-${i}`,
+    name: it.name,
+    code: it.code || '',
+    unitLabel: normalizeCatalogUnitLabel(it.unitLabel),
+    price: Number(it.price),
+    qty: Number(it.qty),
+  }))
+}
+
+function recomputePosDraftAgg(d) {
+  if (!d) return d
+  const items = d.items || []
+  const subtotal = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0)
+  const disc = Math.min(subtotal, Math.max(0, Number(d.discount) || 0))
+  const total = Math.max(0, subtotal - disc)
+  const totalCost = items.reduce((s, it) => s + (Number(it.cost) || 0) * (Number(it.qty) || 0), 0)
+  const totalProfit = total - totalCost
+  const nextItems = items.map((it) => {
+    const price = Number(it.price) || 0
+    const cost = Number(it.cost) || 0
+    const qty = Number(it.qty) || 0
+    const lineRevenue = price * qty
+    const lineCost = cost * qty
+    return { ...it, lineRevenue, lineCost, lineProfit: lineRevenue - lineCost }
+  })
+  return { ...d, items: nextItems, subtotal, discount: disc, total, totalCost, totalProfit }
+}
+
+function sellHomeHref() {
+  const base = import.meta.env.BASE_URL || '/'
+  try {
+    return new URL(base, window.location.origin).href
+  } catch {
+    return `${window.location.origin}${base}`
+  }
+}
+
+const INBOUND_STORAGE_KEY = 'csv-preview-admin-inbound-orders-v1'
+const SUPPLIERS_STORAGE_KEY = 'csv-preview-admin-suppliers-v1'
+
+function createInboundId() {
+  return `ib-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function inboundStatusLabel(status) {
+  if (status === 'completed') return 'Hoàn thành'
+  if (status === 'saved_temp') return 'Lưu tạm'
+  if (status === 'receiving') return 'Đang nhập'
+  if (status === 'cancelled') return 'Hủy đơn'
+  if (status === 'returned_partial') return 'Đã hoàn trả một phần'
+  if (status === 'returned_full') return 'Đã hoàn trả'
+  return 'Phiếu tạm'
+}
+
+function normalizeInboundLine(x) {
+  const qty = Math.max(0, Number(x.qty) || 0)
+  let returnedQty = Math.max(0, Number(x.returnedQty) || 0)
+  if (returnedQty > qty) returnedQty = qty
+  return {
+    lineId: String(x.lineId || createInboundId()),
+    variantId: String(x.variantId || ''),
+    code: String(x.code ?? '').trim(),
+    name: String(x.name ?? '').trim(),
+    unitLabel: String(x.unitLabel ?? '').trim(),
+    qty,
+    returnedQty,
+    unitPrice: Math.max(0, Number(x.unitPrice) || 0),
+    lineDiscount: Math.max(0, Number(x.lineDiscount) || 0),
+  }
+}
+
+/** SL còn trong kho từ dòng phiếu (đã trừ phần đã hoàn trả). */
+function inboundLineReturnableQty(line) {
+  const l = normalizeInboundLine(line)
+  return Math.max(0, l.qty - l.returnedQty)
+}
+
+function inboundOrderCanPartialReturn(r) {
+  const row = normalizeInboundRow(r)
+  if (row.status === 'cancelled') return false
+  if (!['completed', 'returned_partial', 'returned_full'].includes(row.status)) return false
+  return row.lines.some((l) => inboundLineReturnableQty(l) > 0 && l.variantId)
+}
+
+/** Trạng thái hiển thị sau khi lưu dòng (giữ Hoàn trả một phần / toàn bộ nếu còn returnedQty). */
+function computeInboundStatusAfterLines(lines) {
+  const ns = (lines || []).map(normalizeInboundLine)
+  if (!ns.some((l) => l.qty > 0)) return 'saved_temp'
+  const allReturned = ns.every((l) => l.qty <= 0 || l.returnedQty >= l.qty)
+  const anyReturned = ns.some((l) => l.returnedQty > 0)
+  if (allReturned) return 'returned_full'
+  if (anyReturned) return 'returned_partial'
+  return 'completed'
+}
+
+function netVariantQtyMapFromInboundLines(lines) {
+  const m = new Map()
+  for (const raw of lines || []) {
+    const l = normalizeInboundLine(raw)
+    if (!l.variantId) continue
+    const eff = inboundLineReturnableQty(l)
+    if (eff <= 0) continue
+    m.set(l.variantId, (m.get(l.variantId) || 0) + eff)
+  }
+  return m
+}
+
+function inboundLineTotal(line) {
+  const gross = Math.max(0, Number(line.qty) || 0) * Math.max(0, Number(line.unitPrice) || 0)
+  return Math.max(0, gross - Math.max(0, Number(line.lineDiscount) || 0))
+}
+
+/** Dòng có SL>0 mà đơn giá nhập khác giá vốn hiện tại trong danh mục (cùng variantId, dòng sau ghi đè). */
+function computeInboundCostDiffs(catalogList, inboundFormLines) {
+  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const byVid = new Map()
+  for (const raw of inboundFormLines || []) {
+    const ln = normalizeInboundLine(raw)
+    if (ln.qty <= 0 || !ln.variantId) continue
+    const v = flat.find((x) => x.id === ln.variantId)
+    if (!v) continue
+    const oldCost = Math.round(Number(v.cost) || 0)
+    const newPrice = Math.round(Number(ln.unitPrice) || 0)
+    if (oldCost === newPrice) continue
+    byVid.set(ln.variantId, {
+      variantId: ln.variantId,
+      code: String(v.code || ln.code || '').trim() || '—',
+      name: String(ln.name || v.name || '').trim() || '—',
+      oldCost,
+      newPrice,
+    })
+  }
+  return [...byVid.values()]
+}
+
+/** Gợi ý dạng "Tồn: 157" (số nguyên không thêm dấu phân tách nếu tròn). */
+function formatInboundTonLabel(stockQty) {
+  if (stockQty == null || !Number.isFinite(Number(stockQty))) return 'Tồn: —'
+  const n = Number(stockQty)
+  const body = Number.isInteger(n) ? String(n) : n.toLocaleString('vi-VN', { maximumFractionDigits: 4 })
+  return `Tồn: ${body}`
+}
+
+/** Một dòng phiếu nhập mới (SL mặc định 1 — đồng bộ với `addInboundFormLine`). */
+function createInboundFormLineFromProductVariant(product, variant) {
+  const v = pickInboundBaseVariant(product, variant)
+  const unit = normalizeCatalogUnitLabel(v.unitLabel)
+  const price = Number(v.cost) > 0 ? Number(v.cost) : Number(v.price) || 0
+  return {
+    lineId: `il-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    variantId: String(v.id),
+    code: String(v.code || '').trim(),
+    name: String(product.name || v.name || '').trim(),
+    unitLabel: unit,
+    qty: 1,
+    returnedQty: 0,
+    unitPrice: Math.round(price),
+    lineDiscount: 0,
+  }
+}
+
+function defaultInboundOrders() {
+  const now = Date.now()
+  return [
+    {
+      id: 'ib-seed-1',
+      code: 'NH001',
+      createdAtMs: now - 86400000 * 2,
+      supplier: 'CT TNHH Thực phẩm ABC',
+      totalValue: 12500000,
+      goodsSubtotal: 12500000,
+      status: 'completed',
+      lines: [],
+      note: '',
+    },
+    {
+      id: 'ib-seed-2',
+      code: 'NH002',
+      createdAtMs: now - 86400000,
+      supplier: 'NCC Hải sản Miền Trung',
+      totalValue: 3840000,
+      goodsSubtotal: 3840000,
+      status: 'saved_temp',
+      lines: [],
+      note: 'Chờ kiểm đếm',
+    },
+    {
+      id: 'ib-seed-3',
+      code: 'NH003',
+      createdAtMs: now - 3600000,
+      supplier: 'NCC Tạp hóa Sông Hồng',
+      totalValue: 892500,
+      goodsSubtotal: 900000,
+      status: 'draft',
+      lines: [],
+      note: '',
+    },
+  ]
+}
+
+function normalizeInboundRow(x) {
+  const st = x.status
+  const status = [
+    'completed',
+    'receiving',
+    'draft',
+    'saved_temp',
+    'cancelled',
+    'returned_partial',
+    'returned_full',
+  ].includes(st)
+    ? st
+    : 'draft'
+  const lines = Array.isArray(x.lines) ? x.lines.map(normalizeInboundLine) : []
+  return {
+    id: String(x.id || ''),
+    code: String(x.code ?? '').trim(),
+    createdAtMs: Number(x.createdAtMs) || Date.now(),
+    supplier: String(x.supplier ?? '').trim(),
+    totalValue: Math.max(0, Number(x.totalValue) || 0),
+    goodsSubtotal: Math.max(0, Number(x.goodsSubtotal) || Number(x.totalValue) || 0),
+    status,
+    lines,
+    note: String(x.note ?? ''),
+    orderDiscountMode: x.orderDiscountMode === 'percent' ? 'percent' : 'amount',
+    orderDiscountValue: Math.max(0, Number(x.orderDiscountValue) || 0),
+  }
+}
+
+function loadInboundOrdersFromStorage() {
+  try {
+    const raw = localStorage.getItem(INBOUND_STORAGE_KEY)
+    if (!raw) return defaultInboundOrders()
+    const j = JSON.parse(raw)
+    if (!Array.isArray(j)) return defaultInboundOrders()
+    if (j.length === 0) return []
+    const rows = j.map(normalizeInboundRow).filter((r) => r.id && r.code)
+    return rows.length > 0 ? rows : defaultInboundOrders()
+  } catch {
+    return defaultInboundOrders()
+  }
+}
+
+function exportInboundRowsToCsvFile(rows) {
+  if (!rows.length) return
+  const esc = (s) => `"${String(s).replace(/"/g, '""')}"`
+  const header = ['Mã đơn nhập', 'Ngày nhập', 'Nhà cung cấp', 'Giá trị đơn', 'Trạng thái nhập']
+  const body = rows.map((r) =>
+    [
+      esc(r.code),
+      esc(new Date(r.createdAtMs).toLocaleString('vi-VN')),
+      esc(r.supplier || '—'),
+      esc(String(r.totalValue)),
+      esc(inboundStatusLabel(r.status)),
+    ].join(';')
+  )
+  const csv = ['\ufeff' + header.join(';'), ...body].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `don-nhap-hang-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function loadSuppliersFromStorage() {
+  try {
+    const raw = localStorage.getItem(SUPPLIERS_STORAGE_KEY)
+    if (!raw) return []
+    const j = JSON.parse(raw)
+    if (!Array.isArray(j)) return []
+    return j
+      .filter((s) => s && typeof s.name === 'string' && String(s.name).trim())
+      .map((s) => ({
+        id: String(s.id || createInboundId()),
+        name: String(s.name || '').trim(),
+        phone: String(s.phone || '').trim(),
+        address: String(s.address || '').trim(),
+        cccd: String(s.cccd || '').trim(),
+      }))
+  } catch {
+    return []
+  }
+}
+
+function computeNextInboundCode(orders) {
+  let max = 0
+  for (const o of orders || []) {
+    const m = String(o.code || '').trim().match(/^NH(\d+)$/i)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `NH${String(max + 1).padStart(3, '0')}`
+}
+
+/** Giống POS: quét bàn phím cực nhanh + Enter → điền ô mã vạch (modal tạo hàng). */
+const AH_SCAN_MAX_INTER_KEY_MS = 75
+const AH_SCAN_MIN_CHARS = 4
+
+function ahIsPrintableBarcodeKey(key) {
+  return key.length === 1 && /[\dA-Za-z._-]/.test(key)
+}
+
+function ahScanTimingLooksLikeWedge(times) {
+  if (times.length < AH_SCAN_MIN_CHARS) return false
+  for (let i = 1; i < times.length; i++) {
+    if (times[i] - times[i - 1] > AH_SCAN_MAX_INTER_KEY_MS) return false
+  }
+  return true
+}
+
+function ahIsEditableFieldElement(el) {
+  if (!el || el.nodeType !== 1) return false
+  const tag = el.tagName
+  if (tag === 'TEXTAREA') return true
+  if (tag === 'SELECT') return true
+  if (el.isContentEditable) return true
+  if (tag === 'INPUT') {
+    const type = String(el.type || '').toLowerCase()
+    if (
+      type === 'hidden' ||
+      type === 'checkbox' ||
+      type === 'radio' ||
+      type === 'button' ||
+      type === 'submit' ||
+      type === 'reset' ||
+      type === 'file'
+    ) {
+      return false
+    }
+    return true
+  }
+  return false
+}
+
+function useDebounced(value, ms) {
+  const [out, setOut] = useState(value)
+  useEffect(() => {
+    const t = window.setTimeout(() => setOut(value), ms)
+    return () => window.clearTimeout(t)
+  }, [value, ms])
+  return out
+}
+
+const STAFF_ROWS = [
+  { name: 'Admin — Chủ cửa hàng', phone: '—', address: '—', cccd: '—' },
+  { name: 'Nhân viên bán hàng', phone: '—', address: '—', cccd: '—' },
+]
+
+
+export default function AdminHub({
+  printReceiptHtml = () => {},
+  refreshKey,
+  products: productsProp,
+  catalogFileName = '',
+  onTriggerCatalogImport,
+  onRemoveCatalogVariants,
+  onUpdateCatalogVariant,
+  onReplaceCatalogGroup,
+  onAppendCatalogVariants,
+  /** Trang /doanh-thu độc lập: { readOnlyRevenue: true } khi không phải Admin — vẫn hiện layout đầy đủ */
+  doanhThuMode,
+  hubDeepLink = null,
+  onHubDeepLinkConsumed,
+  /** `/hang-hoa/:id` hoặc hash legacy — mở tab Hàng hóa + expand dòng */
+  hangHoaGoodsOpenRequest = null,
+  onHangHoaGoodsOpenConsumed,
+  /** Route `/nhap-hang/tao-moi` — form nhập mở sẵn; Đóng = `window.close()`. */
+  standaloneInboundCreate = false,
+}) {
+  /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
+  const [returnDayLedger, setReturnDayLedger] = useState(() => {
+    try {
+      const v = loadPosReturnDayLedger()
+      return Array.isArray(v) ? v : []
+    } catch {
+      return []
+    }
+  })
+
+  const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const syncHubUrlToMainTab = useCallback(
+    (tabId) => {
+      if (standaloneInboundCreate) return
+      const p = pathForMainNavTab(tabId)
+      if (p) navigate(p, { replace: true })
+    },
+    [navigate, standaloneInboundCreate]
+  )
+  const onAdminHubNavItemActivate = useCallback(
+    (tabId) => {
+      setActiveTab(tabId)
+      setSelected(null)
+      syncHubUrlToMainTab(tabId)
+    },
+    [syncHubUrlToMainTab]
+  )
+  const parentCatalogSupplied = productsProp !== undefined && productsProp !== null
+  const parentProducts = parentCatalogSupplied ? productsProp : []
+  const [activeTab, setActiveTab] = useState(() => {
+    if (standaloneInboundCreate) return TAB_INBOUND_DRAFT
+    if (hangHoaGoodsOpenRequest?.rawId) return TAB_GOODS
+    return TAB_OVERVIEW
+  })
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const list = await getAllOrders()
+      setOrders(list)
+    } catch (e) {
+      console.error(e)
+      setOrders([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const refetchOrdersQuiet = useCallback(async () => {
+    try {
+      const list = await getAllOrders()
+      setOrders(list)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải danh sách đơn một lần khi mount (tránh chớp tab Đơn hàng)
+  }, [])
+
+  const refreshKeySkipMountRef = useRef(true)
+  useEffect(() => {
+    if (refreshKeySkipMountRef.current) {
+      refreshKeySkipMountRef.current = false
+      return
+    }
+    void refetchOrdersQuiet()
+  }, [refreshKey, refetchOrdersQuiet])
+
+  useEffect(() => {
+    try {
+      const v = loadPosReturnDayLedger()
+      setReturnDayLedger(Array.isArray(v) ? v : [])
+    } catch {
+      setReturnDayLedger([])
+    }
+  }, [refreshKey])
+
+  /* —— Tổng quan —— */
+  const [ovRange, setOvRange] = useState(RANGE_TODAY)
+  const [ovFrom, setOvFrom] = useState(todayYmd)
+  const [ovTo, setOvTo] = useState(todayYmd)
+  const [selected, setSelected] = useState(null)
+
+  const ovFiltered = useMemo(
+    () => filterOrdersForReport(orders, ovRange, ovFrom, ovTo),
+    [orders, ovRange, ovFrom, ovTo]
+  )
+
+  const ovRevenueTableRows = useMemo(() => {
+    try {
+      const entries = filterPosReturnLedgerEntriesForReport(
+        returnDayLedger,
+        ovRange,
+        ovFrom,
+        ovTo
+      )
+      const returnRows = mapReturnLedgerToRevenueDisplayRows(orders, entries)
+      return mergeRevenueTableRows(ovFiltered, returnRows)
+    } catch (err) {
+      console.warn('[AdminHub ovRevenueTableRows]', err)
+      return mergeRevenueTableRows(ovFiltered, [])
+    }
+  }, [orders, ovFiltered, returnDayLedger, ovRange, ovFrom, ovTo])
+
+  const ovStats = useMemo(() => {
+    try {
+      let baseRevenue = 0
+      let baseCost = 0
+      for (const o of ovFiltered) {
+        try {
+          baseRevenue += safeMoney(o?.total)
+          baseCost += orderTotalCost(o)
+        } catch (err) {
+          console.warn('[AdminHub ovStats] bỏ qua đơn lỗi dữ liệu', o?.id, err)
+        }
+      }
+      const ledger = Array.isArray(returnDayLedger) ? returnDayLedger : []
+      const w = getReportTimeWindow(ovRange, ovFrom, ovTo)
+      let revenueSub = 0
+      let costSub = 0
+      if (w) {
+        try {
+          const adj = sumPosReturnAdjustmentsInRange(ledger, w.start.getTime(), w.end.getTime())
+          revenueSub = adj.revenueSub
+          costSub = adj.costSub
+        } catch (err) {
+          console.warn('[AdminHub ovStats] lỗi tổng hoàn trả theo khoảng ngày', err)
+        }
+      }
+      const revenue = baseRevenue - revenueSub
+      const cost = baseCost - costSub
+      const profit = revenue - cost
+      return { revenue, cost, profit, count: ovFiltered.length, countAll: orders.length }
+    } catch (err) {
+      console.error('[AdminHub ovStats]', err)
+      return {
+        revenue: 0,
+        cost: 0,
+        profit: 0,
+        count: ovFiltered.length,
+        countAll: orders.length,
+      }
+    }
+  }, [ovFiltered, orders.length, ovRange, ovFrom, ovTo, returnDayLedger])
+
+  const handleExport = () => {
+    if (revenueReadOnly) {
+      alert('Chỉ tài khoản Admin mới xuất báo cáo Excel từ đây. Mở Doanh thu khi đã chọn Admin trên màn Bán hàng.')
+      return
+    }
+    if (ovFiltered.length === 0) {
+      alert('Không có đơn nào trong khoảng đang chọn để xuất.')
+      return
+    }
+    try {
+      exportOrdersToExcel(ovFiltered)
+    } catch (e) {
+      console.error(e)
+      alert('Không xuất được file Excel.')
+    }
+  }
+
+  const handleClearAll = async () => {
+    if (revenueReadOnly) {
+      alert('Chỉ Admin mới xóa được toàn bộ lịch sử đơn.')
+      return
+    }
+    if (
+      !window.confirm(
+        'Xóa toàn bộ lịch sử đơn hàng trên trình duyệt này? Thao tác không thể hoàn tác.'
+      )
+    ) {
+      return
+    }
+    try {
+      clearPosReturnDayLedger()
+      setReturnDayLedger([])
+      setOpenPosReturnDetailLedgerIds([])
+      await clearAllOrders()
+      setSelected(null)
+      await load()
+    } catch (e) {
+      console.error(e)
+      alert('Không xóa được dữ liệu.')
+    }
+  }
+
+  const handleReprint = (order) => {
+    const cart = orderToCartLines(order)
+    const total = Number(order.total)
+    const created = new Date(order.createdAt)
+    const einv = loadEInvoiceSettings()
+    const html = buildK80ReceiptHtml(cart, total, {
+      fixedAt: created,
+      invoiceNo: order.invoiceNo,
+      discount: Number(order.discount) || 0,
+      ...(einv.qrLookup ? { eInvoice: { showQrLookup: true } } : {}),
+    })
+    printReceiptHtml(html)
+  }
+
+  /* —— Hàng hóa —— */
+  const [standaloneCatalog, setStandaloneCatalog] = useState(null)
+  const standaloneImportRef = useRef(null)
+
+  useEffect(() => {
+    if (parentCatalogSupplied) {
+      setStandaloneCatalog(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
+      if (cancelled) return
+      if (snap?.products?.length) {
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(snap.products),
+          fileName: snap.fileName || '',
+        })
+      } else {
+        setStandaloneCatalog(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [parentCatalogSupplied, refreshKey])
+
+  /** Tab khác ghi IndexedDB + bump → Hàng hóa độc lập cập nhật không cần F5. */
+  useEffect(() => {
+    if (parentCatalogSupplied) return
+    const onStorage = (e) => {
+      if (e.storageArea !== localStorage) return
+      if (e.key !== CATALOG_SNAPSHOT_STORAGE_KEY && e.key !== CATALOG_SYNC_BUMP_KEY) return
+      void (async () => {
+        const snap = await fetchProducts()
+        if (snap?.products?.length) {
+          setStandaloneCatalog({
+            products: refreshCatalogSearchTexts(snap.products),
+            fileName: snap.fileName || '',
+          })
+        } else {
+          setStandaloneCatalog(null)
+        }
+      })()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [parentCatalogSupplied])
+
+  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? [])
+  const catalogDisplayName = parentCatalogSupplied
+    ? catalogFileName
+    : (standaloneCatalog?.fileName || catalogFileName || '')
+
+  /** Nhiều tab chi tiết SP (variantId), thứ tự = thứ tự trên nav. */
+  const [openProductVariantIds, setOpenProductVariantIds] = useState([])
+  const [soloGoodsDraftByVariantId, setSoloGoodsDraftByVariantId] = useState({})
+  const soloGoodsDraftSeedFpByVariantIdRef = useRef({})
+  /** `originTab` của modal kết quả cập nhật giá — dùng khi đóng hết tab SP. */
+  const inboundCostResultOriginTabRef = useRef(null)
+  const openProductVariantIdsRef = useRef([])
+  useEffect(() => {
+    openProductVariantIdsRef.current = openProductVariantIds
+  }, [openProductVariantIds])
+
+  const [stockCheckVouchers, setStockCheckVouchers] = useState(() => loadStockCheckVouchers())
+
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== STOCK_CHECK_STORAGE_KEY || e.storageArea !== localStorage) return
+      setStockCheckVouchers(loadStockCheckVouchers())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  const stockCheckCreatedByLabel = useCallback(() => {
+    return readStoredSellerId() === 'staff' ? 'Nhân viên bán hàng' : 'Admin — Chủ cửa hàng'
+  }, [])
+
+  const recordManualStockAdjustmentVoucher = useCallback(
+    ({ variantId, productName, productCode, unitLabel, beforeQty, afterQty }) => {
+      if (!stockQtyMeaningfullyChanged(beforeQty, afterQty)) return
+      setStockCheckVouchers((prev) => {
+        const next = appendAutoCompletedStockCheck(prev, {
+          variantId,
+          productName,
+          productCode,
+          unitLabel,
+          beforeQty,
+          afterQty,
+          createdBy: stockCheckCreatedByLabel(),
+        })
+        saveStockCheckVouchers(next)
+        return next
+      })
+    },
+    [stockCheckCreatedByLabel]
+  )
+
+  const [costAdjustVouchers, setCostAdjustVouchers] = useState([])
+  const [costAdjustStoreReady, setCostAdjustStoreReady] = useState(false)
+
+  useEffect(() => {
+    void loadCostAdjustVouchersFromStore().then((v) => {
+      setCostAdjustVouchers(Array.isArray(v) ? v : [])
+      setCostAdjustStoreReady(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!costAdjustStoreReady) return
+    void saveCostAdjustVouchersToStore(costAdjustVouchers)
+  }, [costAdjustStoreReady, costAdjustVouchers])
+
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== COST_ADJUST_SYNC_BUMP_KEY || e.storageArea !== localStorage) return
+      void loadCostAdjustVouchersFromStore().then((v) => setCostAdjustVouchers(Array.isArray(v) ? v : []))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  /** Khi đổi giá vốn ở Hàng hóa và bấm Lưu — tạo phiếu GVxxx (chỉ sau khi IndexedDB đã hydrate). */
+  const recordCostAdjustOnSave = useCallback(
+    (prevVariant, patch, nameTrim) => {
+      if (!prevVariant || !patch || !costAdjustStoreReady) return
+      const oldCost = Number(prevVariant.cost) || 0
+      const newCost = Number(patch.cost) || 0
+      if (oldCost === newCost) return
+      startTransition(() => {
+        setCostAdjustVouchers((prev) =>
+          appendCompletedCostAdjustFromGoods(prev, {
+            variantId: prevVariant.id,
+            productCode: String(patch.code ?? '').trim() || '—',
+            productName:
+              String(nameTrim || '').trim() ||
+              String(prevVariant.name || '').trim() ||
+              '—',
+            unitLabel: normalizeCatalogUnitLabel(prevVariant.unitLabel),
+            oldCost,
+            newCost,
+            createdBy: stockCheckCreatedByLabel(),
+          })
+        )
+      })
+    },
+    [costAdjustStoreReady, stockCheckCreatedByLabel]
+  )
+
+  /** `single`: chỉ flatten nhóm SP khớp deep link — tránh dựng hàng chục nghìn dòng ngay khi mở tab. */
+  const [hangHoaDeepLinkListScope, setHangHoaDeepLinkListScope] = useState('all')
+  const [hangHoaDeepLinkVid, setHangHoaDeepLinkVid] = useState(null)
+  const [goodsQ, setGoodsQ] = useState('')
+  const goodsDeferred = useDeferredValue(goodsQ)
+
+  const expandHangHoaGoodsListToFull = useCallback(() => {
+    setHangHoaDeepLinkListScope('all')
+    setHangHoaDeepLinkVid(null)
+  }, [])
+
+  const goodsRowsAll = useMemo(() => {
+    const searching = goodsQ.trim().length > 0
+    if (!searching && hangHoaDeepLinkListScope === 'single' && hangHoaDeepLinkVid) {
+      const ctx = findVariantContext(catalogList, hangHoaDeepLinkVid)
+      if (ctx?.product) return flattenCatalogToGoodsRows([ctx.product])
+    }
+    return flattenCatalogToGoodsRows(catalogList)
+  }, [catalogList, hangHoaDeepLinkListScope, hangHoaDeepLinkVid, goodsQ])
+
+  const hangHoaDeepLinkDisplayName = useMemo(() => {
+    if (hangHoaDeepLinkListScope !== 'single' || !hangHoaDeepLinkVid) return ''
+    const ctx = findVariantContext(catalogList, hangHoaDeepLinkVid)
+    if (!ctx) return ''
+    const v = ctx.variants.find((x) => x.id === hangHoaDeepLinkVid)
+    const raw = String(v?.name || ctx.clicked?.name || '').trim()
+    return raw || '—'
+  }, [catalogList, hangHoaDeepLinkListScope, hangHoaDeepLinkVid])
+
+  const brandOptions = useMemo(() => {
+    const s = new Set()
+    for (const p of catalogList || []) {
+      for (const v of p.groupVariants || [p]) {
+        const b = String(v.brand || '').trim()
+        if (b) s.add(b)
+      }
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [catalogList])
+
+  const comboSearchRowsExcludingCombos = useMemo(
+    () =>
+      flattenCatalogToGoodsSearchRows(catalogList).filter((r) => !isComboCatalogProduct(r._product)),
+    [catalogList]
+  )
+
+  const [goodsBrandKey, setGoodsBrandKey] = useState('')
+  const goodsDraftSeedKeyRef = useRef('')
+  const [goodsCreateOpen, setGoodsCreateOpen] = useState(false)
+  const goodsCreateWrapRef = useRef(null)
+  const [goodsSelected, setGoodsSelected] = useState(() => ({}))
+  const [goodsExpandedId, setGoodsExpandedId] = useState(null)
+  const [goodsDetailSelectedVid, setGoodsDetailSelectedVid] = useState(null)
+  const [goodsDetailDraft, setGoodsDetailDraft] = useState(null)
+  /** Tab phụ trong panel chi tiết hàng: Mô tả (form) / Lịch sử kho (thẻ kho). */
+  const [goodsDetailShelfTab, setGoodsDetailShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
+  /** Tăng mỗi lần Lưu thành công — dùng làm key + chạy animation toast 2s. */
+  const [goodsSaveToastGen, setGoodsSaveToastGen] = useState(0)
+
+  const [goodsNewModalOpen, setGoodsNewModalOpen] = useState(false)
+  const goodsNewModalOpenRef = useRef(false)
+  const goodsNewBarcodeRef = useRef(null)
+  const goodsNewCodeRef = useRef(null)
+  const goodsNewNameRef = useRef(null)
+  const goodsCreateScanBufferRef = useRef({ buf: '', times: [] })
+  /** Tăng mỗi lần mở modal để remount 3 ô mã vạch / mã hàng / tên (uncontrolled + defaultValue). */
+  const [goodsCreateFieldsKey, setGoodsCreateFieldsKey] = useState(0)
+  const [goodsNewUnit, setGoodsNewUnit] = useState('Cái')
+  const [goodsNewBrand, setGoodsNewBrand] = useState('')
+  const [goodsNewPrice, setGoodsNewPrice] = useState('')
+  const [goodsNewWholesale, setGoodsNewWholesale] = useState('')
+  const [goodsNewCost, setGoodsNewCost] = useState('')
+  const [goodsNewStock, setGoodsNewStock] = useState('0')
+  const [goodsNewUseExpiry, setGoodsNewUseExpiry] = useState('no')
+  const [goodsNewExpiryYmd, setGoodsNewExpiryYmd] = useState('')
+  /** Nhiều ĐVT sau modal thiết lập; null = một dòng theo form. */
+  const [goodsNewMultiVariants, setGoodsNewMultiVariants] = useState(null)
+  /** Trùng mã vạch với catalog — vô hiệu hóa Lưu + hiển thị lỗi dưới ô mã. */
+  const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
+  /** null | { mode: 'create' } | { mode: 'edit', product } */
+  const [comboModal, setComboModal] = useState(null)
+
+  useEffect(() => {
+    goodsNewModalOpenRef.current = goodsNewModalOpen
+  }, [goodsNewModalOpen])
+
+  useEffect(() => {
+    if (activeTab !== TAB_GOODS) {
+      setGoodsSelected({})
+      setGoodsExpandedId(null)
+      setGoodsDetailSelectedVid(null)
+      setGoodsDetailDraft(null)
+      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+      setGoodsNewModalOpen(false)
+      setComboModal(null)
+      setHangHoaDeepLinkListScope('all')
+      setHangHoaDeepLinkVid(null)
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (!goodsExpandedId) return
+    const ctx = findVariantContext(catalogList, goodsExpandedId)
+    if (ctx?.product && isComboCatalogProduct(ctx.product)) {
+      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_COMBO)
+      return
+    }
+    setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+  }, [goodsExpandedId, catalogList])
+
+  useEffect(() => {
+    if (!goodsCreateOpen) return
+    const onDoc = (e) => {
+      if (goodsCreateWrapRef.current?.contains(e.target)) return
+      setGoodsCreateOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [goodsCreateOpen])
+
+  const goodsRowsFiltered = useMemo(() => {
+    const val = goodsQ.trim()
+    let list = goodsRowsAll
+    if (goodsBrandKey) {
+      list = list.filter((r) => (r.brand || '') === goodsBrandKey)
+    }
+    if (!val.length) return list
+    return filterAndSortGoodsRowsSimple(list, val)
+  }, [goodsRowsAll, goodsQ, goodsBrandKey])
+
+  const goodsDetailCtx = useMemo(() => {
+    if (!goodsExpandedId) return null
+    return findVariantContext(catalogList, goodsExpandedId)
+  }, [catalogList, goodsExpandedId])
+
+  const goodsDetailVariant = useMemo(() => {
+    if (!goodsDetailCtx || !goodsDetailSelectedVid) return null
+    return goodsDetailCtx.variants.find((x) => x.id === goodsDetailSelectedVid) ?? null
+  }, [goodsDetailCtx, goodsDetailSelectedVid])
+
+  useEffect(() => {
+    if (!goodsDetailCtx?.variants?.length || !goodsDetailSelectedVid) return
+    const ok = goodsDetailCtx.variants.some((x) => x.id === goodsDetailSelectedVid)
+    if (!ok) setGoodsDetailSelectedVid(goodsDetailCtx.variants[0].id)
+  }, [goodsDetailCtx, goodsDetailSelectedVid])
+
+  const closeGoodsDetail = useCallback(() => {
+    setGoodsExpandedId(null)
+    setGoodsDetailSelectedVid(null)
+    setGoodsDetailDraft(null)
+  }, [])
+
+  const toggleGoodsRowExpand = useCallback(
+    (rowVariantId) => {
+      setGoodsExpandedId((cur) => {
+        if (cur === rowVariantId) {
+          setGoodsDetailSelectedVid(null)
+          setGoodsDetailDraft(null)
+          return null
+        }
+        const ctx = findVariantContext(catalogList, rowVariantId)
+        const baseVid = ctx?.variants?.[0]?.id ?? rowVariantId
+        const vOpen = ctx?.variants.find((x) => x.id === baseVid)
+        if (vOpen) setGoodsDetailDraft(buildGoodsDetailDraft(vOpen))
+        else setGoodsDetailDraft(null)
+        setGoodsDetailSelectedVid(baseVid)
+        return rowVariantId
+      })
+    },
+    [catalogList]
+  )
+
+  const goodsDetailVariantFp = useMemo(() => {
+    const v = goodsDetailVariant
+    if (!v) return ''
+    return [
+      v.id,
+      v.code,
+      v.barcode,
+      v.name,
+      v.price,
+      v.cost,
+      v.stockQty,
+      v.stockNormMin,
+      v.stockNormMax,
+      v.brand,
+      v.weightRaw,
+    ].join('\u001f')
+  }, [goodsDetailVariant])
+
+  useEffect(() => {
+    if (!goodsExpandedId) {
+      goodsDraftSeedKeyRef.current = ''
+      setGoodsDetailDraft(null)
+      return
+    }
+    if (!goodsDetailVariant || !goodsDetailVariantFp) return
+    const key = `${goodsExpandedId}\u0000${goodsDetailVariantFp}`
+    if (goodsDraftSeedKeyRef.current === key) return
+    goodsDraftSeedKeyRef.current = key
+    setGoodsDetailDraft(buildGoodsDetailDraft(goodsDetailVariant))
+  }, [goodsExpandedId, goodsDetailVariantFp, goodsDetailVariant])
+
+  useEffect(() => {
+    if (!goodsExpandedId) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeGoodsDetail()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [goodsExpandedId, closeGoodsDetail])
+
+  const triggerGoodsSaveSuccessToast = useCallback(() => {
+    setGoodsSaveToastGen((g) => g + 1)
+  }, [])
+
+  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint) => {
+    const fn = String(fileNameHint || '')
+    await saveCatalogSnapshot(nextProducts, fn)
+    if (!nextProducts?.length) {
+      setStandaloneCatalog(null)
+      return
+    }
+    setStandaloneCatalog({ products: nextProducts, fileName: fn })
+  }, [])
+
+  const handleComboSaveDisplay = useCallback(
+    (payload) => {
+      const { mode, anchorVariantId, flatRow, replaceCatalogId } = payload
+      const codeLc = String(flatRow.code || '').trim().toLowerCase()
+      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      if (mode !== 'edit' && flat.some((r) => String(r.code || '').trim().toLowerCase() === codeLc)) {
+        window.alert('Mã hàng đã tồn tại. Vui lòng đổi mã SKU.')
+        return
+      }
+      if (onReplaceCatalogGroup && mode === 'edit' && anchorVariantId) {
+        onReplaceCatalogGroup(anchorVariantId, [flatRow])
+        setComboModal(null)
+        setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_COMBO)
+        triggerGoodsSaveSuccessToast()
+        return
+      }
+      if (onAppendCatalogVariants) {
+        onAppendCatalogVariants([flatRow])
+        setComboModal(null)
+        triggerGoodsSaveSuccessToast()
+        return
+      }
+      const without =
+        mode === 'edit' && replaceCatalogId
+          ? flat.filter((row) => {
+              const p = catalogList.find((x) => x.id === replaceCatalogId)
+              if (!p) return true
+              const ids = new Set((p.groupVariants || [p]).map((v) => String(v.id)))
+              return !ids.has(String(row.id))
+            })
+          : flat
+      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...without, flatRow])
+      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
+      void persistStandaloneProducts(
+        nextProducts,
+        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+      )
+      setComboModal(null)
+      triggerGoodsSaveSuccessToast()
+    },
+    [
+      catalogList,
+      onReplaceCatalogGroup,
+      onAppendCatalogVariants,
+      persistStandaloneProducts,
+      standaloneCatalog?.fileName,
+      catalogFileName,
+      triggerGoodsSaveSuccessToast,
+    ]
+  )
+
+  const openComboCreateModal = useCallback(() => {
+    if (revenueReadOnly) {
+      window.alert('Chỉ tài khoản Admin / Chủ cửa hàng mới thêm combo từ đây.')
+      return
+    }
+    setGoodsCreateOpen(false)
+    setComboModal({ mode: 'create' })
+  }, [revenueReadOnly])
+
+  const closeGoodsCreateModal = useCallback(() => {
+    setGoodsNewModalOpen(false)
+    setGoodsNewUseExpiry('no')
+    setGoodsNewExpiryYmd('')
+    setGoodsNewMultiVariants(null)
+    setGoodsNewBrand('')
+    setGoodsNewWholesale('')
+    setGoodsNewBarcodeDupMsg('')
+    goodsCreateScanBufferRef.current = { buf: '', times: [] }
+  }, [])
+
+  const revalidateGoodsNewBarcode = useCallback(() => {
+    const raw = goodsNewBarcodeRef.current?.value ?? ''
+    const n = String(normalizeBarcodeValue(raw)).trim()
+    if (!n) {
+      setGoodsNewBarcodeDupMsg('')
+      return
+    }
+    setGoodsNewBarcodeDupMsg(catalogHasNormalizedBarcode(catalogList, n) ? 'Mã QR đã có sẵn' : '')
+  }, [catalogList])
+
+  const openGoodsCreateModal = useCallback(() => {
+    if (revenueReadOnly) {
+      window.alert('Chỉ tài khoản Admin / Chủ cửa hàng mới thêm hàng hóa từ đây.')
+      return
+    }
+    setGoodsCreateOpen(false)
+    goodsCreateScanBufferRef.current = { buf: '', times: [] }
+    setGoodsCreateFieldsKey((k) => k + 1)
+    setGoodsNewUnit('Cái')
+    setGoodsNewBrand('')
+    setGoodsNewPrice('')
+    setGoodsNewWholesale('')
+    setGoodsNewCost('')
+    setGoodsNewStock('0')
+    setGoodsNewUseExpiry('no')
+    setGoodsNewExpiryYmd('')
+    setGoodsNewMultiVariants(null)
+    setGoodsNewBarcodeDupMsg('')
+    setGoodsNewModalOpen(true)
+  }, [catalogList, revenueReadOnly])
+
+  useEffect(() => {
+    if (!goodsNewModalOpen) return
+    const id = window.requestAnimationFrame(() => {
+      revalidateGoodsNewBarcode()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [goodsNewModalOpen, goodsCreateFieldsKey, catalogList, revalidateGoodsNewBarcode])
+
+  const openGoodsCreateUnitModal = useCallback(() => {
+    if (revenueReadOnly) return
+    const nameTrim = String(goodsNewNameRef.current?.value ?? '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!nameTrim) {
+      window.alert('Vui lòng nhập tên hàng trước khi thiết lập đơn vị tính.')
+      return
+    }
+    const tid =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `gc-${Date.now()}`
+    const root =
+      String(goodsNewCodeRef.current?.value ?? '').trim() ||
+      suggestNextProductCodeFromCatalog(catalogList)
+    const templateRow = {
+      id: tid,
+      code: root,
+      barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
+      name: nameTrim,
+      nameRaw: nameTrim,
+      price: parseMoneyDraftVi(goodsNewPrice),
+      cost: parseMoneyDraftVi(goodsNewCost),
+      stockQty: parseMoneyDraftVi(goodsNewStock),
+      wholesalePrice: parseMoneyDraftVi(goodsNewWholesale),
+      unitLabel: normalizeCatalogUnitLabel(goodsNewUnit) || 'Cái',
+      conversion: 1,
+      conversionValue: 1,
+      linkedMasterCode: '',
+      brand: String(goodsNewBrand ?? '').trim(),
+      supplier: '',
+      stockNormMin: null,
+      stockNormMax: null,
+      weightRaw: '',
+      createdAtMs: Date.now(),
+      raw: [],
+    }
+    const seedVariants = goodsNewMultiVariants?.length
+      ? sortVariantsSmallestUnitFirst(goodsNewMultiVariants)
+      : [templateRow]
+    const anchorId = String(seedVariants[0]?.id || tid)
+    setUnitModal({
+      anchorVariantId: anchorId,
+      lines: createUnitModalLinesFromVariants(seedVariants),
+      source: 'goods_create',
+    })
+  }, [
+    revenueReadOnly,
+    goodsNewPrice,
+    goodsNewWholesale,
+    goodsNewCost,
+    goodsNewStock,
+    goodsNewUnit,
+    goodsNewBrand,
+    goodsNewMultiVariants,
+    catalogList,
+  ])
+
+  const applyExpiryToVariants = useCallback(
+    (rows) => {
+      if (!Array.isArray(rows) || rows.length === 0) return rows
+      if (goodsNewUseExpiry === 'yes' && String(goodsNewExpiryYmd || '').trim()) {
+        const ymd = String(goodsNewExpiryYmd).trim()
+        const ymdDigits = ymd.replace(/\D/g, '')
+        return rows.map((r) => {
+          const codePart = String(r.code ?? '')
+            .replace(/\s/g, '')
+            .slice(-6)
+          const batchId = `LOT${ymdDigits || '00000000'}-${codePart || r.id || '0'}`
+          const q0 = Math.max(0, Number(r.stockQty) || 0)
+          return {
+            ...r,
+            lotExpiryYmd: ymd,
+            manageBatchExpiry: true,
+            stockBatches: [{ batchId, expiryYmd: ymd, qty: q0 }],
+          }
+        })
+      }
+      return rows.map((r) => {
+        const { lotExpiryYmd: _e, manageBatchExpiry: _m, stockBatches: _sb, ...rest } = r
+        return rest
+      })
+    },
+    [goodsNewUseExpiry, goodsNewExpiryYmd]
+  )
+
+  const submitGoodsCreateModal = useCallback(() => {
+    if (revenueReadOnly) return
+    const name = String(goodsNewNameRef.current?.value ?? '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!name) {
+      window.alert('Vui lòng nhập tên hàng.')
+      return
+    }
+    if (goodsNewUseExpiry === 'yes' && !String(goodsNewExpiryYmd || '').trim()) {
+      window.alert('Vui lòng chọn hạn sử dụng hoặc đổi «Quản lý theo hạn sử dụng» sang Không.')
+      return
+    }
+    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const codeSetExisting = new Set(flat.map((v) => String(v.code ?? '').trim().toLowerCase()).filter(Boolean))
+    const barcodeSetExisting = new Set(
+      flat.map((v) => String(normalizeBarcodeValue(v.barcode ?? ''))).filter(Boolean)
+    )
+
+    const primaryBc = String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')).trim()
+    if (primaryBc && catalogHasNormalizedBarcode(catalogList, primaryBc)) {
+      setGoodsNewBarcodeDupMsg('Mã QR đã có sẵn')
+      return
+    }
+
+    if (goodsNewMultiVariants?.length) {
+      for (const v of goodsNewMultiVariants) {
+        const c = String(v.code ?? '').trim().toLowerCase()
+        if (c && codeSetExisting.has(c)) {
+          window.alert(`Mã hàng «${v.code}» đã tồn tại. Vui lòng chỉnh lại trong thiết lập ĐVT.`)
+          return
+        }
+        const b = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
+        if (b && barcodeSetExisting.has(b)) {
+          window.alert(`Mã vạch/QR «${b}» đã có trên hàng khác. Vui lòng chỉnh trong thiết lập ĐVT.`)
+          return
+        }
+      }
+      const brandTrim = String(goodsNewBrand ?? '').trim()
+      const rows = applyExpiryToVariants(
+        goodsNewMultiVariants.map((v) => ({
+          ...v,
+          name,
+          nameRaw: name,
+          brand: brandTrim || String(v.brand ?? '').trim(),
+        }))
+      )
+      if (onAppendCatalogVariants) {
+        onAppendCatalogVariants(rows)
+      } else {
+        const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rows])
+        const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
+        void persistStandaloneProducts(
+          nextProducts,
+          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+        )
+      }
+      closeGoodsCreateModal()
+      triggerGoodsSaveSuccessToast()
+      return
+    }
+
+    const code = allocateAutoHhSkuIfEmpty(
+      catalogList,
+      String(goodsNewCodeRef.current?.value ?? '').trim()
+    )
+    const unitLabel = normalizeCatalogUnitLabel(goodsNewUnit) || 'Cái'
+    const codeLc = code.toLowerCase()
+    if (codeSetExisting.has(codeLc)) {
+      window.alert('Mã hàng đã tồn tại. Vui lòng đổi mã khác.')
+      return
+    }
+    const price = parseMoneyDraftVi(goodsNewPrice)
+    const wholesalePrice = parseMoneyDraftVi(goodsNewWholesale)
+    const cost = parseMoneyDraftVi(goodsNewCost)
+    const stockQty = parseMoneyDraftVi(goodsNewStock)
+    if (stockQty < 0) {
+      window.alert('Tồn kho không được âm.')
+      return
+    }
+    const id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `new-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    const row = {
+      id,
+      code,
+      barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
+      name,
+      nameRaw: name,
+      price,
+      wholesalePrice,
+      cost,
+      stockQty,
+      supplier: '',
+      brand: String(goodsNewBrand ?? '').trim(),
+      linkedMasterCode: '',
+      baseGroupCode: '',
+      unitLabel,
+      conversion: null,
+      weightRaw: '',
+      stockNormMin: null,
+      stockNormMax: null,
+      createdAtMs: Date.now(),
+      raw: [],
+      ...(goodsNewUseExpiry === 'yes' && String(goodsNewExpiryYmd || '').trim()
+        ? (() => {
+            const ymd = String(goodsNewExpiryYmd).trim()
+            const ymdDigits = ymd.replace(/\D/g, '')
+            const batchId = `LOT${ymdDigits || '00000000'}-${String(code).replace(/\s/g, '').slice(-6) || id}`
+            return {
+              lotExpiryYmd: ymd,
+              manageBatchExpiry: true,
+              stockBatches: [{ batchId, expiryYmd: ymd, qty: Math.max(0, stockQty) }],
+            }
+          })()
+        : {}),
+    }
+    if (onAppendCatalogVariants) {
+      onAppendCatalogVariants([row])
+    } else {
+      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, row])
+      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
+      void persistStandaloneProducts(
+        nextProducts,
+        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+      )
+    }
+    closeGoodsCreateModal()
+    triggerGoodsSaveSuccessToast()
+  }, [
+    revenueReadOnly,
+    goodsNewUnit,
+    goodsNewBrand,
+    goodsNewPrice,
+    goodsNewWholesale,
+    goodsNewCost,
+    goodsNewStock,
+    goodsNewUseExpiry,
+    goodsNewExpiryYmd,
+    goodsNewMultiVariants,
+    catalogList,
+    onAppendCatalogVariants,
+    standaloneCatalog?.fileName,
+    catalogFileName,
+    persistStandaloneProducts,
+    triggerGoodsSaveSuccessToast,
+    applyExpiryToVariants,
+    closeGoodsCreateModal,
+  ])
+
+  const replaceCatalogGroupFromModal = useCallback(
+    (anchorVariantId, replacements) => {
+      if (onReplaceCatalogGroup) {
+        onReplaceCatalogGroup(anchorVariantId, replacements)
+        return
+      }
+      if (!catalogList?.length) return
+      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const target = flat.find((v) => v.id === anchorVariantId)
+      if (!target) return
+      const root = normalizeGroupRoot(target.code, target.linkedMasterCode)
+      const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
+      const merged = [...kept, ...replacements]
+      const nextDisplay = buildDisplayCatalog(merged)
+      const fn = standaloneCatalog?.fileName || catalogFileName || ''
+      void persistStandaloneProducts(nextDisplay, fn)
+    },
+    [onReplaceCatalogGroup, catalogList, standaloneCatalog, catalogFileName, persistStandaloneProducts]
+  )
+
+  /** Modal thiết lập đa ĐVT + bảng hàng cùng loại (tab Hàng hóa / tab solo). */
+  const [unitModal, setUnitModal] = useState(null)
+
+  const closeUnitModal = useCallback(() => setUnitModal(null), [])
+
+  useEffect(() => {
+    if (!unitModal) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeUnitModal()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [unitModal, closeUnitModal])
+
+  useEffect(() => {
+    if (!goodsNewModalOpen) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (unitModal) return
+      e.preventDefault()
+      closeGoodsCreateModal()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [goodsNewModalOpen, closeGoodsCreateModal, unitModal])
+
+  useLayoutEffect(() => {
+    if (!goodsNewModalOpen) return
+    const id = window.requestAnimationFrame(() => {
+      goodsNewBarcodeRef.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [goodsNewModalOpen])
+
+  useEffect(() => {
+    if (!goodsNewModalOpen) return
+    const flush = () => {
+      goodsCreateScanBufferRef.current = { buf: '', times: [] }
+    }
+    const shouldPauseWedge = () => {
+      if (unitModal) return true
+      const ae = document.activeElement
+      if (!ae) return false
+      if (ae === goodsNewBarcodeRef.current) return true
+      if (ae.closest?.('.ah-goods-create-dialog') && ahIsEditableFieldElement(ae)) return true
+      return false
+    }
+    const onKeyDownCapture = (e) => {
+      if (e.repeat) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (!goodsNewModalOpenRef.current) return
+      if (shouldPauseWedge()) {
+        flush()
+        return
+      }
+      const st = goodsCreateScanBufferRef.current
+      if (e.key === 'Enter') {
+        const { buf, times } = st
+        flush()
+        if (buf.length < AH_SCAN_MIN_CHARS) return
+        if (!ahScanTimingLooksLikeWedge(times)) return
+        if (!posQueryLooksLikeBarcodeKeyInput(buf)) return
+        e.preventDefault()
+        e.stopPropagation()
+        if (goodsNewBarcodeRef.current) goodsNewBarcodeRef.current.value = buf
+        queueMicrotask(() => {
+          goodsNewBarcodeRef.current?.focus()
+          goodsNewBarcodeRef.current?.select?.()
+          revalidateGoodsNewBarcode()
+        })
+        return
+      }
+      if (ahIsPrintableBarcodeKey(e.key)) {
+        const now = performance.now()
+        if (st.times.length > 0 && now - st.times[st.times.length - 1] > AH_SCAN_MAX_INTER_KEY_MS) {
+          st.buf = ''
+          st.times = []
+        }
+        st.buf += e.key
+        st.times.push(now)
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    window.addEventListener('keydown', onKeyDownCapture, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDownCapture, true)
+      flush()
+    }
+  }, [goodsNewModalOpen, unitModal, revalidateGoodsNewBarcode])
+
+  useEffect(() => {
+    if (!unitModal?.anchorVariantId) return
+    if (unitModal.source === 'goods_create') return
+    if (findVariantContext(catalogList, unitModal.anchorVariantId)) return
+    setUnitModal(null)
+  }, [catalogList, unitModal?.anchorVariantId, unitModal?.source])
+
+  const openGoodsUnitModal = useCallback(() => {
+    const anchor = goodsDetailSelectedVid || goodsExpandedId
+    if (!anchor) return
+    const ctx = findVariantContext(catalogList, String(anchor))
+    if (!ctx?.variants?.length) return
+    setUnitModal({
+      anchorVariantId: String(anchor),
+      lines: createUnitModalLinesFromVariants(ctx.variants),
+      source: 'goods',
+    })
+  }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
+
+  const saveGoodsDetail = useCallback(() => {
+    if (!goodsDetailVariant || !goodsDetailDraft) return
+    const nameTrim = String(goodsDetailDraft.name ?? '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const patch = {
+      name: nameTrim,
+      code: String(goodsDetailDraft.code ?? '').trim(),
+      barcode: normalizeBarcodeValue(goodsDetailDraft.barcode),
+      brand: String(goodsDetailDraft.brand ?? '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      weightRaw: String(goodsDetailDraft.weightRaw ?? '')
+        .replace(/\u00A0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      price: parseMoneyDraftVi(goodsDetailDraft.price),
+      wholesalePrice: parseMoneyDraftVi(goodsDetailDraft.wholesalePrice ?? '0'),
+      cost: parseMoneyDraftVi(goodsDetailDraft.cost),
+      stockQty: parseAdminStockNullable(goodsDetailDraft.stockQty),
+      stockNormMin: parseAdminStockNullable(goodsDetailDraft.stockNormMin),
+      stockNormMax:
+        goodsDetailVariant.stockNormMax != null &&
+        Number.isFinite(Number(goodsDetailVariant.stockNormMax))
+          ? Number(goodsDetailVariant.stockNormMax)
+          : null,
+    }
+    recordManualStockAdjustmentVoucher({
+      variantId: goodsDetailVariant.id,
+      productName: nameTrim || String(goodsDetailVariant.name || '').trim(),
+      productCode: patch.code,
+      unitLabel: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
+      beforeQty: goodsDetailVariant.stockQty,
+      afterQty: patch.stockQty,
+    })
+    if (onUpdateCatalogVariant) {
+      recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
+      onUpdateCatalogVariant(goodsDetailVariant.id, patch)
+      triggerGoodsSaveSuccessToast()
+      return
+    }
+    if (standaloneCatalog?.products) {
+      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const target = flat.find((v) => v.id === goodsDetailVariant.id)
+      if (!target) return
+      const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
+      const nextFlat = flat.map((v) => {
+        if (v.id === goodsDetailVariant.id) return { ...v, ...patch }
+        if (normalizeGroupRoot(v.code, v.linkedMasterCode) === rootBefore) {
+          return { ...v, name: nameTrim }
+        }
+        return v
+      })
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      triggerGoodsSaveSuccessToast()
+    }
+  }, [
+    goodsDetailVariant,
+    goodsDetailDraft,
+    onUpdateCatalogVariant,
+    standaloneCatalog,
+    persistStandaloneProducts,
+    triggerGoodsSaveSuccessToast,
+    recordManualStockAdjustmentVoucher,
+    recordCostAdjustOnSave,
+  ])
+
+  const copyGoodsDetail = useCallback(() => {
+    const v = goodsDetailVariant
+    if (!v) return
+    const d = goodsDetailDraft
+    const name = d ? String(d.name ?? '').trim() : String(v.name ?? '').trim()
+    const code = d ? String(d.code ?? '') : String(v.code ?? '')
+    const barcode = d ? String(d.barcode ?? '') : String(v.barcode ?? '')
+    const stockQty = d
+      ? parseAdminStockNullable(d.stockQty)
+      : v.stockQty != null && Number.isFinite(Number(v.stockQty))
+        ? Number(v.stockQty)
+        : ''
+    const stockNormMin = d
+      ? parseAdminStockNullable(d.stockNormMin)
+      : v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
+        ? Number(v.stockNormMin)
+        : ''
+    const cost = d ? parseMoneyDraftVi(d.cost) : Number(v.cost) || 0
+    const price = d ? parseMoneyDraftVi(d.price) : Number(v.price) || 0
+    const wholesale = d ? parseMoneyDraftVi(d.wholesalePrice ?? '0') : Number(v.wholesalePrice) || 0
+    const brand = d ? String(d.brand ?? '').trim() : String(v.brand ?? '').trim()
+    const weightRaw = d ? String(d.weightRaw ?? '').trim() : String(v.weightRaw ?? '').trim()
+    const t = [
+      `Tên sản phẩm\t${name}`,
+      `Mã hàng\t${code}`,
+      `Mã vạch\t${barcode}`,
+      `Tồn kho\t${stockQty === null || stockQty === '' ? '' : stockQty}`,
+      `Tồn nhỏ nhất\t${stockNormMin === null || stockNormMin === '' ? '' : stockNormMin}`,
+      `Giá vốn\t${cost}`,
+      `Giá bán lẻ\t${price}`,
+      `Giá sỉ\t${wholesale}`,
+      `Thương hiệu\t${brand}`,
+      `Trọng lượng\t${weightRaw}`,
+    ].join('\n')
+    navigator.clipboard.writeText(t).catch(() => {})
+  }, [goodsDetailVariant, goodsDetailDraft])
+
+  const discardGoodsDetailDraft = useCallback(() => {
+    const v = goodsDetailVariant
+    if (!v) return
+    setGoodsDetailDraft(buildGoodsDetailDraft(v))
+  }, [goodsDetailVariant])
+
+  const deleteGoodsDetailVariant = useCallback(() => {
+    const v = goodsDetailVariant
+    if (!v) return
+    if (!window.confirm(`Xóa mặt hàng "${v.name || v.code}" khỏi danh sách?`)) return
+    if (onRemoveCatalogVariants) {
+      onRemoveCatalogVariants([v.id])
+    } else if (standaloneCatalog?.products) {
+      const idSet = new Set([v.id])
+      const remaining = []
+      for (const p of standaloneCatalog.products) {
+        for (const gv of p.groupVariants || [p]) {
+          if (!idSet.has(gv.id)) remaining.push(gv)
+        }
+      }
+      const nextProducts = buildDisplayCatalog(remaining)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+    }
+    closeGoodsDetail()
+  }, [
+    goodsDetailVariant,
+    onRemoveCatalogVariants,
+    standaloneCatalog,
+    persistStandaloneProducts,
+    closeGoodsDetail,
+  ])
+
+  const soloActiveVariantId = useMemo(() => parseSoloProductTabId(activeTab), [activeTab])
+
+  const soloGoodsCtx = useMemo(() => {
+    if (!soloActiveVariantId) return null
+    return findVariantContext(catalogList, soloActiveVariantId)
+  }, [catalogList, soloActiveVariantId])
+
+  const soloGoodsVariant = useMemo(() => {
+    if (!soloGoodsCtx || !soloActiveVariantId) return null
+    return soloGoodsCtx.variants.find((x) => x.id === soloActiveVariantId) ?? null
+  }, [soloGoodsCtx, soloActiveVariantId])
+
+  const soloGoodsVariantFp = useMemo(() => {
+    const v = soloGoodsVariant
+    if (!v) return ''
+    return [
+      v.id,
+      v.code,
+      v.barcode,
+      v.name,
+      v.price,
+      v.cost,
+      v.stockQty,
+      v.stockNormMin,
+      v.stockNormMax,
+      v.brand,
+      v.weightRaw,
+    ].join('\u001f')
+  }, [soloGoodsVariant])
+
+  const soloGoodsDraft = useMemo(() => {
+    if (!soloActiveVariantId) return null
+    return soloGoodsDraftByVariantId[soloActiveVariantId] ?? null
+  }, [soloActiveVariantId, soloGoodsDraftByVariantId])
+
+  const applySoloGoodsVariantSelection = useCallback(
+    (newVid) => {
+      const nv = String(newVid ?? '').trim()
+      const oldVid = soloActiveVariantId
+      if (!oldVid || !nv || nv === oldVid) return
+      delete soloGoodsDraftSeedFpByVariantIdRef.current[oldVid]
+      delete soloGoodsDraftSeedFpByVariantIdRef.current[nv]
+      setOpenProductVariantIds((prev) => prev.map((x) => (x === oldVid ? nv : x)))
+      setSoloGoodsDraftByVariantId((prev) => {
+        const n = { ...prev }
+        delete n[oldVid]
+        delete n[nv]
+        return n
+      })
+      setActiveTab(toSoloProductTabId(nv))
+    },
+    [soloActiveVariantId]
+  )
+
+  const patchSoloGoodsDraft = useCallback((fnOrVal) => {
+    const vid = parseSoloProductTabId(activeTab)
+    if (!vid) return
+    setSoloGoodsDraftByVariantId((prev) => {
+      const cur = prev[vid]
+      const next = typeof fnOrVal === 'function' ? fnOrVal(cur) : fnOrVal
+      if (next === cur) return prev
+      return { ...prev, [vid]: next }
+    })
+  }, [activeTab])
+
+  const closeSoloProductTabByVariantId = useCallback((variantId) => {
+    const vid = String(variantId ?? '')
+    if (!vid) return
+    const prev = openProductVariantIdsRef.current
+    if (!prev.includes(vid)) return
+    const next = prev.filter((x) => x !== vid)
+    setOpenProductVariantIds(next)
+    delete soloGoodsDraftSeedFpByVariantIdRef.current[vid]
+    setSoloGoodsDraftByVariantId((d) => {
+      if (!d[vid]) return d
+      const o = { ...d }
+      delete o[vid]
+      return o
+    })
+    setActiveTab((cur) => {
+      if (parseSoloProductTabId(cur) !== vid) return cur
+      if (next.length > 0) return toSoloProductTabId(next[next.length - 1])
+      return inboundCostResultOriginTabRef.current ?? TAB_GOODS
+    })
+  }, [])
+
+  const closeSoloProductTab = useCallback(() => {
+    const vid = parseSoloProductTabId(activeTab)
+    if (!vid) return
+    closeSoloProductTabByVariantId(vid)
+  }, [activeTab, closeSoloProductTabByVariantId])
+
+  const openProductDetailTab = useCallback((variantId) => {
+    if (!variantId) return
+    const vid = String(variantId)
+    const ctx = findVariantContext(catalogList, vid)
+    const v = ctx?.variants.find((x) => x.id === vid)
+    if (v) {
+      const fp = [
+        v.id,
+        v.code,
+        v.barcode,
+        v.name,
+        v.price,
+        v.wholesalePrice,
+        v.cost,
+        v.stockQty,
+        v.stockNormMin,
+        v.stockNormMax,
+        v.brand,
+        v.weightRaw,
+      ].join('\u001f')
+      const seedKey = `${vid}\u0000${fp}`
+      soloGoodsDraftSeedFpByVariantIdRef.current[vid] = seedKey
+      setSoloGoodsDraftByVariantId((prev) => ({ ...prev, [vid]: buildGoodsDetailDraft(v) }))
+    }
+    setOpenProductVariantIds((prev) => {
+      if (prev.includes(vid)) return prev
+      const appended = [...prev, vid]
+      if (appended.length <= MAX_OPEN_PRODUCT_DETAIL_TABS) return appended
+      return appended.slice(-MAX_OPEN_PRODUCT_DETAIL_TABS)
+    })
+    setActiveTab(toSoloProductTabId(vid))
+  }, [catalogList])
+
+  useEffect(() => {
+    const raw = hangHoaGoodsOpenRequest?.rawId ? String(hangHoaGoodsOpenRequest.rawId).trim() : ''
+    if (!raw) return
+    const vid = resolveGoodsVariantIdFromGoodsDeepLink(catalogList, raw)
+    if (!vid) {
+      const t = window.setTimeout(() => onHangHoaGoodsOpenConsumed?.(), 12000)
+      return () => window.clearTimeout(t)
+    }
+    startTransition(() => {
+      setActiveTab(TAB_GOODS)
+      syncHubUrlToMainTab(TAB_GOODS)
+      setHangHoaDeepLinkVid(vid)
+      setHangHoaDeepLinkListScope('single')
+      setGoodsExpandedId(vid)
+      setGoodsDetailSelectedVid(vid)
+      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+      setGoodsQ('')
+      setGoodsBrandKey('')
+      setGoodsBrandOpen(false)
+      setGoodsSelected({})
+    })
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        onHangHoaGoodsOpenConsumed?.()
+      })
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
+  }, [hangHoaGoodsOpenRequest, catalogList, onHangHoaGoodsOpenConsumed, syncHubUrlToMainTab])
+
+  useEffect(() => {
+    if (openProductVariantIds.length === 0) return
+    setSoloGoodsDraftByVariantId((prevDrafts) => {
+      const next = { ...prevDrafts }
+      let changed = false
+      for (const variantId of openProductVariantIds) {
+        const ctx = findVariantContext(catalogList, variantId)
+        const v = ctx?.variants.find((x) => x.id === variantId)
+        if (!v) continue
+        const fp = [
+          v.id,
+          v.code,
+          v.barcode,
+          v.name,
+          v.price,
+          v.wholesalePrice,
+          v.cost,
+          v.stockQty,
+          v.stockNormMin,
+          v.stockNormMax,
+          v.brand,
+          v.weightRaw,
+        ].join('\u001f')
+        const key = `${variantId}\u0000${fp}`
+        if ((soloGoodsDraftSeedFpByVariantIdRef.current[variantId] ?? '') === key) continue
+        soloGoodsDraftSeedFpByVariantIdRef.current[variantId] = key
+        next[variantId] = buildGoodsDetailDraft(v)
+        changed = true
+      }
+      return changed ? next : prevDrafts
+    })
+  }, [openProductVariantIds, catalogList])
+
+  useEffect(() => {
+    if (openProductVariantIds.length === 0) return
+    const invalid = openProductVariantIds.filter((id) => !findVariantContext(catalogList, id))
+    if (invalid.length === 0) return
+    for (const id of invalid) delete soloGoodsDraftSeedFpByVariantIdRef.current[id]
+    setOpenProductVariantIds((prev) => prev.filter((id) => !invalid.includes(id)))
+    setSoloGoodsDraftByVariantId((prev) => {
+      const n = { ...prev }
+      for (const id of invalid) delete n[id]
+      return n
+    })
+    const curVid = parseSoloProductTabId(activeTab)
+    if (curVid && invalid.includes(curVid)) {
+      setActiveTab(inboundCostResultOriginTabRef.current ?? TAB_GOODS)
+    }
+  }, [openProductVariantIds, catalogList, activeTab])
+
+  useEffect(() => {
+    if (!isSoloProductTabId(activeTab)) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeSoloProductTab()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeTab, closeSoloProductTab])
+
+  const saveSoloGoodsDetail = useCallback(() => {
+    if (!soloGoodsVariant || !soloGoodsDraft) return
+    const nameTrim = String(soloGoodsDraft.name ?? '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const patch = {
+      name: nameTrim,
+      code: String(soloGoodsDraft.code ?? '').trim(),
+      barcode: normalizeBarcodeValue(soloGoodsDraft.barcode),
+      brand: String(soloGoodsDraft.brand ?? '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      weightRaw: String(soloGoodsDraft.weightRaw ?? '')
+        .replace(/\u00A0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      price: parseMoneyDraftVi(soloGoodsDraft.price),
+      wholesalePrice: parseMoneyDraftVi(soloGoodsDraft.wholesalePrice ?? '0'),
+      cost: parseMoneyDraftVi(soloGoodsDraft.cost),
+      stockQty: parseAdminStockNullable(soloGoodsDraft.stockQty),
+      stockNormMin: parseAdminStockNullable(soloGoodsDraft.stockNormMin),
+      stockNormMax:
+        soloGoodsVariant.stockNormMax != null &&
+        Number.isFinite(Number(soloGoodsVariant.stockNormMax))
+          ? Number(soloGoodsVariant.stockNormMax)
+          : null,
+    }
+    recordManualStockAdjustmentVoucher({
+      variantId: soloGoodsVariant.id,
+      productName: nameTrim || String(soloGoodsVariant.name || '').trim(),
+      productCode: patch.code,
+      unitLabel: normalizeCatalogUnitLabel(soloGoodsVariant.unitLabel),
+      beforeQty: soloGoodsVariant.stockQty,
+      afterQty: patch.stockQty,
+    })
+    if (onUpdateCatalogVariant) {
+      recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
+      onUpdateCatalogVariant(soloGoodsVariant.id, patch)
+      triggerGoodsSaveSuccessToast()
+      return
+    }
+    if (standaloneCatalog?.products) {
+      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const target = flat.find((v) => v.id === soloGoodsVariant.id)
+      if (!target) return
+      const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
+      const nextFlat = flat.map((v) => {
+        if (v.id === soloGoodsVariant.id) return { ...v, ...patch }
+        if (normalizeGroupRoot(v.code, v.linkedMasterCode) === rootBefore) {
+          return { ...v, name: nameTrim }
+        }
+        return v
+      })
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      triggerGoodsSaveSuccessToast()
+    }
+  }, [
+    soloGoodsVariant,
+    soloGoodsDraft,
+    onUpdateCatalogVariant,
+    standaloneCatalog,
+    persistStandaloneProducts,
+    triggerGoodsSaveSuccessToast,
+    recordManualStockAdjustmentVoucher,
+    recordCostAdjustOnSave,
+  ])
+
+  const copySoloGoodsDetail = useCallback(() => {
+    const v = soloGoodsVariant
+    if (!v) return
+    const d = soloGoodsDraft
+    const name = d ? String(d.name ?? '').trim() : String(v.name ?? '').trim()
+    const code = d ? String(d.code ?? '') : String(v.code ?? '')
+    const barcode = d ? String(d.barcode ?? '') : String(v.barcode ?? '')
+    const stockQty = d
+      ? parseAdminStockNullable(d.stockQty)
+      : v.stockQty != null && Number.isFinite(Number(v.stockQty))
+        ? Number(v.stockQty)
+        : ''
+    const stockNormMin = d
+      ? parseAdminStockNullable(d.stockNormMin)
+      : v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
+        ? Number(v.stockNormMin)
+        : ''
+    const cost = d ? parseMoneyDraftVi(d.cost) : Number(v.cost) || 0
+    const price = d ? parseMoneyDraftVi(d.price) : Number(v.price) || 0
+    const wholesale = d ? parseMoneyDraftVi(d.wholesalePrice ?? '0') : Number(v.wholesalePrice) || 0
+    const brand = d ? String(d.brand ?? '').trim() : String(v.brand ?? '').trim()
+    const weightRaw = d ? String(d.weightRaw ?? '').trim() : String(v.weightRaw ?? '').trim()
+    const t = [
+      `Tên sản phẩm\t${name}`,
+      `Mã hàng\t${code}`,
+      `Mã vạch\t${barcode}`,
+      `Tồn kho\t${stockQty === null || stockQty === '' ? '' : stockQty}`,
+      `Tồn nhỏ nhất\t${stockNormMin === null || stockNormMin === '' ? '' : stockNormMin}`,
+      `Giá vốn\t${cost}`,
+      `Giá bán lẻ\t${price}`,
+      `Giá sỉ\t${wholesale}`,
+      `Thương hiệu\t${brand}`,
+      `Trọng lượng\t${weightRaw}`,
+    ].join('\n')
+    navigator.clipboard.writeText(t).catch(() => {})
+  }, [soloGoodsVariant, soloGoodsDraft])
+
+  const discardSoloGoodsDraftChanges = useCallback(() => {
+    const vid = parseSoloProductTabId(activeTab)
+    if (!vid || !soloGoodsVariant) return
+    setSoloGoodsDraftByVariantId((prev) => ({
+      ...prev,
+      [vid]: buildGoodsDetailDraft(soloGoodsVariant),
+    }))
+  }, [activeTab, soloGoodsVariant])
+
+  const deleteSoloGoodsVariant = useCallback(() => {
+    const v = soloGoodsVariant
+    if (!v) return
+    if (!window.confirm(`Xóa mặt hàng "${v.name || v.code}" khỏi danh sách?`)) return
+    if (onRemoveCatalogVariants) {
+      onRemoveCatalogVariants([v.id])
+    } else if (standaloneCatalog?.products) {
+      const idSet = new Set([v.id])
+      const remaining = []
+      for (const p of standaloneCatalog.products) {
+        for (const gv of p.groupVariants || [p]) {
+          if (!idSet.has(gv.id)) remaining.push(gv)
+        }
+      }
+      const nextProducts = buildDisplayCatalog(remaining)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+    }
+    closeSoloProductTab()
+  }, [
+    soloGoodsVariant,
+    onRemoveCatalogVariants,
+    standaloneCatalog,
+    persistStandaloneProducts,
+    closeSoloProductTab,
+  ])
+
+  const openSoloGoodsUnitModal = useCallback(() => {
+    if (!soloActiveVariantId) return
+    const ctx = findVariantContext(catalogList, soloActiveVariantId)
+    if (!ctx?.variants?.length) return
+    setUnitModal({
+      anchorVariantId: String(soloActiveVariantId),
+      lines: createUnitModalLinesFromVariants(ctx.variants),
+      source: 'solo',
+    })
+  }, [catalogList, soloActiveVariantId])
+
+  const commitUnitModal = useCallback(() => {
+    if (!unitModal) return
+
+    if (unitModal.source === 'goods_create') {
+      const nameTrim = String(goodsNewNameRef.current?.value ?? '')
+        .replace(/\u00A0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!nameTrim) {
+        window.alert('Vui lòng nhập tên sản phẩm trước khi lưu đơn vị.')
+        return
+      }
+      const sortedLines = sortUnitModalLinesByConversion(unitModal.lines)
+      const root =
+        String(sortedLines[0]?.code ?? goodsNewCodeRef.current?.value ?? '').trim() ||
+        suggestNextProductCodeFromCatalog(catalogList)
+      const err = validateUnitModalLines(sortedLines, root)
+      if (err) {
+        window.alert(err)
+        return
+      }
+      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const templateVariant = {
+        id: unitModal.anchorVariantId,
+        code: root,
+        barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
+        name: nameTrim,
+        nameRaw: nameTrim,
+        price: parseMoneyDigitsVi(sortedLines[0]?.price ?? '0'),
+        cost: parseMoneyDigitsVi(sortedLines[0]?.cost ?? '0'),
+        stockQty: parseMoneyDraftVi(goodsNewStock),
+        wholesalePrice: parseMoneyDraftVi(goodsNewWholesale),
+        unitLabel: normalizeCatalogUnitLabel(sortedLines[0]?.unitLabel ?? goodsNewUnit),
+        conversion: parsePositiveConversion(sortedLines[0]?.conversion) ?? 1,
+        conversionValue: parsePositiveConversion(sortedLines[0]?.conversion) ?? 1,
+        linkedMasterCode: '',
+        brand: String(goodsNewBrand ?? '').trim(),
+        supplier: '',
+        stockNormMin: null,
+        stockNormMax: null,
+        weightRaw: '',
+        createdAtMs: Date.now(),
+        raw: [],
+      }
+      const replacements = buildCatalogVariantsFromUnitModal({
+        templateVariant,
+        linesSorted: sortedLines,
+        nameTrim,
+        prevByVariantId: new Map(),
+      })
+      for (const r of replacements) {
+        const c = String(r.code ?? '').trim().toLowerCase()
+        if (c && flat.some((v) => String(v.code ?? '').trim().toLowerCase() === c)) {
+          window.alert(`Mã hàng «${r.code}» đã tồn tại trong danh mục.`)
+          return
+        }
+      }
+      setGoodsNewMultiVariants(replacements)
+      const first = replacements[0]
+      if (first) {
+        if (goodsNewCodeRef.current) goodsNewCodeRef.current.value = String(first.code ?? '').trim()
+        setGoodsNewUnit(normalizeCatalogUnitLabel(first.unitLabel ?? goodsNewUnit))
+        setGoodsNewPrice(formatMoneyDraftVi(Number(first.price) || 0))
+        setGoodsNewWholesale(formatMoneyDraftVi(Number(first.wholesalePrice) || 0))
+        setGoodsNewCost(formatMoneyDraftVi(Number(first.cost) || 0))
+        if (goodsNewBarcodeRef.current) {
+          goodsNewBarcodeRef.current.value = String(
+            normalizeBarcodeValue(first.barcode ?? goodsNewBarcodeRef.current.value ?? '')
+          )
+        }
+      }
+      setUnitModal(null)
+      triggerGoodsSaveSuccessToast()
+      return
+    }
+
+    const ctx = findVariantContext(catalogList, unitModal.anchorVariantId)
+    if (!ctx?.variants?.length) {
+      setUnitModal(null)
+      return
+    }
+    const template = sortVariantsSmallestUnitFirst(ctx.variants)[0]
+    const sortedLines = sortUnitModalLinesByConversion(unitModal.lines)
+    const nameTrim =
+      unitModal.source === 'goods'
+        ? String(goodsDetailDraft?.name ?? goodsDetailVariant?.name ?? '')
+            .replace(/\u00A0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+        : String(soloGoodsDraft?.name ?? soloGoodsVariant?.name ?? '')
+            .replace(/\u00A0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+    if (!nameTrim) {
+      window.alert('Vui lòng nhập tên sản phẩm trước khi lưu đơn vị.')
+      return
+    }
+    const err = validateUnitModalLines(sortedLines, String(template.code ?? '').trim())
+    if (err) {
+      window.alert(err)
+      return
+    }
+    const prevById = new Map(ctx.variants.map((v) => [v.id, v]))
+    const replacements = buildCatalogVariantsFromUnitModal({
+      templateVariant: template,
+      linesSorted: sortedLines,
+      nameTrim,
+      prevByVariantId: prevById,
+    })
+    replaceCatalogGroupFromModal(unitModal.anchorVariantId, replacements)
+    triggerGoodsSaveSuccessToast()
+    const mainId = replacements[0]?.id
+    const src = unitModal.source
+    const oldAnchor = unitModal.anchorVariantId
+    setUnitModal(null)
+    if (mainId && src === 'goods') {
+      setGoodsDetailSelectedVid(mainId)
+      goodsDraftSeedKeyRef.current = ''
+    }
+    if (mainId && src === 'solo') {
+      if (oldAnchor !== mainId) {
+        setOpenProductVariantIds((prev) => prev.map((x) => (x === oldAnchor ? mainId : x)))
+      }
+      delete soloGoodsDraftSeedFpByVariantIdRef.current[oldAnchor]
+      delete soloGoodsDraftSeedFpByVariantIdRef.current[mainId]
+      setActiveTab(toSoloProductTabId(mainId))
+    }
+  }, [
+    unitModal,
+    catalogList,
+    goodsNewUnit,
+    goodsNewBrand,
+    goodsNewStock,
+    goodsDetailDraft,
+    goodsDetailVariant,
+    soloGoodsDraft,
+    soloGoodsVariant,
+    replaceCatalogGroupFromModal,
+    triggerGoodsSaveSuccessToast,
+  ])
+
+  const updateUnitModalConversionAtKey = useCallback((key, raw) => {
+    setUnitModal((m) => {
+      if (!m) return m
+      let lines = m.lines.map((r) => (r.key === key ? { ...r, conversion: raw } : r))
+      lines = sortUnitModalLinesByConversion(lines)
+      const bc = parseMoneyDigitsVi(lines[0].cost)
+      const bp = parseMoneyDigitsVi(lines[0].price)
+      lines = propagateBaseUnitMoney(lines, bc, bp)
+      return { ...m, lines }
+    })
+  }, [])
+
+  const updateUnitModalCostAtKey = useCallback((key, digits) => {
+    setUnitModal((m) => {
+      if (!m) return m
+      const n = digits === '' ? 0 : parseInt(digits, 10)
+      const costStr = digits === '' ? '' : formatMoneyDraftVi(n)
+      let lines = m.lines.map((r) => (r.key === key ? { ...r, cost: costStr } : r))
+      lines = sortUnitModalLinesByConversion(lines)
+      if (lines[0]?.key === key) {
+        lines = lines.map((r, i) =>
+          i === 0 ? { ...r, costManual: false, priceManual: false } : r
+        )
+        const bc = parseMoneyDigitsVi(lines[0].cost)
+        const bp = parseMoneyDigitsVi(lines[0].price)
+        lines = propagateBaseUnitMoney(lines, bc, bp)
+      } else {
+        lines = lines.map((r) => (r.key === key ? { ...r, costManual: true } : r))
+      }
+      return { ...m, lines }
+    })
+  }, [])
+
+  const updateUnitModalPriceAtKey = useCallback((key, digits) => {
+    setUnitModal((m) => {
+      if (!m) return m
+      const n = digits === '' ? 0 : parseInt(digits, 10)
+      const priceStr = digits === '' ? '' : formatMoneyDraftVi(n)
+      let lines = m.lines.map((r) => (r.key === key ? { ...r, price: priceStr } : r))
+      lines = sortUnitModalLinesByConversion(lines)
+      if (lines[0]?.key === key) {
+        lines = lines.map((r, i) =>
+          i === 0 ? { ...r, costManual: false, priceManual: false } : r
+        )
+        const bc = parseMoneyDigitsVi(lines[0].cost)
+        const bp = parseMoneyDigitsVi(lines[0].price)
+        lines = propagateBaseUnitMoney(lines, bc, bp)
+      } else {
+        lines = lines.map((r) => (r.key === key ? { ...r, priceManual: true } : r))
+      }
+      return { ...m, lines }
+    })
+  }, [])
+
+  const addUnitModalRow = useCallback(() => {
+    setUnitModal((m) => {
+      if (!m) return m
+      const s = sortUnitModalLinesByConversion(m.lines)
+      const last = s[s.length - 1]
+      const lastC = parsePositiveConversion(last?.conversion) ?? 1
+      const nextC = Math.max(2, Math.round(lastC * 2))
+      let lines = [
+        ...m.lines,
+        {
+          key: newUnitModalRowKey(),
+          variantId: '',
+          unitLabel: '',
+          conversion: String(nextC),
+          code: '',
+          barcode: '',
+          cost: '',
+          price: '',
+          costManual: false,
+          priceManual: false,
+        },
+      ]
+      lines = sortUnitModalLinesByConversion(lines)
+      const bc = parseMoneyDigitsVi(lines[0].cost)
+      const bp = parseMoneyDigitsVi(lines[0].price)
+      lines = propagateBaseUnitMoney(lines, bc, bp)
+      return { ...m, lines }
+    })
+  }, [])
+
+  const removeUnitModalRowKey = useCallback((key) => {
+    setUnitModal((m) => {
+      if (!m || m.lines.length <= 1) return m
+      let lines = m.lines.filter((r) => r.key !== key)
+      lines = sortUnitModalLinesByConversion(lines)
+      const bc = parseMoneyDigitsVi(lines[0].cost)
+      const bp = parseMoneyDigitsVi(lines[0].price)
+      lines = propagateBaseUnitMoney(lines, bc, bp)
+      return { ...m, lines }
+    })
+  }, [])
+
+  const unitModalSortedRows = useMemo(
+    () => (unitModal ? sortUnitModalLinesByConversion(unitModal.lines) : []),
+    [unitModal]
+  )
+
+  const goodsSelectedIds = useMemo(
+    () => new Set(Object.keys(goodsSelected).filter((k) => goodsSelected[k])),
+    [goodsSelected]
+  )
+
+  const goodsAllFilteredSelected =
+    goodsRowsFiltered.length > 0 && goodsRowsFiltered.every((r) => goodsSelected[r.id])
+
+  const toggleGoodsSelect = (id) => {
+    setGoodsSelected((m) => ({ ...m, [id]: !m[id] }))
+  }
+
+  const toggleGoodsSelectAll = () => {
+    if (goodsAllFilteredSelected) {
+      setGoodsSelected((m) => {
+        const next = { ...m }
+        for (const r of goodsRowsFiltered) delete next[r.id]
+        return next
+      })
+    } else {
+      setGoodsSelected((m) => {
+        const next = { ...m }
+        for (const r of goodsRowsFiltered) next[r.id] = true
+        return next
+      })
+    }
+  }
+
+  const handleGoodsImport = () => {
+    if (onTriggerCatalogImport) onTriggerCatalogImport()
+    else standaloneImportRef.current?.click()
+  }
+
+  const onStandaloneCsv = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      await saveCatalogSnapshot([], '')
+    } catch {
+      /* ignore */
+    }
+    try {
+      const res = await parseCatalogBlobFile(file)
+      if (res.error) {
+        alert(res.error)
+        return
+      }
+      await saveCatalogSnapshot(res.products, file.name)
+      const refreshed = refreshCatalogSearchTexts(res.products)
+      startTransition(() => {
+        setStandaloneCatalog({
+          products: refreshed,
+          fileName: file.name,
+        })
+        setGoodsSelected({})
+      })
+    } catch (err) {
+      console.error(err)
+      alert('Không đọc được file.')
+    }
+  }
+
+  const handleGoodsExport = () => {
+    const pick =
+      goodsSelectedIds.size > 0
+        ? goodsRowsAll.filter((r) => goodsSelectedIds.has(r.id))
+        : goodsRowsFiltered
+    if (pick.length === 0) {
+      alert('Không có dòng nào để xuất.')
+      return
+    }
+    try {
+      exportGoodsRowsToKiotCsv(pick)
+    } catch (err) {
+      console.error(err)
+      alert('Không xuất được file CSV.')
+    }
+  }
+
+  const handleGoodsDeleteSelected = () => {
+    const ids = [...goodsSelectedIds]
+    if (ids.length === 0) {
+      alert('Chọn ít nhất một dòng (ô đầu dòng).')
+      return
+    }
+    if (!window.confirm(`Xóa ${ids.length} mặt hàng khỏi danh sách trên trình duyệt này?`)) return
+    if (onRemoveCatalogVariants) {
+      onRemoveCatalogVariants(ids)
+      setGoodsSelected({})
+      return
+    }
+    const idSet = new Set(ids)
+    const remaining = []
+    for (const p of standaloneCatalog?.products ?? []) {
+      for (const v of p.groupVariants || [p]) {
+        if (!idSet.has(v.id)) remaining.push(v)
+      }
+    }
+    const nextProducts = buildDisplayCatalog(remaining)
+    const fn = standaloneCatalog?.fileName || ''
+    void persistStandaloneProducts(nextProducts, fn)
+    setGoodsSelected({})
+  }
+
+  /* —— Nhập hàng —— */
+  const [inboundOrders, setInboundOrders] = useState(() => loadInboundOrdersFromStorage())
+  const [inboundQ, setInboundQ] = useState('')
+  const inboundDebounced = useDebounced(inboundQ, 180)
+  const [inboundSelected, setInboundSelected] = useState(() => ({}))
+
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND && activeTab !== TAB_ORDERS) {
+      setInboundSelected({})
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INBOUND_STORAGE_KEY, JSON.stringify(inboundOrders))
+    } catch (e) {
+      console.warn(e)
+    }
+  }, [inboundOrders])
+
+  const inboundRowsFiltered = useMemo(() => {
+    const q = inboundDebounced.trim().toLowerCase()
+    if (!q) return inboundOrders
+    return inboundOrders.filter(
+      (r) =>
+        String(r.code).toLowerCase().includes(q) ||
+        String(r.supplier).toLowerCase().includes(q) ||
+        inboundStatusLabel(r.status).toLowerCase().includes(q)
+    )
+  }, [inboundOrders, inboundDebounced])
+
+  const inboundSelectedIds = useMemo(
+    () => new Set(Object.keys(inboundSelected).filter((k) => inboundSelected[k])),
+    [inboundSelected]
+  )
+
+  const inboundAllFilteredSelected =
+    inboundRowsFiltered.length > 0 && inboundRowsFiltered.every((r) => inboundSelected[r.id])
+
+  const toggleInboundSelect = (id) => {
+    setInboundSelected((m) => ({ ...m, [id]: !m[id] }))
+  }
+
+  const toggleInboundSelectAll = () => {
+    if (inboundAllFilteredSelected) {
+      setInboundSelected((m) => {
+        const next = { ...m }
+        for (const r of inboundRowsFiltered) delete next[r.id]
+        return next
+      })
+    } else {
+      setInboundSelected((m) => {
+        const next = { ...m }
+        for (const r of inboundRowsFiltered) next[r.id] = true
+        return next
+      })
+    }
+  }
+
+  const handleInboundDeleteSelected = () => {
+    const ids = [...inboundSelectedIds]
+    if (ids.length === 0) {
+      alert('Chọn ít nhất một đơn (ô đầu dòng).')
+      return
+    }
+    if (!window.confirm(`Xóa ${ids.length} đơn nhập đã chọn?`)) return
+    const idSet = new Set(ids)
+    setInboundOrders((rows) => rows.filter((r) => !idSet.has(r.id)))
+    setInboundSelected({})
+  }
+
+  const handleInboundExportSelected = () => {
+    if (inboundSelectedIds.size === 0) {
+      alert('Chọn ít nhất một đơn để xuất file.')
+      return
+    }
+    const pick = inboundOrders.filter((r) => inboundSelectedIds.has(r.id))
+    try {
+      exportInboundRowsToCsvFile(pick)
+    } catch (err) {
+      console.error(err)
+      alert('Không xuất được file.')
+    }
+  }
+
+  const inboundListImportRef = useRef(null)
+  const [suppliers, setSuppliers] = useState(() => loadSuppliersFromStorage())
+
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND) return
+    setSuppliers(loadSuppliersFromStorage())
+  }, [activeTab, refreshKey])
+
+  const persistSuppliers = useCallback((rows) => {
+    try {
+      localStorage.setItem(SUPPLIERS_STORAGE_KEY, JSON.stringify(rows))
+    } catch (e) {
+      console.warn(e)
+    }
+    setSuppliers(rows)
+  }, [])
+
+  /** Khi true, hiện tab "Phiếu nhập mới" trên nav (cho đến khi đóng / lưu). */
+  const [inboundDraftSession, setInboundDraftSession] = useState(() => Boolean(standaloneInboundCreate))
+  const inboundCompletePendingRef = useRef(null)
+  /** Modal xác nhận ghi đè giá vốn khi Hoàn thành. */
+  const [inboundCostDiffModal, setInboundCostDiffModal] = useState(null)
+  /** Modal kết quả sau khi cập nhật giá nhập. */
+  const [inboundCostResultModal, setInboundCostResultModal] = useState(null)
+  const [inboundCostResultDetailsOpen, setInboundCostResultDetailsOpen] = useState(true)
+  const [inboundFormLines, setInboundFormLines] = useState([])
+  const [inboundFormProductQ, setInboundFormProductQ] = useState('')
+  const inboundProductSearchRef = useRef(null)
+  const [inboundQuickPickOpen, setInboundQuickPickOpen] = useState(false)
+  const [inboundQuickPickSelected, setInboundQuickPickSelected] = useState(() => new Set())
+  const inboundFormProductDebounced = useDebounced(inboundFormProductQ, 140)
+  const [inboundFormSupplierQ, setInboundFormSupplierQ] = useState('')
+  const [inboundFormSupplierName, setInboundFormSupplierName] = useState('')
+  const [inboundSupplierSuggestOpen, setInboundSupplierSuggestOpen] = useState(false)
+  const [inboundFormCode, setInboundFormCode] = useState('')
+  const [inboundFormNote, setInboundFormNote] = useState('')
+  const [inboundFormDiscMode, setInboundFormDiscMode] = useState('amount')
+  const [inboundFormDiscRaw, setInboundFormDiscRaw] = useState('')
+  const [supplierModalOpen, setSupplierModalOpen] = useState(false)
+  const [newSup, setNewSup] = useState({ name: '', phone: '', address: '', cccd: '' })
+  /** Đang sửa phiếu nhập có sẵn (id đơn). */
+  const [inboundFormEditOrderId, setInboundFormEditOrderId] = useState(null)
+  /** Hoàn trả: đơn + số lượng trả nhập theo lineId (chuỗi ô input). */
+  const [inboundReturnModal, setInboundReturnModal] = useState(null)
+  const [inboundReturnQtyDraft, setInboundReturnQtyDraft] = useState({})
+  /** Hủy đơn: xác nhận floating. */
+  const [inboundCancelModal, setInboundCancelModal] = useState(null)
+  /** Tab nav: nhiều phiếu chi tiết cùng lúc. */
+  const [openInboundDetailOrderIds, setOpenInboundDetailOrderIds] = useState([])
+  /** Chỉnh sửa inline trong tab chi tiết: orderId → dòng draft. */
+  const [inboundDetailLineDrafts, setInboundDetailLineDrafts] = useState({})
+  const openInboundDetailOrderIdsRef = useRef([])
+  useEffect(() => {
+    openInboundDetailOrderIdsRef.current = openInboundDetailOrderIds
+  }, [openInboundDetailOrderIds])
+
+  const [openPosDetailOrderIds, setOpenPosDetailOrderIds] = useState([])
+  const [posDetailEditDrafts, setPosDetailEditDrafts] = useState({})
+  const [posReturnModal, setPosReturnModal] = useState(null)
+  const [posReturnQtyDraft, setPosReturnQtyDraft] = useState({})
+  const [posCancelModal, setPosCancelModal] = useState(null)
+  const openPosDetailOrderIdsRef = useRef([])
+  useEffect(() => {
+    openPosDetailOrderIdsRef.current = openPosDetailOrderIds
+  }, [openPosDetailOrderIds])
+
+  const [openPosReturnDetailLedgerIds, setOpenPosReturnDetailLedgerIds] = useState([])
+  const openPosReturnDetailLedgerIdsRef = useRef([])
+  useEffect(() => {
+    openPosReturnDetailLedgerIdsRef.current = openPosReturnDetailLedgerIds
+  }, [openPosReturnDetailLedgerIds])
+
+  /** Thương hiệu (cột D / KiotViet) — dùng làm gợi ý nhanh cho ô Nhà cung cấp phiếu nhập. */
+  const catalogBrandNames = useMemo(() => {
+    const s = new Set()
+    for (const p of catalogList || []) {
+      for (const v of p.groupVariants || [p]) {
+        const t = String(v.brand ?? p.brand ?? '').trim()
+        if (t) s.add(t)
+      }
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [catalogList])
+
+  /** Gợi ý NCC: tối đa 10 thương hiệu (cột D); không trộn NCC đã lưu để khớp menu nhỏ. */
+  const inboundNccSuggest = useMemo(() => {
+    const INBOUND_NCC_BRAND_CAP = 10
+    const q = inboundFormSupplierQ.trim().toLowerCase()
+    const brandRow = (n) => ({
+      key: `br-${n}`,
+      name: n,
+      subtitle: 'Thương hiệu (cột D · file danh mục)',
+    })
+    if (!q) {
+      if (!inboundSupplierSuggestOpen) return []
+      return catalogBrandNames.slice(0, INBOUND_NCC_BRAND_CAP).map((n) => brandRow(n))
+    }
+    const out = []
+    for (const n of catalogBrandNames) {
+      if (!n.toLowerCase().includes(q)) continue
+      out.push(brandRow(n))
+      if (out.length >= INBOUND_NCC_BRAND_CAP) break
+    }
+    return out
+  }, [catalogBrandNames, inboundFormSupplierQ, inboundSupplierSuggestOpen])
+
+  const inboundProductSuggest = useMemo(() => {
+    const raw = inboundFormProductDebounced.trim()
+    if (!raw || catalogList.length === 0) return []
+    return suggestCatalogVariantPairsV9(catalogList, raw, {
+      maxHits: 20,
+      surface: 'admin-inbound-product-suggest',
+    })
+  }, [catalogList, inboundFormProductDebounced])
+
+  const inboundFormGoodsSubtotal = useMemo(
+    () => inboundFormLines.reduce((s, ln) => s + inboundLineTotal(ln), 0),
+    [inboundFormLines]
+  )
+
+  const inboundFormOrderDiscountAmount = useMemo(() => {
+    const sub = inboundFormGoodsSubtotal
+    if (inboundFormDiscMode === 'percent') {
+      const p = parsePercentDraftVi(inboundFormDiscRaw)
+      return Math.round((sub * p) / 100)
+    }
+    return Math.min(sub, Math.max(0, parseMoneyDraftVi(inboundFormDiscRaw)))
+  }, [inboundFormGoodsSubtotal, inboundFormDiscMode, inboundFormDiscRaw])
+
+  const inboundFormTotalPay = useMemo(
+    () => Math.max(0, inboundFormGoodsSubtotal - inboundFormOrderDiscountAmount),
+    [inboundFormGoodsSubtotal, inboundFormOrderDiscountAmount]
+  )
+
+  const resetInboundForm = useCallback(() => {
+    setInboundFormEditOrderId(null)
+    setInboundFormLines([])
+    setInboundFormProductQ('')
+    setInboundQuickPickOpen(false)
+    setInboundQuickPickSelected(new Set())
+    setInboundFormSupplierQ('')
+    setInboundFormSupplierName('')
+    setInboundFormCode('')
+    setInboundFormNote('')
+    setInboundFormDiscMode('amount')
+    setInboundFormDiscRaw('')
+    setSupplierModalOpen(false)
+    setNewSup({ name: '', phone: '', address: '', cccd: '' })
+  }, [])
+
+  const openInboundCreateForm = useCallback(() => {
+    const url = getInboundCreateAbsUrl()
+    if (url) window.open(url, '_blank', 'noopener,noreferrer')
+  }, [])
+
+  const closeInboundForm = useCallback(() => {
+    if (standaloneInboundCreate) {
+      window.close()
+      return
+    }
+    setInboundDraftSession(false)
+    setActiveTab((prev) => (prev === TAB_INBOUND_DRAFT ? TAB_INBOUND : prev))
+    resetInboundForm()
+    syncHubUrlToMainTab(TAB_INBOUND)
+  }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab])
+
+  const addInboundFormLine = useCallback((product, variant) => {
+    setInboundFormLines((prev) => [...prev, createInboundFormLineFromProductVariant(product, variant)])
+    setInboundFormProductQ('')
+  }, [])
+
+  const toggleInboundQuickPickSel = useCallback((vid) => {
+    const id = String(vid)
+    setInboundQuickPickSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const confirmInboundQuickPick = useCallback(() => {
+    setInboundFormLines((cur) => {
+      const have = new Set(cur.map((l) => String(l.variantId)))
+      const toAdd = []
+      for (const r of flattenCatalogToGoodsSearchRows(catalogList)) {
+        const vid = String(r._variant.id)
+        if (!inboundQuickPickSelected.has(vid)) continue
+        if (have.has(vid)) continue
+        have.add(vid)
+        toAdd.push(createInboundFormLineFromProductVariant(r._product, r._variant))
+      }
+      if (toAdd.length === 0) return cur
+      return [...cur, ...toAdd]
+    })
+    setInboundQuickPickOpen(false)
+    setInboundQuickPickSelected(new Set())
+    setInboundFormProductQ('')
+  }, [catalogList, inboundQuickPickSelected])
+
+  const updateInboundFormLine = useCallback((lineId, patch) => {
+    setInboundFormLines((prev) =>
+      prev.map((ln) => {
+        if (ln.lineId !== lineId) return ln
+        const merged = { ...ln, ...patch }
+        const n = normalizeInboundLine(merged)
+        let qty = n.qty
+        if (qty < n.returnedQty) qty = n.returnedQty
+        return { ...merged, qty, returnedQty: n.returnedQty }
+      })
+    )
+  }, [])
+
+  const removeInboundFormLine = useCallback((lineId) => {
+    setInboundFormLines((prev) => prev.filter((ln) => ln.lineId !== lineId))
+  }, [])
+
+  const submitNewSupplier = useCallback(() => {
+    const name = String(newSup.name || '').trim()
+    if (!name) {
+      alert('Nhập tên nhà cung cấp.')
+      return
+    }
+    const row = {
+      id: createInboundId(),
+      name,
+      phone: String(newSup.phone || '').trim(),
+      address: String(newSup.address || '').trim(),
+      cccd: String(newSup.cccd || '').trim(),
+    }
+    persistSuppliers([...suppliers, row])
+    setInboundFormSupplierName(name)
+    setInboundFormSupplierQ(name)
+    setSupplierModalOpen(false)
+    setNewSup({ name: '', phone: '', address: '', cccd: '' })
+  }, [newSup, suppliers, persistSuppliers])
+
+  const buildInboundOrderPayload = useCallback(
+    (status) => {
+      const supplier = String(inboundFormSupplierName || '').trim()
+      const editRow = inboundFormEditOrderId
+        ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)
+        : null
+      let code = String(inboundFormCode || '').trim()
+      if (editRow) {
+        code = String(editRow.code || '').trim()
+      } else if (!code) {
+        code = computeNextInboundCode(inboundOrders)
+      }
+      if (!editRow) {
+        const used = new Set(inboundOrders.map((o) => String(o.code || '').toUpperCase()))
+        let tryCode = code
+        if (used.has(tryCode.toUpperCase())) {
+          const m0 = tryCode.match(/^NH(\d+)$/i)
+          if (m0) {
+            let seq = parseInt(m0[1], 10)
+            do {
+              seq += 1
+              tryCode = `NH${String(seq).padStart(3, '0')}`
+            } while (used.has(tryCode.toUpperCase()) && seq < 99999)
+          } else {
+            const base = tryCode
+            let k = 0
+            do {
+              k += 1
+              tryCode = `${base}-${k}`
+            } while (used.has(tryCode.toUpperCase()) && k < 5000)
+          }
+        }
+        code = tryCode
+      }
+      const lines = inboundFormLines.map(normalizeInboundLine)
+      const id = editRow ? editRow.id : createInboundId()
+      const createdAtMs = editRow ? editRow.createdAtMs : Date.now()
+      return normalizeInboundRow({
+        id,
+        code,
+        createdAtMs,
+        supplier,
+        totalValue: inboundFormTotalPay,
+        goodsSubtotal: inboundFormGoodsSubtotal,
+        status,
+        lines,
+        note: String(inboundFormNote || '').trim(),
+        orderDiscountMode: inboundFormDiscMode,
+        orderDiscountValue:
+          inboundFormDiscMode === 'percent'
+            ? parsePercentDraftVi(inboundFormDiscRaw)
+            : inboundFormOrderDiscountAmount,
+      })
+    },
+    [
+      inboundFormEditOrderId,
+      inboundFormSupplierName,
+      inboundFormCode,
+      inboundOrders,
+      inboundFormLines,
+      inboundFormTotalPay,
+      inboundFormGoodsSubtotal,
+      inboundFormNote,
+      inboundFormDiscMode,
+      inboundFormDiscRaw,
+      inboundFormOrderDiscountAmount,
+    ]
+  )
+
+  const applyInboundStockIncrease = useCallback(
+    (lines) => {
+      const valid = lines.filter((l) => {
+        const n = normalizeInboundLine(l)
+        return n.variantId && inboundLineReturnableQty(n) > 0
+      })
+      if (valid.length === 0) return
+      if (onUpdateCatalogVariant) {
+        const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+        for (const l of valid) {
+          const n = normalizeInboundLine(l)
+          const v = flat.find((x) => x.id === n.variantId)
+          if (!v) continue
+          const cur =
+            v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
+          const add = inboundLineReturnableQty(n)
+          onUpdateCatalogVariant(n.variantId, { stockQty: cur + add })
+        }
+        return
+      }
+      if (!standaloneCatalog?.products?.length) return
+      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const nextFlat = flat.map((v) => {
+        const hit = valid.find((l) => normalizeInboundLine(l).variantId === v.id)
+        if (!hit) return v
+        const n = normalizeInboundLine(hit)
+        const cur =
+          v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
+        return { ...v, stockQty: cur + inboundLineReturnableQty(n) }
+      })
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+    },
+    [
+      catalogList,
+      onUpdateCatalogVariant,
+      standaloneCatalog,
+      persistStandaloneProducts,
+    ]
+  )
+
+  /** delta > 0 nhập thêm tồn, < 0 trừ tồn (clamp về 0). */
+  const applyInboundStockDeltas = useCallback(
+    (deltaByVariant) => {
+      if (!deltaByVariant || deltaByVariant.size === 0) return
+      if (onUpdateCatalogVariant) {
+        const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+        for (const [variantId, delta] of deltaByVariant) {
+          if (!delta) continue
+          const v = flat.find((x) => x.id === variantId)
+          if (!v) continue
+          const cur =
+            v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
+          onUpdateCatalogVariant(variantId, { stockQty: Math.max(0, cur + delta) })
+        }
+        return
+      }
+      if (!standaloneCatalog?.products?.length) return
+      let nextFlat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      for (const [variantId, delta] of deltaByVariant) {
+        if (!delta) continue
+        nextFlat = nextFlat.map((v) => {
+          if (v.id !== variantId) return v
+          const cur =
+            v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
+          return { ...v, stockQty: Math.max(0, cur + delta) }
+        })
+      }
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+    },
+    [catalogList, onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
+  )
+
+  const applyInboundStockDeltasFromNetMaps = useCallback(
+    (oldMap, newMap) => {
+      const keys = new Set([...oldMap.keys(), ...newMap.keys()])
+      const deltas = new Map()
+      for (const k of keys) {
+        const d = (newMap.get(k) || 0) - (oldMap.get(k) || 0)
+        if (d) deltas.set(k, d)
+      }
+      applyInboundStockDeltas(deltas)
+    },
+    [applyInboundStockDeltas]
+  )
+
+  const applyInboundCostUpdates = useCallback(
+    (diffs) => {
+      if (!diffs?.length) return
+      const byId = new Map()
+      for (const d of diffs) {
+        byId.set(d.variantId, Math.max(0, Math.round(Number(d.newPrice) || 0)))
+      }
+      if (onUpdateCatalogVariant) {
+        for (const [variantId, cost] of byId) {
+          onUpdateCatalogVariant(variantId, { cost })
+        }
+        return
+      }
+      if (!standaloneCatalog?.products?.length) return
+      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const nextFlat = flat.map((v) => {
+        const c = byId.get(v.id)
+        if (c === undefined) return v
+        return { ...v, cost: c }
+      })
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+    },
+    [onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
+  )
+
+  const finalizeInboundCompleted = useCallback(
+    (costDiffs) => {
+      const row = buildInboundOrderPayload('completed')
+      setInboundOrders((prev) => [row, ...prev])
+      applyInboundStockIncrease(row.lines)
+      if (costDiffs?.length) applyInboundCostUpdates(costDiffs)
+      closeInboundForm()
+    },
+    [buildInboundOrderPayload, applyInboundStockIncrease, applyInboundCostUpdates, closeInboundForm]
+  )
+
+  const finalizeInboundEditCompleted = useCallback(
+    (costDiffs) => {
+      const editId = inboundFormEditOrderId
+      if (!editId) return
+      const prevRow = inboundOrders.find((o) => o.id === editId)
+      if (!prevRow) return
+      const payload = buildInboundOrderPayload('completed')
+      const merged = normalizeInboundRow({
+        ...payload,
+        id: prevRow.id,
+        code: prevRow.code,
+        createdAtMs: prevRow.createdAtMs,
+        status: computeInboundStatusAfterLines(payload.lines),
+      })
+      const hadStock =
+        prevRow.status === 'completed' ||
+        prevRow.status === 'returned_partial' ||
+        prevRow.status === 'returned_full'
+      if (hadStock) {
+        const oldM = netVariantQtyMapFromInboundLines(prevRow.lines)
+        const newM = netVariantQtyMapFromInboundLines(merged.lines)
+        applyInboundStockDeltasFromNetMaps(oldM, newM)
+      } else {
+        applyInboundStockIncrease(merged.lines)
+      }
+      if (costDiffs?.length) applyInboundCostUpdates(costDiffs)
+      setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
+      setInboundFormEditOrderId(null)
+      closeInboundForm()
+    },
+    [
+      inboundFormEditOrderId,
+      inboundOrders,
+      buildInboundOrderPayload,
+      applyInboundStockDeltasFromNetMaps,
+      applyInboundStockIncrease,
+      applyInboundCostUpdates,
+      closeInboundForm,
+    ]
+  )
+
+  const handleInboundCompleteClick = useCallback(() => {
+    const supplier = String(inboundFormSupplierName || '').trim()
+    if (!supplier) {
+      alert('Vui lòng chọn hoặc nhập tên nhà cung cấp (bắt buộc).')
+      return
+    }
+    const hasQty = inboundFormLines.some((l) => Number(l.qty) > 0)
+    if (!hasQty) {
+      alert('Thêm ít nhất một dòng hàng với số lượng > 0 để hoàn thành phiếu.')
+      return
+    }
+    if (catalogList.length === 0) {
+      alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
+      return
+    }
+    const diffs = computeInboundCostDiffs(catalogList, inboundFormLines)
+    if (diffs.length === 0) {
+      if (inboundFormEditOrderId) finalizeInboundEditCompleted(null)
+      else finalizeInboundCompleted(null)
+      return
+    }
+    inboundCompletePendingRef.current = {
+      diffs,
+      mode: inboundFormEditOrderId ? 'edit' : 'create',
+    }
+    setInboundCostDiffModal({ diffs })
+  }, [
+    inboundFormSupplierName,
+    inboundFormLines,
+    catalogList,
+    inboundFormEditOrderId,
+    finalizeInboundCompleted,
+    finalizeInboundEditCompleted,
+  ])
+
+  const cancelInboundCostDiffModal = useCallback(() => {
+    inboundCompletePendingRef.current = null
+    setInboundCostDiffModal(null)
+  }, [])
+
+  const confirmInboundCostSave = useCallback(() => {
+    const pending = inboundCompletePendingRef.current
+    if (!pending?.diffs?.length) {
+      cancelInboundCostDiffModal()
+      return
+    }
+    const diffs = pending.diffs
+    const mode = pending.mode || 'create'
+    const mergedRow = pending.mergedRow
+    const oldRow = pending.oldRow
+    inboundCompletePendingRef.current = null
+    setInboundCostDiffModal(null)
+    if (mode === 'detail_edit' && mergedRow && oldRow) {
+      const oid = mergedRow.id
+      const hadStock =
+        oldRow.status === 'completed' ||
+        oldRow.status === 'returned_partial' ||
+        oldRow.status === 'returned_full'
+      if (hadStock) {
+        const oldM = netVariantQtyMapFromInboundLines(oldRow.lines)
+        const newM = netVariantQtyMapFromInboundLines(mergedRow.lines)
+        applyInboundStockDeltasFromNetMaps(oldM, newM)
+      } else {
+        applyInboundStockIncrease(mergedRow.lines)
+      }
+      if (diffs?.length) applyInboundCostUpdates(diffs)
+      setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
+      setInboundDetailLineDrafts((prev) => {
+        if (!prev[oid]) return prev
+        const n = { ...prev }
+        delete n[oid]
+        return n
+      })
+    } else if (mode === 'edit') {
+      finalizeInboundEditCompleted(diffs)
+    } else {
+      finalizeInboundCompleted(diffs)
+    }
+    setInboundCostResultDetailsOpen(true)
+    const originTab =
+      mode === 'detail_edit' && mergedRow?.id ? toInboundDetailTabId(mergedRow.id) : TAB_INBOUND
+    inboundCostResultOriginTabRef.current = originTab
+    setInboundCostResultModal({
+      updated: diffs.map((d) => ({
+        variantId: d.variantId,
+        code: d.code,
+        name: d.name,
+      })),
+      failCount: 0,
+      originTab: originTab,
+    })
+  }, [
+    finalizeInboundCompleted,
+    finalizeInboundEditCompleted,
+    cancelInboundCostDiffModal,
+    applyInboundStockDeltasFromNetMaps,
+    applyInboundStockIncrease,
+    applyInboundCostUpdates,
+  ])
+
+  const dismissInboundCostResultModal = useCallback(() => {
+    inboundCostResultOriginTabRef.current = null
+    setInboundCostResultModal(null)
+  }, [])
+
+  const focusInboundDraftField = useCallback((lineId, field) => {
+    const id = String(lineId ?? '')
+    if (!id || !field) return
+    try {
+      const el = document.querySelector(
+        `input[data-inbound-line="${id}"][data-inbound-field="${field}"]`
+      )
+      if (el && typeof el.focus === 'function') {
+        el.focus()
+        requestAnimationFrame(() => {
+          try {
+            if (typeof el.select === 'function') el.select()
+          } catch {
+            /* ignore */
+          }
+        })
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const handleInboundNumericKeyDown = useCallback(
+    (e, lineId, field) => {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      const idx = inboundFormLines.findIndex((l) => l.lineId === lineId)
+      if (idx < 0 || idx >= inboundFormLines.length - 1) return
+      const nextId = inboundFormLines[idx + 1].lineId
+      focusInboundDraftField(nextId, field)
+    },
+    [inboundFormLines, focusInboundDraftField]
+  )
+
+  const selectInboundInputOnFocus = useCallback((e) => {
+    const el = e.target
+    if (!el || el.tagName !== 'INPUT') return
+    requestAnimationFrame(() => {
+      try {
+        if (typeof el.select === 'function') el.select()
+      } catch {
+        /* ignore */
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND_DRAFT) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (supplierModalOpen) return
+      if (inboundQuickPickOpen) {
+        e.preventDefault()
+        setInboundQuickPickOpen(false)
+        setInboundQuickPickSelected(new Set())
+        return
+      }
+      if (inboundCostDiffModal) {
+        e.preventDefault()
+        cancelInboundCostDiffModal()
+        return
+      }
+      if (inboundCostResultModal) {
+        e.preventDefault()
+        /* Chỉ đóng bằng nút Xác nhận — không đóng bằng Escape */
+        return
+      }
+      if (inboundReturnModal || inboundCancelModal) {
+        e.preventDefault()
+        return
+      }
+      e.preventDefault()
+      closeInboundForm()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    activeTab,
+    supplierModalOpen,
+    inboundQuickPickOpen,
+    inboundCostDiffModal,
+    inboundCostResultModal,
+    inboundReturnModal,
+    inboundCancelModal,
+    cancelInboundCostDiffModal,
+    closeInboundForm,
+  ])
+
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND_DRAFT) return
+    const onKey = (e) => {
+      if (e.key !== 'F3') return
+      if (inboundQuickPickOpen) return
+      if (supplierModalOpen || inboundCostDiffModal || inboundCostResultModal || inboundReturnModal || inboundCancelModal)
+        return
+      e.preventDefault()
+      inboundProductSearchRef.current?.focus?.()
+      inboundProductSearchRef.current?.select?.()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    activeTab,
+    inboundQuickPickOpen,
+    supplierModalOpen,
+    inboundCostDiffModal,
+    inboundCostResultModal,
+    inboundReturnModal,
+    inboundCancelModal,
+  ])
+
+  const saveInboundForm = useCallback(
+    (status) => {
+      const supplier = String(inboundFormSupplierName || '').trim()
+      if (!supplier) {
+        alert('Vui lòng chọn hoặc nhập tên nhà cung cấp (bắt buộc).')
+        return
+      }
+      if (inboundFormEditOrderId && status === 'saved_temp') {
+        const prev = inboundOrders.find((o) => o.id === inboundFormEditOrderId)
+        if (
+          prev &&
+          (prev.status === 'completed' ||
+            prev.status === 'returned_partial' ||
+            prev.status === 'returned_full')
+        ) {
+          alert('Phiếu đã hoàn thành: dùng nút Hoàn thành để cập nhật tồn kho và tổng tiền.')
+          return
+        }
+        const row = buildInboundOrderPayload('saved_temp')
+        setInboundOrders((p) => p.map((o) => (o.id === inboundFormEditOrderId ? row : o)))
+        setInboundFormEditOrderId(null)
+        closeInboundForm()
+        return
+      }
+      if (status === 'completed') {
+        handleInboundCompleteClick()
+        return
+      }
+      const row = buildInboundOrderPayload(status)
+      setInboundOrders((prev) => [row, ...prev])
+      closeInboundForm()
+    },
+    [
+      inboundFormSupplierName,
+      inboundFormEditOrderId,
+      inboundOrders,
+      buildInboundOrderPayload,
+      closeInboundForm,
+      handleInboundCompleteClick,
+    ]
+  )
+
+  const openInboundReturnModal = useCallback((order) => {
+    const row = normalizeInboundRow(order)
+    if (row.status === 'cancelled') return
+    if (!['completed', 'returned_partial', 'returned_full'].includes(row.status)) {
+      alert('Chỉ hoàn trả được đơn đã hoàn thành (còn hàng trong kho từ phiếu).')
+      return
+    }
+    if (!row.lines.some((l) => inboundLineReturnableQty(l) > 0 && l.variantId)) {
+      alert('Không còn dòng hàng để hoàn trả.')
+      return
+    }
+    if (catalogList.length === 0) {
+      alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
+      return
+    }
+    setInboundReturnQtyDraft({})
+    setInboundReturnModal(row)
+  }, [catalogList.length])
+
+  const confirmInboundReturnSubmit = useCallback(() => {
+    if (!inboundReturnModal) return
+    const order = normalizeInboundRow(inboundReturnModal)
+    const deltas = new Map()
+    let anyTake = false
+    const newLines = order.lines.map((raw) => {
+      const ln = normalizeInboundLine(raw)
+      const cap = inboundLineReturnableQty(ln)
+      const draft = parseReturnQtyDraft(inboundReturnQtyDraft[ln.lineId], cap)
+      if (draft <= 0) return ln
+      anyTake = true
+      if (ln.variantId) deltas.set(ln.variantId, (deltas.get(ln.variantId) || 0) - draft)
+      return { ...ln, returnedQty: ln.returnedQty + draft }
+    })
+    if (!anyTake) {
+      alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
+      return
+    }
+    applyInboundStockDeltas(deltas)
+    const allReturned = newLines.every((raw) => {
+      const n = normalizeInboundLine(raw)
+      return n.qty <= 0 || n.returnedQty >= n.qty
+    })
+    const anyReturned = newLines.some((raw) => normalizeInboundLine(raw).returnedQty > 0)
+    let status = order.status
+    if (allReturned && newLines.some((raw) => normalizeInboundLine(raw).qty > 0)) {
+      status = 'returned_full'
+    } else if (anyReturned) {
+      status = 'returned_partial'
+    }
+    const nextRow = normalizeInboundRow({ ...order, lines: newLines, status })
+    setInboundOrders((p) => p.map((o) => (o.id === order.id ? nextRow : o)))
+    setInboundDetailLineDrafts((prev) => {
+      if (!prev[order.id]) return prev
+      const n = { ...prev }
+      delete n[order.id]
+      return n
+    })
+    setInboundReturnModal(null)
+    setInboundReturnQtyDraft({})
+  }, [inboundReturnModal, inboundReturnQtyDraft, applyInboundStockDeltas])
+
+  const requestInboundCancel = useCallback((order) => {
+    const row = normalizeInboundRow(order)
+    if (row.status === 'cancelled') return
+    setInboundCancelModal(row)
+  }, [])
+
+  const confirmInboundCancelSubmit = useCallback(() => {
+    if (!inboundCancelModal) return
+    const row = normalizeInboundRow(inboundCancelModal)
+    const hadStock =
+      row.status === 'completed' ||
+      row.status === 'returned_partial' ||
+      row.status === 'returned_full'
+    const deltas = new Map()
+    if (hadStock) {
+      for (const l of row.lines) {
+        const q = inboundLineReturnableQty(l)
+        if (q > 0 && l.variantId) deltas.set(l.variantId, (deltas.get(l.variantId) || 0) - q)
+      }
+      applyInboundStockDeltas(deltas)
+    }
+    setInboundOrders((p) =>
+      p.map((o) => (o.id === row.id ? normalizeInboundRow({ ...row, status: 'cancelled' }) : o))
+    )
+    setInboundDetailLineDrafts((prev) => {
+      if (!prev[row.id]) return prev
+      const n = { ...prev }
+      delete n[row.id]
+      return n
+    })
+    setInboundCancelModal(null)
+  }, [inboundCancelModal, applyInboundStockDeltas])
+
+  const closeInboundDetailTabByOrderId = useCallback((orderId) => {
+    const oid = String(orderId ?? '')
+    if (!oid) return
+    const prev = openInboundDetailOrderIdsRef.current
+    const next = prev.filter((x) => x !== oid)
+    setOpenInboundDetailOrderIds(next)
+    setInboundDetailLineDrafts((d) => {
+      if (!d[oid]) return d
+      const o = { ...d }
+      delete o[oid]
+      return o
+    })
+    setActiveTab((cur) => {
+      if (parseInboundDetailTabId(cur) !== oid) return cur
+      if (next.length > 0) return toInboundDetailTabId(next[next.length - 1])
+      return TAB_ORDERS
+    })
+  }, [])
+
+  const openInboundDetailTab = useCallback((orderRow) => {
+    const row = normalizeInboundRow(orderRow)
+    if (!row.id) return
+    const oid = String(row.id)
+    setOpenInboundDetailOrderIds((prev) => {
+      if (prev.includes(oid)) return prev
+      const appended = [...prev, oid]
+      if (appended.length <= MAX_OPEN_INBOUND_DETAIL_TABS) return appended
+      return appended.slice(-MAX_OPEN_INBOUND_DETAIL_TABS)
+    })
+    setActiveTab(toInboundDetailTabId(oid))
+  }, [])
+
+  const startInboundDetailEdit = useCallback((orderRow) => {
+    const row = normalizeInboundRow(orderRow)
+    if (row.status === 'cancelled') return
+    setInboundDetailLineDrafts((prev) => ({
+      ...prev,
+      [row.id]: row.lines.map((ln) => normalizeInboundLine(ln)),
+    }))
+  }, [])
+
+  const clearInboundDetailEdit = useCallback((orderId) => {
+    const oid = String(orderId ?? '')
+    if (!oid) return
+    setInboundDetailLineDrafts((prev) => {
+      if (!prev[oid]) return prev
+      const n = { ...prev }
+      delete n[oid]
+      return n
+    })
+  }, [])
+
+  const updateInboundDetailDraftLine = useCallback((orderId, lineId, patch) => {
+    setInboundDetailLineDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur) return prev
+      const next = cur.map((ln) => {
+        if (ln.lineId !== lineId) return ln
+        const merged = { ...ln, ...patch }
+        const n = normalizeInboundLine(merged)
+        let qty = n.qty
+        if (qty < n.returnedQty) qty = n.returnedQty
+        return { ...merged, qty, returnedQty: n.returnedQty }
+      })
+      return { ...prev, [orderId]: next }
+    })
+  }, [])
+
+  const changeInboundDetailDraftUnit = useCallback((orderId, line, newLabelRaw) => {
+    const res = applyInboundLineUnitChange(catalogList, line, newLabelRaw)
+    if (!res.ok || !res.changed) return
+    setInboundDetailLineDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur) return prev
+      return {
+        ...prev,
+        [orderId]: cur.map((l) => (l.lineId === line.lineId ? res.line : l)),
+      }
+    })
+  }, [catalogList])
+
+  const submitInboundDetailCommit = useCallback(() => {
+    const oid = parseInboundDetailTabId(activeTab)
+    if (!oid) return
+    const draft = inboundDetailLineDrafts[oid]
+    if (!draft) return
+    const prevRow = inboundOrders.find((o) => o.id === oid)
+    if (!prevRow) return
+    if (catalogList.length === 0) {
+      alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
+      return
+    }
+    const normLines = draft.map((ln) => normalizeInboundLine(ln))
+    if (!normLines.some((l) => l.qty > 0)) {
+      alert('Cần ít nhất một dòng có số lượng > 0.')
+      return
+    }
+    const totals = computeInboundOrderTotalsFromDiscountedLines(
+      normLines,
+      prevRow.orderDiscountMode,
+      prevRow.orderDiscountValue
+    )
+    const merged = normalizeInboundRow({
+      ...prevRow,
+      lines: normLines,
+      goodsSubtotal: totals.goodsSubtotal,
+      totalValue: totals.totalValue,
+      status: computeInboundStatusAfterLines(normLines),
+    })
+    const hadStock =
+      prevRow.status === 'completed' ||
+      prevRow.status === 'returned_partial' ||
+      prevRow.status === 'returned_full'
+    const diffs = computeInboundCostDiffs(catalogList, normLines)
+    if (diffs.length > 0) {
+      inboundCompletePendingRef.current = {
+        diffs,
+        mode: 'detail_edit',
+        mergedRow: merged,
+        oldRow: prevRow,
+      }
+      setInboundCostDiffModal({ diffs })
+      return
+    }
+    if (hadStock) {
+      const oldM = netVariantQtyMapFromInboundLines(prevRow.lines)
+      const newM = netVariantQtyMapFromInboundLines(merged.lines)
+      applyInboundStockDeltasFromNetMaps(oldM, newM)
+    } else {
+      applyInboundStockIncrease(merged.lines)
+    }
+    setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
+    setInboundDetailLineDrafts((prev) => {
+      if (!prev[oid]) return prev
+      const n = { ...prev }
+      delete n[oid]
+      return n
+    })
+  }, [
+    activeTab,
+    inboundDetailLineDrafts,
+    inboundOrders,
+    catalogList,
+    applyInboundStockDeltasFromNetMaps,
+    applyInboundStockIncrease,
+  ])
+
+  const persistPosOrderAndReload = useCallback(async (nextOrder) => {
+    try {
+      await saveOrder(nextOrder)
+      await load()
+    } catch (e) {
+      console.error(e)
+      alert('Không lưu được đơn hàng.')
+    }
+  }, [load])
+
+  const closePosDetailTabByOrderId = useCallback((orderId) => {
+    const oid = String(orderId ?? '')
+    if (!oid) return
+    const prev = openPosDetailOrderIdsRef.current
+    const next = prev.filter((x) => x !== oid)
+    setOpenPosDetailOrderIds(next)
+    setPosDetailEditDrafts((d) => {
+      if (!d[oid]) return d
+      const o = { ...d }
+      delete o[oid]
+      return o
+    })
+    setActiveTab((cur) => {
+      if (parsePosOrderDetailTabId(cur) !== oid) return cur
+      if (next.length > 0) return toPosOrderDetailTabId(next[next.length - 1])
+      return TAB_ORDERS
+    })
+  }, [])
+
+  const closePosReturnDetailTabByLedgerId = useCallback((ledgerId) => {
+    const lid = String(ledgerId ?? '')
+    if (!lid) return
+    const prev = openPosReturnDetailLedgerIdsRef.current
+    const next = prev.filter((x) => x !== lid)
+    setOpenPosReturnDetailLedgerIds(next)
+    setActiveTab((cur) => {
+      if (parsePosReturnDetailTabId(cur) !== lid) return cur
+      if (next.length > 0) return toPosReturnDetailTabId(next[next.length - 1])
+      return TAB_OVERVIEW
+    })
+  }, [])
+
+  const openPosReturnDetailTab = useCallback((ledgerEntryId) => {
+    const lid = String(ledgerEntryId ?? '').trim()
+    if (!lid) return
+    setSelected(null)
+    setOpenPosReturnDetailLedgerIds((prev) => {
+      if (prev.includes(lid)) return prev
+      const appended = [...prev, lid]
+      if (appended.length <= MAX_OPEN_POS_RETURN_DETAIL_TABS) return appended
+      return appended.slice(-MAX_OPEN_POS_RETURN_DETAIL_TABS)
+    })
+    setActiveTab(toPosReturnDetailTabId(lid))
+  }, [])
+
+  const openPosDetailTab = useCallback((order) => {
+    if (!order?.id) return
+    const oid = String(order.id)
+    setOpenPosDetailOrderIds((prev) => {
+      if (prev.includes(oid)) return prev
+      const appended = [...prev, oid]
+      if (appended.length <= MAX_OPEN_POS_ORDER_DETAIL_TABS) return appended
+      return appended.slice(-MAX_OPEN_POS_ORDER_DETAIL_TABS)
+    })
+    setActiveTab(toPosOrderDetailTabId(oid))
+  }, [])
+
+  const [soloGoodsUiTab, setSoloGoodsUiTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
+  useEffect(() => {
+    if (soloGoodsCtx?.product && isComboCatalogProduct(soloGoodsCtx.product)) {
+      setSoloGoodsUiTab(GOODS_DETAIL_VIEW_COMBO)
+      return
+    }
+    setSoloGoodsUiTab(GOODS_DETAIL_VIEW_TONKHO)
+  }, [soloActiveVariantId, soloGoodsCtx?.product])
+
+  const hubDeepLinkHandledKeyRef = useRef(null)
+  const hubDeepLinkConsumeRef = useRef(onHubDeepLinkConsumed)
+  hubDeepLinkConsumeRef.current = onHubDeepLinkConsumed
+
+  useLayoutEffect(() => {
+    if (standaloneInboundCreate) return
+    const tab = hubMainTabFromPathname(location.pathname)
+    if (tab == null) return
+    setActiveTab(tab)
+    setSelected(null)
+  }, [location.pathname, standaloneInboundCreate])
+
+  useEffect(() => {
+    if (!hubDeepLink) {
+      hubDeepLinkHandledKeyRef.current = null
+      return
+    }
+    const hubOpen = hubDeepLink.hubOpen
+    if (hubOpen === 'orders' || hubOpen === 'returns') {
+      const kOpen = `hubopen:${hubOpen}`
+      if (hubDeepLinkHandledKeyRef.current === kOpen) return
+      hubDeepLinkHandledKeyRef.current = kOpen
+      const nextTab = hubOpen === 'orders' ? TAB_ORDERS : TAB_OVERVIEW
+      setActiveTab(nextTab)
+      syncHubUrlToMainTab(nextTab)
+      hubDeepLinkConsumeRef.current?.()
+      return
+    }
+    if (loading) return
+    const k = `${hubDeepLink.posOrderId ?? ''}|${hubDeepLink.inboundOrderId ?? ''}|${hubDeepLink.posReturnLedgerId ?? ''}`
+    if (hubDeepLinkHandledKeyRef.current === k) return
+    hubDeepLinkHandledKeyRef.current = k
+
+    const { posOrderId, inboundOrderId, posReturnLedgerId } = hubDeepLink
+    if (posOrderId) {
+      const o = orders.find((x) => String(x.id) === String(posOrderId))
+      if (o) openPosDetailTab(o)
+      else window.alert('Không tìm thấy đơn bán.')
+    } else if (inboundOrderId) {
+      const row = inboundOrders.find((x) => String(x.id) === String(inboundOrderId))
+      if (row) openInboundDetailTab(row)
+      else window.alert('Không tìm thấy phiếu nhập.')
+    } else if (posReturnLedgerId) {
+      const ok = (returnDayLedger || []).some((e) => String(e.id) === String(posReturnLedgerId))
+      if (ok) openPosReturnDetailTab(posReturnLedgerId)
+      else window.alert('Không tìm thấy phiếu hoàn trả.')
+    }
+    hubDeepLinkConsumeRef.current?.()
+  }, [
+    hubDeepLink,
+    loading,
+    orders,
+    inboundOrders,
+    returnDayLedger,
+    openPosDetailTab,
+    openInboundDetailTab,
+    openPosReturnDetailTab,
+    syncHubUrlToMainTab,
+  ])
+
+  const soloStockLedgerRows = useMemo(() => {
+    if (!isSoloProductTabId(activeTab)) return []
+    if (!soloActiveVariantId || !soloGoodsVariant) return []
+    if (!Array.isArray(returnDayLedger)) return []
+    try {
+      return buildVariantStockLedgerRows({
+        variantId: soloActiveVariantId,
+        catalogList,
+        currentStockQty: soloGoodsVariant.stockQty,
+        orders,
+        inboundOrders,
+        returnDayLedger,
+      })
+    } catch (e) {
+      console.warn('[AdminHub soloStockLedgerRows]', e)
+      return []
+    }
+  }, [
+    activeTab,
+    soloActiveVariantId,
+    soloGoodsVariant,
+    catalogList,
+    orders,
+    inboundOrders,
+    returnDayLedger,
+  ])
+
+  const goodsDetailStockLedgerRows = useMemo(() => {
+    if (!goodsExpandedId || !goodsDetailVariant) return []
+    if (!Array.isArray(returnDayLedger)) return []
+    try {
+      return buildVariantStockLedgerRows({
+        variantId: goodsDetailVariant.id,
+        catalogList,
+        currentStockQty: goodsDetailVariant.stockQty,
+        orders,
+        inboundOrders,
+        returnDayLedger,
+      })
+    } catch (e) {
+      console.warn('[AdminHub goodsDetailStockLedgerRows]', e)
+      return []
+    }
+  }, [
+    goodsExpandedId,
+    goodsDetailVariant,
+    catalogList,
+    orders,
+    inboundOrders,
+    returnDayLedger,
+  ])
+
+  const goodsExpandedBelowSlot = useMemo(() => {
+    if (!goodsExpandedId || !goodsDetailCtx || !goodsDetailVariant || !goodsDetailDraft) return null
+    return (
+      <AdminHubGoodsExpandedBelow
+        GOODS_DETAIL_VIEW_TONKHO={GOODS_DETAIL_VIEW_TONKHO}
+        GOODS_DETAIL_VIEW_LICHSU={GOODS_DETAIL_VIEW_LICHSU}
+        GOODS_DETAIL_VIEW_COMBO={GOODS_DETAIL_VIEW_COMBO}
+        goodsDetailShelfTab={goodsDetailShelfTab}
+        setGoodsDetailShelfTab={setGoodsDetailShelfTab}
+        discardGoodsDetailDraft={discardGoodsDetailDraft}
+        saveGoodsDetail={saveGoodsDetail}
+        v={goodsDetailVariant}
+        d={goodsDetailDraft}
+        goodsDetailCtx={goodsDetailCtx}
+        goodsDetailSelectedVid={goodsDetailSelectedVid}
+        setGoodsDetailSelectedVid={setGoodsDetailSelectedVid}
+        setGoodsDetailDraft={setGoodsDetailDraft}
+        buildGoodsDetailDraft={buildGoodsDetailDraft}
+        copyGoodsDetail={copyGoodsDetail}
+        deleteGoodsDetailVariant={deleteGoodsDetailVariant}
+        formatMoneyDraftVi={formatMoneyDraftVi}
+        goodsDetailStockLedgerRows={goodsDetailStockLedgerRows}
+        getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
+        openGoodsUnitModal={openGoodsUnitModal}
+        catalogList={catalogList}
+        isComboDetail={!!goodsDetailCtx?.product && isComboCatalogProduct(goodsDetailCtx.product)}
+        comboDetailProduct={goodsDetailCtx?.product ?? null}
+        onEditComboProduct={() => {
+          if (goodsDetailCtx?.product && isComboCatalogProduct(goodsDetailCtx.product)) {
+            setComboModal({ mode: 'edit', product: goodsDetailCtx.product })
+          }
+        }}
+      />
+    )
+  }, [
+    goodsExpandedId,
+    goodsDetailCtx,
+    goodsDetailVariant,
+    goodsDetailDraft,
+    goodsDetailShelfTab,
+    goodsDetailSelectedVid,
+    goodsDetailStockLedgerRows,
+    discardGoodsDetailDraft,
+    saveGoodsDetail,
+    setGoodsDetailShelfTab,
+    setGoodsDetailSelectedVid,
+    setGoodsDetailDraft,
+    copyGoodsDetail,
+    deleteGoodsDetailVariant,
+    openGoodsUnitModal,
+    catalogList,
+  ])
+
+  const openPosReturnModal = useCallback(
+    (order) => {
+      if (revenueReadOnly) {
+        alert('Chỉ tài khoản Admin mới chỉnh sửa đơn bán từ đây.')
+        return
+      }
+      const n = normalizePosOrder(order, catalogList, { preferStoredLineFinancials: true })
+      if (!posOrderCanPartialReturn(n)) {
+        alert('Không còn hàng để hoàn trả (đã hoàn hết hoặc đơn đã hủy).')
+        return
+      }
+      setPosReturnQtyDraft({})
+      setPosReturnModal(n)
+    },
+    [catalogList, revenueReadOnly]
+  )
+
+  const confirmPosReturnSubmit = useCallback(async () => {
+    if (revenueReadOnly) return
+    if (!posReturnModal) return
+    const base = normalizePosOrder(posReturnModal, catalogList, { preferStoredLineFinancials: true })
+    let revenueSub = 0
+    let costSub = 0
+    let anyTake = false
+    const deltas = new Map()
+    /** @type {Array<{ code: string, name: string, unitLabel: string, qtyReturned: number, unitRefund: number, lineRefund: number }>} */
+    const returnLines = []
+    const newItems = base.items.map((it) => {
+      const ret = posOrderLineReturnableQty(it)
+      const draft = parseReturnQtyDraft(posReturnQtyDraft[it.orderLineId], ret)
+      if (draft <= 0) return it
+      anyTake = true
+      const price = Math.max(0, Number(it.price) || 0)
+      const cost = Math.max(0, Number(it.cost) || 0)
+      const lineRefund = Math.round(draft * price)
+      revenueSub += lineRefund
+      costSub += Math.round(draft * cost)
+      returnLines.push({
+        code: String(it.code || '').trim(),
+        name: String(it.name || '').trim(),
+        unitLabel: String(it.unitLabel || '').trim() || '—',
+        qtyReturned: draft,
+        unitRefund: Math.round(price),
+        lineRefund,
+        variantId: String(it.variantId || '').trim(),
+      })
+      if (it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + draft)
+      const prevR = Math.max(0, Number(it.returnedQty) || 0)
+      const q = Math.max(0, Number(it.qty) || 0)
+      return { ...it, returnedQty: Math.min(q, prevR + draft) }
+    })
+    if (!anyTake) {
+      alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
+      return
+    }
+    applyInboundStockDeltas(deltas)
+    appendPosReturnDayEntry({
+      atMs: Date.now(),
+      orderId: String(base.id || ''),
+      revenueSub,
+      costSub,
+      sourceInvoiceNo: String(base.invoiceNo || '').trim(),
+      lines: returnLines,
+    })
+    try {
+      const next = loadPosReturnDayLedger()
+      setReturnDayLedger(Array.isArray(next) ? next : [])
+    } catch {
+      setReturnDayLedger([])
+    }
+    const nextStatus = computePosOrderStatusFromItems(newItems)
+    const merged = normalizePosOrder(
+      { ...base, items: newItems, status: nextStatus },
+      catalogList,
+      { preferStoredLineFinancials: true }
+    )
+    await persistPosOrderAndReload(merged)
+    setPosReturnModal(null)
+    setPosReturnQtyDraft({})
+    setPosDetailEditDrafts((prev) => {
+      if (!prev[base.id]) return prev
+      const o = { ...prev }
+      delete o[base.id]
+      return o
+    })
+  }, [
+    posReturnModal,
+    posReturnQtyDraft,
+    catalogList,
+    applyInboundStockDeltas,
+    persistPosOrderAndReload,
+    revenueReadOnly,
+  ])
+
+  const requestPosCancel = useCallback(
+    (order) => {
+      if (revenueReadOnly) {
+        alert('Chỉ tài khoản Admin mới chỉnh sửa đơn bán từ đây.')
+        return
+      }
+      const n = normalizePosOrder(order, catalogList)
+      if (n.status === 'cancelled') return
+      setPosCancelModal(n)
+    },
+    [catalogList, revenueReadOnly]
+  )
+
+  const confirmPosCancelSubmit = useCallback(async () => {
+    if (revenueReadOnly) return
+    if (!posCancelModal) return
+    const base = normalizePosOrder(posCancelModal, catalogList)
+    const deltas = new Map()
+    for (const it of base.items) {
+      const q = posOrderLineReturnableQty(it)
+      if (q > 0 && it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + q)
+    }
+    applyInboundStockDeltas(deltas)
+    const merged = normalizePosOrder({ ...base, status: 'cancelled' }, catalogList)
+    await persistPosOrderAndReload(merged)
+    setPosCancelModal(null)
+    setPosDetailEditDrafts((prev) => {
+      if (!prev[base.id]) return prev
+      const o = { ...prev }
+      delete o[base.id]
+      return o
+    })
+  }, [posCancelModal, catalogList, applyInboundStockDeltas, persistPosOrderAndReload, revenueReadOnly])
+
+  const startPosDetailEdit = useCallback(
+    (order) => {
+      if (revenueReadOnly) {
+        alert('Chỉ tài khoản Admin mới chỉnh sửa đơn bán từ đây.')
+        return
+      }
+      const n = normalizePosOrder(order, catalogList, { preferStoredLineFinancials: true })
+      if (n.status === 'cancelled') return
+      try {
+        const clone = JSON.parse(JSON.stringify(n))
+        setPosDetailEditDrafts((prev) => ({ ...prev, [String(n.id)]: clone }))
+      } catch {
+        /* ignore */
+      }
+    },
+    [catalogList, revenueReadOnly]
+  )
+
+  const clearPosDetailEdit = useCallback((orderId) => {
+    const oid = String(orderId ?? '')
+    setPosDetailEditDrafts((prev) => {
+      if (!prev[oid]) return prev
+      const n = { ...prev }
+      delete n[oid]
+      return n
+    })
+  }, [])
+
+  const updatePosDetailDraftItem = useCallback((orderId, lineId, patch) => {
+    setPosDetailEditDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur?.items) return prev
+      const nextItems = cur.items.map((it) => {
+        if (String(it.orderLineId) !== String(lineId)) return it
+        const merged = { ...it, ...patch }
+        const qty = Math.max(0, Number(merged.qty) || 0)
+        let returnedQty = Math.max(0, Number(merged.returnedQty) || 0)
+        if (returnedQty > qty) returnedQty = qty
+        const price = Math.max(0, Number(merged.price) || 0)
+        const cost = Math.max(0, Number(merged.cost) || 0)
+        const lineRevenue = price * qty
+        const lineCost = cost * qty
+        return {
+          ...merged,
+          qty,
+          returnedQty,
+          price,
+          cost,
+          lineRevenue,
+          lineCost,
+          lineProfit: lineRevenue - lineCost,
+        }
+      })
+      return { ...prev, [orderId]: recomputePosDraftAgg({ ...cur, items: nextItems }) }
+    })
+  }, [])
+
+  const removePosDetailDraftLine = useCallback((orderId, lineId) => {
+    setPosDetailEditDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur?.items) return prev
+      const nextItems = cur.items.filter((it) => String(it.orderLineId) !== String(lineId))
+      return { ...prev, [orderId]: recomputePosDraftAgg({ ...cur, items: nextItems }) }
+    })
+  }, [])
+
+  const addPosDetailLineFromVariantId = useCallback(
+    (orderId, variantIdRaw) => {
+      const vid = String(variantIdRaw || '').trim()
+      if (!vid) return
+      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const v = flat.find((x) => x.id === vid)
+      if (!v) return
+      setPosDetailEditDrafts((prev) => {
+        const cur = prev[orderId]
+        if (!cur) return prev
+        const price = Math.max(0, Number(v.price) || 0)
+        const cost = Math.max(0, Number(v.cost) || 0)
+        const qty = 1
+        const orderLineId = `pol-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+        const line = {
+          orderLineId,
+          variantId: v.id,
+          code: String(v.code || '').trim(),
+          name: String(v.name || '').trim(),
+          unitLabel: normalizeCatalogUnitLabel(v.unitLabel),
+          price,
+          cost,
+          qty,
+          returnedQty: 0,
+          lineRevenue: price * qty,
+          lineCost: cost * qty,
+          lineProfit: (price - cost) * qty,
+        }
+        const next = { ...cur, items: [...(cur.items || []), line] }
+        return { ...prev, [orderId]: recomputePosDraftAgg(next) }
+      })
+    },
+    [catalogList]
+  )
+
+  const submitPosDetailEditCommit = useCallback(async () => {
+    if (revenueReadOnly) return
+    const oid = parsePosOrderDetailTabId(activeTab)
+    if (!oid) return
+    const draft = posDetailEditDrafts[oid]
+    if (!draft) return
+    if (catalogList.length === 0) {
+      alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
+      return
+    }
+    const prevRow = orders.find((o) => String(o.id) === String(oid))
+    if (!prevRow) return
+    if (!(draft.items || []).some((it) => (Number(it.qty) || 0) > 0)) {
+      alert('Cần ít nhất một dòng có số lượng > 0.')
+      return
+    }
+    const oldN = normalizePosOrder(prevRow, catalogList, { preferStoredLineFinancials: true })
+    const newN = normalizePosOrder(draft, catalogList, { preferStoredLineFinancials: true })
+    const deltaMap = posOrderSaleQtyDeltaMap(oldN.items, newN.items)
+    const stockDeltas = new Map()
+    for (const [vid, dq] of deltaMap) {
+      stockDeltas.set(vid, -(dq || 0))
+    }
+    applyInboundStockDeltas(stockDeltas)
+    const nextStatus = computePosOrderStatusFromItems(newN.items)
+    const merged = normalizePosOrder(
+      { ...newN, status: nextStatus },
+      catalogList,
+      { preferStoredLineFinancials: true }
+    )
+    await persistPosOrderAndReload(merged)
+    clearPosDetailEdit(oid)
+  }, [
+    activeTab,
+    posDetailEditDrafts,
+    orders,
+    catalogList,
+    applyInboundStockDeltas,
+    persistPosOrderAndReload,
+    clearPosDetailEdit,
+    revenueReadOnly,
+  ])
+
+  const inboundEditFromStockApplied = useMemo(() => {
+    if (!inboundFormEditOrderId) return false
+    const o = inboundOrders.find((x) => x.id === inboundFormEditOrderId)
+    return (
+      !!o &&
+      (o.status === 'completed' ||
+        o.status === 'returned_partial' ||
+        o.status === 'returned_full')
+    )
+  }, [inboundFormEditOrderId, inboundOrders])
+
+  const handleInboundExportAll = useCallback(() => {
+    if (inboundOrders.length === 0) {
+      alert('Chưa có phiếu để xuất.')
+      return
+    }
+    try {
+      exportInboundRowsToCsvFile(inboundOrders)
+    } catch (err) {
+      console.error(err)
+      alert('Không xuất được file.')
+    }
+  }, [inboundOrders])
+
+  const handleInboundListImport = useCallback(
+    (e) => {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        try {
+          const text = String(reader.result || '').replace(/^\uFEFF/, '')
+          const lines = text.split(/\r?\n/).filter((ln) => ln.trim())
+          if (lines.length < 2) {
+            alert('File không đủ dòng dữ liệu.')
+            return
+          }
+          const delim = lines[0].includes(';') ? ';' : ','
+          const head = lines[0].split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
+          const idxCode = head.findIndex((h) => /mã đơn nhập/i.test(h))
+          const idxDate = head.findIndex((h) => /ngày nhập/i.test(h))
+          const idxSup = head.findIndex((h) => /nhà cung cấp/i.test(h))
+          const idxVal = head.findIndex((h) => /giá trị đơn/i.test(h))
+          const idxSt = head.findIndex((h) => /trạng thái/i.test(h))
+          if (idxCode < 0) {
+            alert('Không tìm thấy cột Mã đơn nhập trong file.')
+            return
+          }
+          const parseStatus = (cell) => {
+            const t = String(cell || '').toLowerCase()
+            if (t.includes('hoàn')) return 'completed'
+            if (t.includes('lưu tạm')) return 'saved_temp'
+            if (t.includes('đang nhập')) return 'receiving'
+            return 'draft'
+          }
+          const added = []
+          for (let i = 1; i < lines.length; i++) {
+            const cells = lines[i].split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
+            const code = cells[idxCode] || ''
+            if (!code) continue
+            const supplier = idxSup >= 0 ? cells[idxSup] || '' : ''
+            const valRaw = idxVal >= 0 ? cells[idxVal].replace(/\./g, '').replace(/[^\d]/g, '') : '0'
+            const totalValue = Math.max(0, parseInt(valRaw, 10) || 0)
+            const st = idxSt >= 0 ? parseStatus(cells[idxSt]) : 'saved_temp'
+            let createdAtMs = Date.now()
+            if (idxDate >= 0 && cells[idxDate]) {
+              const d = new Date(cells[idxDate])
+              if (!Number.isNaN(d.getTime())) createdAtMs = d.getTime()
+            }
+            added.push(
+              normalizeInboundRow({
+                id: createInboundId(),
+                code,
+                createdAtMs,
+                supplier,
+                totalValue,
+                goodsSubtotal: totalValue,
+                status: st,
+                lines: [],
+                note: '',
+              })
+            )
+          }
+          if (added.length === 0) {
+            alert('Không đọc được dòng hợp lệ.')
+            return
+          }
+          setInboundOrders((prev) => [...added, ...prev])
+        } catch (err) {
+          console.error(err)
+          alert('Không đọc được file.')
+        }
+      }
+      reader.readAsText(file, 'UTF-8')
+    },
+    []
+  )
+
+  /* —— Đơn hàng —— */
+  const [ordRange, setOrdRange] = useState(RANGE_TODAY)
+  const [ordFrom, setOrdFrom] = useState(todayYmd)
+  const [ordTo, setOrdTo] = useState(todayYmd)
+  const [ordQ, setOrdQ] = useState('')
+  const ordDebounced = useDebounced(ordQ, 180)
+  /** Tab Đơn hàng: đơn nhập kho vs đơn bán POS. */
+  const [ordersSubTab, setOrdersSubTab] = useState('pos')
+  const [ordersDateDdOpen, setOrdersDateDdOpen] = useState(false)
+  const ordersTimeDdRef = useRef(null)
+
+  const ordFiltered = useMemo(
+    () => filterOrdersForReport(orders, ordRange, ordFrom, ordTo),
+    [orders, ordRange, ordFrom, ordTo]
+  )
+
+  const ordList = useMemo(() => {
+    const q = ordDebounced.trim().toLowerCase()
+    if (!q) return ordFiltered
+    return ordFiltered.filter((o) =>
+      String(o.invoiceNo || '')
+        .toLowerCase()
+        .includes(q)
+    )
+  }, [ordFiltered, ordDebounced])
+
+  const ordListForPosSummary = useMemo(
+    () => ordList.map((o) => normalizePosOrder(o, catalogList)),
+    [ordList, catalogList]
+  )
+
+  const inboundDateFilteredForOrdersTab = useMemo(
+    () => filterInboundOrdersForReport(inboundOrders, ordRange, ordFrom, ordTo),
+    [inboundOrders, ordRange, ordFrom, ordTo]
+  )
+
+  const inboundRowsOrdersTab = useMemo(() => {
+    const q = inboundDebounced.trim().toLowerCase()
+    if (!q) return inboundDateFilteredForOrdersTab
+    return inboundDateFilteredForOrdersTab.filter(
+      (r) =>
+        String(r.code).toLowerCase().includes(q) ||
+        String(r.supplier).toLowerCase().includes(q) ||
+        inboundStatusLabel(r.status).toLowerCase().includes(q)
+    )
+  }, [inboundDateFilteredForOrdersTab, inboundDebounced])
+
+  const ordersTabPosTotal = useMemo(
+    () => ordFiltered.reduce((s, o) => s + safeMoney(o.total), 0),
+    [ordFiltered]
+  )
+
+  const ordersTabInboundTotal = useMemo(
+    () => inboundDateFilteredForOrdersTab.reduce((s, r) => s + safeMoney(r.totalValue), 0),
+    [inboundDateFilteredForOrdersTab]
+  )
+
+  const ordersRangeTriggerLabel = useMemo(() => {
+    if (ordRange === RANGE_CUSTOM) {
+      const a = String(ordFrom || '').replace(/-/g, '/')
+      const b = String(ordTo || '').replace(/-/g, '/')
+      if (a && b) return `${a} – ${b}`
+      return ORDERS_TAB_CUSTOM_RANGE_LABEL
+    }
+    return RANGE_LABELS[ordRange] ?? String(ordRange)
+  }, [ordRange, ordFrom, ordTo])
+
+  const pickOrdersRange = useCallback((k) => {
+    setOrdRange(k)
+    setOrdersDateDdOpen(false)
+  }, [])
+
+  const prevActiveTabForOrdersResetRef = useRef(null)
+  useEffect(() => {
+    const prev = prevActiveTabForOrdersResetRef.current
+    prevActiveTabForOrdersResetRef.current = activeTab
+    if (activeTab !== TAB_ORDERS) return
+    if (prev === TAB_ORDERS) return
+    setOrdRange(RANGE_TODAY)
+    const t = todayYmd()
+    setOrdFrom(t)
+    setOrdTo(t)
+    setOrdersDateDdOpen(false)
+  }, [activeTab])
+
+  useEffect(() => {
+    if (!ordersDateDdOpen) return
+    const onDown = (e) => {
+      if (ordersTimeDdRef.current && !ordersTimeDdRef.current.contains(e.target)) {
+        setOrdersDateDdOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [ordersDateDdOpen])
+
+  useEffect(() => {
+    if (activeTab !== TAB_ORDERS || !ordersDateDdOpen) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setOrdersDateDdOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeTab, ordersDateDdOpen])
+
+  /* —— Khách hàng —— */
+  const [custQ, setCustQ] = useState('')
+  const custDebounced = useDebounced(custQ, 180)
+  const [customers, setCustomers] = useState(() => loadCustomersFromStorage())
+
+  useEffect(() => {
+    if (activeTab === TAB_CUSTOMERS) {
+      setCustomers(loadCustomersFromStorage())
+    }
+  }, [activeTab, refreshKey])
+
+  const custFiltered = useMemo(() => {
+    const q = custDebounced.trim().toLowerCase()
+    if (!q) return customers
+    return customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.address.toLowerCase().includes(q) ||
+        c.cccd.toLowerCase().includes(q)
+    )
+  }, [customers, custDebounced])
+
+  const [staffQ, setStaffQ] = useState('')
+  const staffDebounced = useDebounced(staffQ, 120)
+  const staffFiltered = useMemo(() => {
+    const q = staffDebounced.trim().toLowerCase()
+    if (!q) return STAFF_ROWS
+    return STAFF_ROWS.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        r.phone.toLowerCase().includes(q) ||
+        r.address.toLowerCase().includes(q) ||
+        r.cccd.toLowerCase().includes(q)
+    )
+  }, [staffDebounced])
+
+  const sellHref = sellHomeHref()
+
+  const inboundDetailTabOid = useMemo(() => parseInboundDetailTabId(activeTab), [activeTab])
+  const inboundDetailOrderRow = useMemo(() => {
+    if (!inboundDetailTabOid) return null
+    return inboundOrders.find((o) => String(o.id) === String(inboundDetailTabOid)) ?? null
+  }, [inboundDetailTabOid, inboundOrders])
+  const inboundDetailDraftLines = inboundDetailTabOid
+    ? inboundDetailLineDrafts[inboundDetailTabOid] ?? null
+    : null
+  const inboundDetailIsEditing = !!inboundDetailDraftLines
+
+  useEffect(() => {
+    if (openInboundDetailOrderIds.length === 0) return
+    const validIds = new Set(inboundOrders.map((o) => String(o.id)))
+    const invalid = openInboundDetailOrderIds.filter((id) => !validIds.has(String(id)))
+    if (invalid.length === 0) return
+    const nextOpen = openInboundDetailOrderIds.filter((id) => !invalid.includes(id))
+    setOpenInboundDetailOrderIds(nextOpen)
+    setInboundDetailLineDrafts((prev) => {
+      const n = { ...prev }
+      let ch = false
+      for (const id of invalid) {
+        if (n[id]) {
+          delete n[id]
+          ch = true
+        }
+      }
+      return ch ? n : prev
+    })
+    setActiveTab((cur) => {
+      const curOid = parseInboundDetailTabId(cur)
+      if (curOid && invalid.includes(curOid)) {
+        if (nextOpen.length > 0) return toInboundDetailTabId(nextOpen[nextOpen.length - 1])
+        return TAB_ORDERS
+      }
+      return cur
+    })
+  }, [inboundOrders, openInboundDetailOrderIds])
+
+  const posDetailTabOid = useMemo(() => parsePosOrderDetailTabId(activeTab), [activeTab])
+  const posDetailOrderRow = useMemo(() => {
+    if (!posDetailTabOid) return null
+    return orders.find((o) => String(o.id) === String(posDetailTabOid)) ?? null
+  }, [posDetailTabOid, orders])
+  const posDetailNorm = useMemo(
+    () =>
+      posDetailOrderRow
+        ? normalizePosOrder(posDetailOrderRow, catalogList, { preferStoredLineFinancials: true })
+        : null,
+    [posDetailOrderRow, catalogList]
+  )
+  const posDetailDraft = posDetailTabOid ? posDetailEditDrafts[posDetailTabOid] ?? null : null
+  const posDetailIsEditing = !!posDetailDraft
+
+  const posReturnDetailLedgerId = useMemo(() => parsePosReturnDetailTabId(activeTab), [activeTab])
+  const posReturnDetailEntry = useMemo(() => {
+    if (!posReturnDetailLedgerId) return null
+    const arr = Array.isArray(returnDayLedger) ? returnDayLedger : []
+    return arr.find((e) => String(e?.id) === String(posReturnDetailLedgerId)) ?? null
+  }, [returnDayLedger, posReturnDetailLedgerId])
+
+  const catalogFlatVariantsForPosAdd = useMemo(
+    () =>
+      (catalogList || []).flatMap((p) =>
+        (p.groupVariants || [p]).map((v) => ({
+          id: v.id,
+          code: String(v.code || '').trim(),
+          name: String(v.name || '').trim(),
+          unitLabel: normalizeCatalogUnitLabel(v.unitLabel),
+        }))
+      ),
+    [catalogList]
+  )
+
+  useEffect(() => {
+    if (loading) return
+    if (openPosDetailOrderIds.length === 0) return
+    const validIds = new Set(orders.map((o) => String(o.id)))
+    const invalid = openPosDetailOrderIds.filter((id) => !validIds.has(String(id)))
+    if (invalid.length === 0) return
+    const nextOpen = openPosDetailOrderIds.filter((id) => !invalid.includes(id))
+    setOpenPosDetailOrderIds(nextOpen)
+    setPosDetailEditDrafts((prev) => {
+      const n = { ...prev }
+      let ch = false
+      for (const id of invalid) {
+        if (n[id]) {
+          delete n[id]
+          ch = true
+        }
+      }
+      return ch ? n : prev
+    })
+    setActiveTab((cur) => {
+      const curOid = parsePosOrderDetailTabId(cur)
+      if (curOid && invalid.includes(curOid)) {
+        if (nextOpen.length > 0) return toPosOrderDetailTabId(nextOpen[nextOpen.length - 1])
+        return TAB_ORDERS
+      }
+      return cur
+    })
+  }, [loading, orders, openPosDetailOrderIds])
+
+  useEffect(() => {
+    if (openPosReturnDetailLedgerIds.length === 0) return
+    const valid = new Set(
+      (Array.isArray(returnDayLedger) ? returnDayLedger : []).map((e) => String(e?.id ?? ''))
+    )
+    const invalid = openPosReturnDetailLedgerIds.filter((id) => !valid.has(String(id)))
+    if (invalid.length === 0) return
+    const nextOpen = openPosReturnDetailLedgerIds.filter((id) => !invalid.includes(id))
+    setOpenPosReturnDetailLedgerIds(nextOpen)
+    setActiveTab((cur) => {
+      const curLid = parsePosReturnDetailTabId(cur)
+      if (curLid && invalid.includes(curLid)) {
+        if (nextOpen.length > 0) return toPosReturnDetailTabId(nextOpen[nextOpen.length - 1])
+        return TAB_OVERVIEW
+      }
+      return cur
+    })
+  }, [returnDayLedger, openPosReturnDetailLedgerIds])
+
+  const adminHubNavTabs = useMemo(() => {
+    let tabs = [...NAV_ITEMS]
+    const ins = (idAfter, item) => {
+      const j = tabs.findIndex((t) => t.id === idAfter)
+      if (j < 0) return
+      tabs = [...tabs.slice(0, j + 1), item, ...tabs.slice(j + 1)]
+    }
+    for (const vid of openProductVariantIds) {
+      const ctx = findVariantContext(catalogList, vid)
+      const v = ctx?.variants.find((x) => x.id === vid)
+      const code = v ? String(v.code || '').trim() : ''
+      const name = v ? String(v.name || '').trim() : ''
+      const full = code && name ? `${code} — ${name}` : code || name || 'Chi tiết SP'
+      const label = full.length > 56 ? `${full.slice(0, 53)}…` : full
+      ins(TAB_STOCK_CHECK, { id: toSoloProductTabId(vid), label, soloCloseVariantId: vid })
+    }
+    if (inboundDraftSession) {
+      ins(TAB_INBOUND, { id: TAB_INBOUND_DRAFT, label: 'Phiếu nhập mới' })
+    }
+    const ordIdx = tabs.findIndex((t) => t.id === TAB_ORDERS)
+    if (ordIdx >= 0 && openInboundDetailOrderIds.length > 0) {
+      const detailItems = openInboundDetailOrderIds.map((oid) => {
+        const ord = inboundOrders.find((o) => String(o.id) === String(oid))
+        const code = String(ord?.code ?? '').trim() || String(oid)
+        const rawLabel = `Chi tiết ${code}`
+        const label = rawLabel.length > 56 ? `${rawLabel.slice(0, 53)}…` : rawLabel
+        return { id: toInboundDetailTabId(oid), label, detailCloseOrderId: oid }
+      })
+      tabs = [...tabs.slice(0, ordIdx + 1), ...detailItems, ...tabs.slice(ordIdx + 1)]
+    }
+    if (ordIdx >= 0 && openPosDetailOrderIds.length > 0) {
+      const insertAt = ordIdx + 1 + openInboundDetailOrderIds.length
+      const posItems = openPosDetailOrderIds.map((oid) => {
+        const ord = orders.find((o) => String(o.id) === String(oid))
+        const inv = String(ord?.invoiceNo ?? '').trim() || String(oid)
+        const rawLabel = `Chi tiết ${inv}`
+        const label = rawLabel.length > 56 ? `${rawLabel.slice(0, 53)}…` : rawLabel
+        return { id: toPosOrderDetailTabId(oid), label, posDetailCloseOrderId: oid }
+      })
+      tabs = [...tabs.slice(0, insertAt), ...posItems, ...tabs.slice(insertAt)]
+    }
+    if (ordIdx >= 0 && openPosReturnDetailLedgerIds.length > 0) {
+      const insertAt = ordIdx + 1 + openInboundDetailOrderIds.length + openPosDetailOrderIds.length
+      const retItems = openPosReturnDetailLedgerIds.map((lid) => {
+        const entry = (returnDayLedger || []).find((e) => String(e?.id) === String(lid))
+        const srcInv =
+          String(entry?.sourceInvoiceNo || '').trim() ||
+          (() => {
+            const ord = orders.find((o) => String(o.id) === String(entry?.orderId))
+            return String(ord?.invoiceNo || '').trim()
+          })() ||
+          String(entry?.orderId || '').trim() ||
+          '—'
+        const rawLabel = `Chi tiết TH-${srcInv}`
+        const label = rawLabel.length > 56 ? `${rawLabel.slice(0, 53)}…` : rawLabel
+        return { id: toPosReturnDetailTabId(lid), label, posReturnDetailCloseLedgerId: lid }
+      })
+      tabs = [...tabs.slice(0, insertAt), ...retItems, ...tabs.slice(insertAt)]
+    }
+    return tabs
+  }, [
+    inboundDraftSession,
+    openProductVariantIds,
+    catalogList,
+    openInboundDetailOrderIds,
+    inboundOrders,
+    openPosDetailOrderIds,
+    openPosReturnDetailLedgerIds,
+    returnDayLedger,
+    orders,
+  ])
+
+  const adminHubActiveTabLabel =
+    adminHubNavTabs.find((t) => t.id === activeTab)?.label ?? String(activeTab)
+
+  return (
+    <div
+      className={`admin-hub${activeTab === TAB_GOODS ? ' admin-hub--goods-tab' : ''}${
+        activeTab === TAB_STOCK_CHECK ? ' admin-hub--stock-check-tab' : ''
+      }${activeTab === TAB_COST_ADJUST ? ' admin-hub--cost-adjust-tab' : ''}`}
+    >
+      <nav className="admin-hub-nav" aria-label="Menu quản trị">
+        <div className="admin-hub-nav-inner">
+          <div className="admin-hub-nav-brand" title={RECEIPT_STORE_NAME}>
+            <span className="admin-hub-nav-store">{RECEIPT_STORE_NAME}</span>
+            <a
+              className="admin-hub-nav-doanh-thu"
+              href={getDoanhThuAbsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Mở báo cáo Doanh thu (/doanh-thu) trên tab mới"
+            >
+              Báo cáo /doanh-thu
+            </a>
+          </div>
+          {adminHubNavTabs.map((it) =>
+            it.soloCloseVariantId ? (
+              <div
+                key={it.id}
+                className={`admin-hub-tab-pill${activeTab === it.id ? ' is-active' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="admin-hub-tab admin-hub-tab--in-pill"
+                  onClick={() => onAdminHubNavItemActivate(it.id)}
+                >
+                  <span className="admin-hub-tab-label">{it.label}</span>
+                </button>
+                <button
+                  type="button"
+                  className="admin-hub-tab-x"
+                  aria-label={`Đóng tab ${it.label}`}
+                  title="Đóng tab"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    closeSoloProductTabByVariantId(it.soloCloseVariantId)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ) : it.detailCloseOrderId ? (
+              <div
+                key={it.id}
+                className={`admin-hub-tab-pill${activeTab === it.id ? ' is-active' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="admin-hub-tab admin-hub-tab--in-pill"
+                  onClick={() => onAdminHubNavItemActivate(it.id)}
+                >
+                  <span className="admin-hub-tab-label">{it.label}</span>
+                </button>
+                <button
+                  type="button"
+                  className="admin-hub-tab-x"
+                  aria-label={`Đóng tab ${it.label}`}
+                  title="Đóng tab"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    closeInboundDetailTabByOrderId(it.detailCloseOrderId)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ) : it.posDetailCloseOrderId ? (
+              <div
+                key={it.id}
+                className={`admin-hub-tab-pill${activeTab === it.id ? ' is-active' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="admin-hub-tab admin-hub-tab--in-pill"
+                  onClick={() => onAdminHubNavItemActivate(it.id)}
+                >
+                  <span className="admin-hub-tab-label">{it.label}</span>
+                </button>
+                <button
+                  type="button"
+                  className="admin-hub-tab-x"
+                  aria-label={`Đóng tab ${it.label}`}
+                  title="Đóng tab"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    closePosDetailTabByOrderId(it.posDetailCloseOrderId)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ) : it.posReturnDetailCloseLedgerId ? (
+              <div
+                key={it.id}
+                className={`admin-hub-tab-pill${activeTab === it.id ? ' is-active' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="admin-hub-tab admin-hub-tab--in-pill"
+                  onClick={() => onAdminHubNavItemActivate(it.id)}
+                >
+                  <span className="admin-hub-tab-label">{it.label}</span>
+                </button>
+                <button
+                  type="button"
+                  className="admin-hub-tab-x"
+                  aria-label={`Đóng tab ${it.label}`}
+                  title="Đóng tab"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    closePosReturnDetailTabByLedgerId(it.posReturnDetailCloseLedgerId)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <button
+                key={it.id}
+                type="button"
+                className={`admin-hub-tab${activeTab === it.id ? ' is-active' : ''}`}
+                onClick={() => onAdminHubNavItemActivate(it.id)}
+              >
+                {it.label}
+              </button>
+            )
+          )}
+        </div>
+        <a className="admin-hub-sell" href={sellHref} target="_blank" rel="noopener noreferrer">
+          <svg
+            className="admin-hub-sell-svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
+          >
+            <circle cx="9" cy="20" r="1" />
+            <circle cx="18" cy="20" r="1" />
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+          </svg>
+          Bán hàng
+        </a>
+      </nav>
+
+      <main
+        className={`admin-hub-main${
+          activeTab === TAB_INBOUND_DRAFT ? ' admin-hub-main--inbound-draft' : ''
+        }${isSoloProductTabId(activeTab) ? ' admin-hub-main--solo-product' : ''}${
+          isInboundDetailTabId(activeTab) ? ' admin-hub-main--inbound-detail' : ''
+        }${isPosOrderDetailTabId(activeTab) ? ' admin-hub-main--pos-order-detail' : ''
+        }${isPosReturnDetailTabId(activeTab) ? ' admin-hub-main--pos-return-detail' : ''}${
+          activeTab === TAB_GOODS ? ' admin-hub-main--goods' : ''
+        }${activeTab === TAB_STOCK_CHECK ? ' admin-hub-main--stock-check' : ''}${
+          activeTab === TAB_COST_ADJUST ? ' admin-hub-main--cost-adjust' : ''
+        }`}
+      >
+        <AdminHubTabErrorBoundary key={activeTab} tabLabel={adminHubActiveTabLabel}>
+          <>
+            {activeTab === TAB_STOCK_CHECK && (
+              <AdminHubStockCheckPanel vouchers={stockCheckVouchers} />
+            )}
+
+            {activeTab === TAB_COST_ADJUST && (
+              <AdminHubCostAdjustPanel vouchers={costAdjustVouchers} />
+            )}
+
+            {activeTab === TAB_OVERVIEW && (
+              <AdminHubRevenuePanel
+                revenueReadOnly={revenueReadOnly}
+                orders={orders}
+                loading={loading}
+                ovRange={ovRange}
+                setOvRange={setOvRange}
+                ovFrom={ovFrom}
+                ovTo={ovTo}
+                setOvFrom={setOvFrom}
+                setOvTo={setOvTo}
+                showCustomDateRange={ovRange === RANGE_CUSTOM}
+                ovFiltered={ovFiltered}
+                ovRevenueTableRows={ovRevenueTableRows}
+                ovStats={ovStats}
+                selected={selected}
+                setSelected={setSelected}
+                rangePresets={RANGE_PRESETS}
+                rangeLabels={RANGE_LABELS}
+                onExport={handleExport}
+                onClearAll={handleClearAll}
+                onOpenPosReturnDetail={openPosReturnDetailTab}
+              />
+            )}
+
+            {activeTab === TAB_GOODS && (
+          <section className="ah-goods-page" aria-labelledby="ah-goods-title">
+            <input
+              ref={standaloneImportRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              className="ah-goods-file-input"
+              aria-hidden
+              tabIndex={-1}
+              onChange={onStandaloneCsv}
+            />
+            <h2 id="ah-goods-title" className="admin-hub-panel-title ah-goods-title">
+              Hàng hóa
+            </h2>
+            {catalogDisplayName ? (
+              <p className="admin-hub-muted ah-goods-file-meta">
+                File: <strong>{catalogDisplayName}</strong> · {goodsRowsAll.length.toLocaleString('vi-VN')} dòng
+                hiển thị
+              </p>
+            ) : (
+              <p className="admin-hub-muted ah-goods-file-meta">
+                Nhập file CSV từ <strong>Import file</strong> hoặc tải catalog từ màn <strong>Bán hàng</strong>.
+              </p>
+            )}
+
+            {hangHoaDeepLinkListScope === 'single' ? (
+              <div className="ah-goods-deeplink-scope" role="status">
+                <span>
+                  Đang hiển thị sản phẩm: <strong>{hangHoaDeepLinkDisplayName || '—'}</strong>
+                </span>
+                <button type="button" className="ah-goods-deeplink-scope-btn" onClick={expandHangHoaGoodsListToFull}>
+                  Xem tất cả hàng hóa
+                </button>
+              </div>
+            ) : null}
+
+            <div className="ah-goods-toolbar">
+              <div className="ah-goods-toolbar-left">
+                <div className="ah-goods-search-wrap ah-goods-search-wrap--solo">
+                  <input
+                    className="ah-goods-search"
+                    type="search"
+                    placeholder="Theo mã, tên hàng"
+                    value={goodsQ}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setGoodsQ(v)
+                      if (v.trim()) setHangHoaDeepLinkListScope('all')
+                    }}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+              </div>
+
+              <div className="ah-goods-toolbar-right">
+                <div className="ah-split-create" ref={goodsCreateWrapRef}>
+                  <button
+                    type="button"
+                    className="ah-split-create-main"
+                    disabled={revenueReadOnly}
+                    title={
+                      revenueReadOnly
+                        ? 'Chỉ Admin / Chủ cửa hàng mới thêm hàng hóa'
+                        : 'Tạo hàng hóa mới'
+                    }
+                    onClick={openGoodsCreateModal}
+                  >
+                    + Tạo mới
+                  </button>
+                  <button
+                    type="button"
+                    className="ah-split-create-caret"
+                    disabled={revenueReadOnly}
+                    aria-expanded={goodsCreateOpen}
+                    aria-haspopup="menu"
+                    aria-label="Mở lựa chọn loại tạo mới"
+                    onClick={() => !revenueReadOnly && setGoodsCreateOpen((o) => !o)}
+                  >
+                    ▾
+                  </button>
+                  {goodsCreateOpen && (
+                    <div className="ah-split-create-menu ah-split-create-menu--toolbar-anchor" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setGoodsCreateOpen(false)
+                          openGoodsCreateModal()
+                        }}
+                      >
+                        Hàng hóa
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setGoodsCreateOpen(false)
+                          openComboCreateModal()
+                        }}
+                      >
+                        Combo — Đóng gói
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button type="button" className="ah-goods-io-btn" onClick={handleGoodsImport}>
+                  <span className="ah-goods-io-icon" aria-hidden>
+                    ↑
+                  </span>
+                  Import file
+                </button>
+                <button type="button" className="ah-goods-io-btn" onClick={handleGoodsExport}>
+                  <span className="ah-goods-io-icon" aria-hidden>
+                    ↓
+                  </span>
+                  Xuất file
+                </button>
+                <button
+                  type="button"
+                  className="ah-goods-io-btn ah-goods-io-btn--danger"
+                  onClick={handleGoodsDeleteSelected}
+                  disabled={goodsSelectedIds.size === 0}
+                >
+                  Xóa đã chọn
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-hub-table-wrap ah-goods-table-wrap ah-goods-table-wrap--virtual">
+              <div className="ah-goods-catalog-head" role="row">
+                <div className="ah-goods-vcell ah-goods-col-check ah-goods-catalog-th" role="columnheader">
+                  <input
+                    type="checkbox"
+                    checked={goodsAllFilteredSelected}
+                    onChange={toggleGoodsSelectAll}
+                    aria-label="Chọn tất cả dòng đang hiển thị"
+                    disabled={goodsRowsFiltered.length === 0}
+                  />
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th" role="columnheader">
+                  Mã hàng
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-name" role="columnheader">
+                  Tên hàng
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-dvt" role="columnheader">
+                  ĐVT (Đơn vị tính cơ bản)
+                </div>
+                <div
+                  className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-brand ah-goods-catalog-th--filter"
+                  role="columnheader"
+                >
+                  <AdminHubGoodsBrandHeaderFilter
+                    brandOptions={brandOptions}
+                    selectedBrand={goodsBrandKey}
+                    onSelectBrand={(key) => {
+                      setHangHoaDeepLinkListScope('all')
+                      setGoodsBrandKey(key)
+                    }}
+                  />
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-num" role="columnheader">
+                  Giá bán
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-num" role="columnheader">
+                  Giá vốn
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-num" role="columnheader">
+                  Tồn kho
+                </div>
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-time" role="columnheader">
+                  Thời gian tạo
+                </div>
+              </div>
+              {goodsRowsFiltered.length === 0 ? (
+                <div className="ah-goods-empty-stack">
+                  {catalogList.length === 0 ? (
+                    <p className="ah-goods-loading-line" role="status">
+                      Đang tải dữ liệu...
+                    </p>
+                  ) : null}
+                  <div className="admin-hub-muted ah-goods-empty-inset">
+                    {catalogList.length === 0
+                      ? 'Chưa có dữ liệu hàng hóa. Dùng Import file hoặc nhập CSV ở màn Bán hàng.'
+                      : 'Không có dòng nào khớp tìm kiếm / thương hiệu.'}
+                  </div>
+                </div>
+              ) : (
+                <div className="ah-goods-virtual-host">
+                  <AutoSizer
+                    box="border-box"
+                    renderProp={({ height, width }) => {
+                      const w = Math.max(220, Math.floor(width ?? 1000))
+                      const h = Math.max(280, Math.floor(height ?? 800))
+                      return (
+                        <AdminHubGoodsVirtualList
+                          height={h}
+                          width={w}
+                          rows={goodsRowsFiltered}
+                          goodsExpandedId={goodsExpandedId}
+                          goodsSelected={goodsSelected}
+                          toggleGoodsRowExpand={toggleGoodsRowExpand}
+                          toggleGoodsSelect={toggleGoodsSelect}
+                          expandedSlot={goodsExpandedBelowSlot}
+                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsRowsFiltered.length}|${goodsExpandedId ?? ''}`}
+                        />
+                      )
+                    }}
+                  />
+                </div>
+              )}
+            </div>          </section>
+        )}
+
+        {activeTab === TAB_INBOUND && (
+          <section className="ah-inbound-page" aria-labelledby="ah-inbound-title">
+            <h2 id="ah-inbound-title" className="admin-hub-panel-title ah-inbound-title">
+              Nhập hàng
+            </h2>
+            <p className="admin-hub-muted ah-inbound-meta">
+              Danh sách phiếu nhập — lưu cục bộ trên trình duyệt này (có thể xuất CSV để đối chiếu).
+            </p>
+
+            <input
+              ref={inboundListImportRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="ah-goods-file-input"
+              aria-hidden
+              tabIndex={-1}
+              onChange={handleInboundListImport}
+            />
+            <div className="ah-inbound-toolbar">
+              <div className="ah-inbound-toolbar-left">
+                <div className="ah-inbound-search-wrap">
+                  <svg
+                    className="ah-inbound-search-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden
+                  >
+                    <path
+                      d="M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15zM21 21l-6-6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <input
+                    className="ah-inbound-search"
+                    type="search"
+                    placeholder="Theo mã đơn, nhà cung cấp, trạng thái…"
+                    value={inboundQ}
+                    onChange={(e) => setInboundQ(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Tìm phiếu nhập"
+                  />
+                </div>
+              </div>
+              <div className="ah-inbound-toolbar-right">
+                <button type="button" className="ah-inbound-btn-create" onClick={openInboundCreateForm}>
+                  + Tạo đơn nhập hàng
+                </button>
+                <button
+                  type="button"
+                  className="ah-goods-io-btn"
+                  onClick={() => inboundListImportRef.current?.click()}
+                >
+                  <span className="ah-goods-io-icon" aria-hidden>
+                    ↑
+                  </span>
+                  Import file
+                </button>
+                <button type="button" className="ah-goods-io-btn" onClick={handleInboundExportAll}>
+                  <span className="ah-goods-io-icon" aria-hidden>
+                    ↓
+                  </span>
+                  Xuất file
+                </button>
+              </div>
+            </div>
+
+            {inboundSelectedIds.size > 0 && (
+              <div className="ah-inbound-bulk-bar" role="toolbar" aria-label="Thao tác đơn đã chọn">
+                <span className="ah-inbound-bulk-count">
+                  Đã chọn <strong>{inboundSelectedIds.size}</strong> đơn
+                </span>
+                <div className="ah-inbound-bulk-actions">
+                  <button
+                    type="button"
+                    className="ah-goods-io-btn"
+                    onClick={handleInboundExportSelected}
+                  >
+                    <span className="ah-goods-io-icon" aria-hidden>
+                      ↓
+                    </span>
+                    Xuất file các đơn đã chọn
+                  </button>
+                  <button
+                    type="button"
+                    className="ah-goods-io-btn ah-goods-io-btn--danger"
+                    onClick={handleInboundDeleteSelected}
+                  >
+                    <span className="ah-inbound-bulk-del-icon" aria-hidden>
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"
+                          stroke="currentColor"
+                          strokeWidth="1.85"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M10 11v6M14 11v6"
+                          stroke="currentColor"
+                          strokeWidth="1.85"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </span>
+                    Xóa đơn đã chọn
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="admin-hub-table-wrap ah-inbound-table-wrap">
+              <table className="admin-hub-table ah-inbound-table">
+                <thead>
+                  <tr>
+                    <th className="ah-inbound-col-check">
+                      <input
+                        type="checkbox"
+                        checked={inboundAllFilteredSelected}
+                        onChange={toggleInboundSelectAll}
+                        aria-label="Chọn tất cả đơn đang hiển thị"
+                        disabled={inboundRowsFiltered.length === 0}
+                      />
+                    </th>
+                    <th>Mã đơn nhập</th>
+                    <th>Ngày nhập</th>
+                    <th>Nhà cung cấp</th>
+                    <th className="ah-num">Giá trị đơn</th>
+                    <th>Trạng thái nhập</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inboundRowsFiltered.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="admin-hub-muted">
+                        {inboundOrders.length === 0
+                          ? 'Chưa có phiếu nhập.'
+                          : 'Không có đơn khớp tìm kiếm.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    inboundRowsFiltered.map((r) => (
+                      <tr key={r.id}>
+                        <td className="ah-inbound-col-check" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={!!inboundSelected[r.id]}
+                            onChange={() => toggleInboundSelect(r.id)}
+                            aria-label={`Chọn đơn ${r.code}`}
+                          />
+                        </td>
+                        <td className="ah-inbound-code">
+                          <button
+                            type="button"
+                            className="ah-inbound-code-link"
+                            onClick={() => openInboundDetailTab(r)}
+                          >
+                            {r.code || '—'}
+                          </button>
+                        </td>
+                        <td className="ah-inbound-time">
+                          {new Date(r.createdAtMs).toLocaleString('vi-VN')}
+                        </td>
+                        <td>{r.supplier || '—'}</td>
+                        <td className="ah-num ah-inbound-value">
+                          {r.totalValue.toLocaleString('vi-VN')} đ
+                        </td>
+                        <td>
+                          <span
+                            className={`ah-inbound-status ah-inbound-status--${r.status}`}
+                            title={inboundStatusLabel(r.status)}
+                          >
+                            {inboundStatusLabel(r.status)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {activeTab === TAB_ORDERS && (
+          <section aria-labelledby="ah-ord-title">
+            <h2 id="ah-ord-title" className="admin-hub-panel-title">
+              Đơn hàng
+            </h2>
+            <p className="admin-hub-muted" style={{ marginTop: '-0.35rem', marginBottom: '0.65rem' }}>
+              Đơn nhập kho (phiếu mua) và đơn bán hàng (POS) trên trình duyệt này.
+            </p>
+            <div className="admin-hub-chip-row" role="tablist" aria-label="Loại đơn hàng">
+              <button
+                type="button"
+                className={`admin-hub-chip${ordersSubTab === 'inbound' ? ' is-active' : ''}`}
+                onClick={() => setOrdersSubTab('inbound')}
+              >
+                Đơn nhập kho
+              </button>
+              <button
+                type="button"
+                className={`admin-hub-chip${ordersSubTab === 'pos' ? ' is-active' : ''}`}
+                onClick={() => setOrdersSubTab('pos')}
+              >
+                Đơn bán (POS)
+              </button>
+            </div>
+
+            {ordRange === RANGE_CUSTOM && (
+              <div
+                className="admin-hub-date-row ah-revenue-date-row"
+                role="group"
+                aria-label="Khoảng ngày tùy chọn"
+              >
+                <label>
+                  Từ
+                  <input
+                    type="date"
+                    className="admin-hub-date-input"
+                    value={ordFrom}
+                    onChange={(e) => setOrdFrom(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Đến
+                  <input
+                    type="date"
+                    className="admin-hub-date-input"
+                    value={ordTo}
+                    onChange={(e) => setOrdTo(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+
+            <div
+              className="ah-orders-list-toolbar"
+              role="toolbar"
+              aria-label="Tìm kiếm và lọc thời gian đơn hàng"
+            >
+              <div className="ah-orders-list-toolbar-left">
+                {ordersSubTab === 'inbound' ? (
+                  <div className="ah-inbound-search-wrap ah-orders-search-wrap">
+                    <input
+                      className="admin-hub-search"
+                      type="search"
+                      placeholder="Tìm theo mã đơn nhập, NCC, trạng thái…"
+                      value={inboundQ}
+                      onChange={(e) => setInboundQ(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-label="Tìm phiếu nhập"
+                    />
+                  </div>
+                ) : (
+                  <div className="ah-orders-search-wrap">
+                    <input
+                      className="admin-hub-search"
+                      type="search"
+                      placeholder="Tìm theo mã đơn hàng…"
+                      value={ordQ}
+                      onChange={(e) => setOrdQ(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-label="Tìm đơn bán POS"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="ah-orders-list-toolbar-right">
+                <div className="ah-orders-time-dd" ref={ordersTimeDdRef}>
+                  <button
+                    type="button"
+                    className={`admin-hub-chip ah-orders-time-dd-trigger${ordersDateDdOpen ? ' is-dd-open' : ''}`}
+                    id="ah-orders-time-dd-trigger"
+                    aria-expanded={ordersDateDdOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setOrdersDateDdOpen((o) => !o)}
+                  >
+                    <span className="ah-orders-time-dd-trigger-text">{ordersRangeTriggerLabel}</span>
+                    <span className="ah-orders-time-dd-chevron" aria-hidden>
+                      ▾
+                    </span>
+                  </button>
+                  {ordersDateDdOpen && (
+                    <div
+                      className="ah-orders-time-dd-menu"
+                      role="menu"
+                      aria-labelledby="ah-orders-time-dd-trigger"
+                    >
+                      {RANGE_PRESETS.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          role="menuitem"
+                          className={`ah-orders-time-dd-item${ordRange === k ? ' is-active' : ''}`}
+                          onClick={() => pickOrdersRange(k)}
+                        >
+                          {k === RANGE_CUSTOM ? ORDERS_TAB_CUSTOM_RANGE_LABEL : RANGE_LABELS[k]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="ah-orders-toolbar-meta dash-toolbar-meta" aria-live="polite">
+                  <strong>
+                    {ordersSubTab === 'inbound'
+                      ? inboundDateFilteredForOrdersTab.length
+                      : ordFiltered.length}
+                  </strong>
+                  {' đơn'}
+                  <span className="ah-orders-toolbar-meta-sep"> · </span>
+                  <strong>
+                    {(ordersSubTab === 'inbound' ? ordersTabInboundTotal : ordersTabPosTotal).toLocaleString(
+                      'vi-VN'
+                    )}
+                  </strong>
+                  {' đ'}
+                </div>
+              </div>
+            </div>
+
+            {ordersSubTab === 'inbound' && (
+              <>
+                <div className="admin-hub-table-wrap ah-inbound-table-wrap">
+                  <table className="admin-hub-table ah-inbound-table">
+                    <thead>
+                      <tr>
+                        <th>Mã đơn nhập</th>
+                        <th>Ngày nhập</th>
+                        <th>Nhà cung cấp</th>
+                        <th className="ah-num">Giá trị đơn</th>
+                        <th>Trạng thái</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inboundRowsOrdersTab.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="admin-hub-muted">
+                            {inboundOrders.length === 0
+                              ? 'Chưa có phiếu nhập.'
+                              : inboundDateFilteredForOrdersTab.length === 0
+                                ? 'Không có phiếu nhập trong khoảng thời gian đang chọn.'
+                                : 'Không có phiếu khớp tìm kiếm.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        inboundRowsOrdersTab.map((r) => (
+                          <tr key={r.id}>
+                            <td className="ah-inbound-code">
+                              <button
+                                type="button"
+                                className="ah-inbound-code-link"
+                                onClick={() => openInboundDetailTab(r)}
+                              >
+                                {r.code || '—'}
+                              </button>
+                            </td>
+                            <td className="ah-inbound-time">
+                              {new Date(r.createdAtMs).toLocaleString('vi-VN')}
+                            </td>
+                            <td>{r.supplier || '—'}</td>
+                            <td className="ah-num ah-inbound-value">
+                              {r.totalValue.toLocaleString('vi-VN')} đ
+                            </td>
+                            <td>
+                              <span
+                                className={`ah-inbound-status ah-inbound-status--${r.status}`}
+                                title={inboundStatusLabel(r.status)}
+                              >
+                                {inboundStatusLabel(r.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {ordersSubTab === 'pos' && (
+              <>
+                <div className="admin-hub-table-wrap">
+                  <table className="admin-hub-table">
+                    <thead>
+                      <tr>
+                        <th>Mã đơn</th>
+                        <th>Thời gian</th>
+                        <th>Trạng thái</th>
+                        <th className="ah-num">Tổng tiền</th>
+                        <th className="ah-num">Lợi nhuận</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loading ? (
+                        <tr>
+                          <td colSpan={5} className="admin-hub-muted">
+                            Đang tải…
+                          </td>
+                        </tr>
+                      ) : ordList.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="admin-hub-muted">
+                            {orders.length === 0
+                              ? 'Chưa có đơn bán.'
+                              : ordFiltered.length === 0
+                                ? 'Không có đơn bán trong khoảng thời gian đang chọn.'
+                                : 'Không có đơn khớp mã tìm kiếm.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        ordListForPosSummary.map((o) => (
+                          <tr key={o.id}>
+                            <td>
+                              <button
+                                type="button"
+                                className="ah-inbound-code-link"
+                                onClick={() => openPosDetailTab(o)}
+                              >
+                                {o.invoiceNo || '—'}
+                              </button>
+                            </td>
+                            <td>{new Date(o.createdAt).toLocaleString('vi-VN')}</td>
+                            <td>
+                              <span
+                                className={`ah-inbound-status ah-inbound-status--${o.status === 'cancelled' ? 'cancelled' : o.status === 'returned_full' ? 'returned_full' : o.status === 'returned_partial' ? 'returned_partial' : 'completed'}`}
+                                title={posOrderStatusLabel(o.status)}
+                              >
+                                {posOrderStatusLabel(o.status)}
+                              </span>
+                            </td>
+                            <td className="ah-num">{Number(o.total).toLocaleString('vi-VN')} đ</td>
+                            <td className="ah-num">{Number(o.totalProfit).toLocaleString('vi-VN')} đ</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {activeTab === TAB_CUSTOMERS && (
+          <section aria-labelledby="ah-cust-title">
+            <h2 id="ah-cust-title" className="admin-hub-panel-title">
+              Khách hàng
+            </h2>
+            <div className="admin-hub-toolbar">
+              <input
+                className="admin-hub-search"
+                type="search"
+                placeholder="Tìm theo họ tên, SĐT, địa chỉ, CCCD…"
+                value={custQ}
+                onChange={(e) => setCustQ(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="admin-hub-table-wrap">
+              <table className="admin-hub-table">
+                <thead>
+                  <tr>
+                    <th>Họ tên</th>
+                    <th>Số điện thoại</th>
+                    <th>Địa chỉ</th>
+                    <th>Số CCCD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {custFiltered.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="admin-hub-muted">
+                        {customers.length === 0
+                          ? 'Chưa có khách lưu trên trình duyệt này (thêm tại màn Bán hàng).'
+                          : 'Không có khách khớp tìm kiếm.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    custFiltered.map((c, i) => (
+                      <tr key={`${c.name}-${c.phone}-${i}`}>
+                        <td>{c.name}</td>
+                        <td>{c.phone || '—'}</td>
+                        <td>{c.address || '—'}</td>
+                        <td>{c.cccd || '—'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {activeTab === TAB_STAFF && (
+          <section aria-labelledby="ah-staff-title">
+            <h2 id="ah-staff-title" className="admin-hub-panel-title">
+              Nhân viên
+            </h2>
+            <div className="admin-hub-toolbar">
+              <input
+                className="admin-hub-search"
+                type="search"
+                placeholder="Tìm trong danh sách…"
+                value={staffQ}
+                onChange={(e) => setStaffQ(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="admin-hub-table-wrap">
+              <table className="admin-hub-table">
+                <thead>
+                  <tr>
+                    <th>Họ tên / Vai trò</th>
+                    <th>Số điện thoại</th>
+                    <th>Địa chỉ</th>
+                    <th>Số CCCD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffFiltered.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.name}</td>
+                      <td>{r.phone}</td>
+                      <td>{r.address}</td>
+                      <td>{r.cccd}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="admin-hub-muted" style={{ marginTop: '0.65rem' }}>
+              Danh sách vai trò mặc định; có thể mở rộng lưu hồ sơ chi tiết trong phiên bản sau.
+            </p>
+          </section>
+        )}
+
+        {isSoloProductTabId(activeTab) &&
+          (soloGoodsCtx && soloGoodsVariant && soloGoodsDraft ? (
+            <section className="ah-solo-product-root" aria-labelledby="ah-solo-product-title">
+              <header className="ah-solo-product-head ah-solo-product-head--sticky">
+                <div className="ah-solo-product-tabs-bar ah-hub-tabstrip--dark" aria-label="Điều hướng chi tiết sản phẩm">
+                  <div className="ah-solo-product-tabstrip" role="tablist">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={soloGoodsUiTab === GOODS_DETAIL_VIEW_TONKHO}
+                      className={`ah-solo-product-tab${soloGoodsUiTab === GOODS_DETAIL_VIEW_TONKHO ? ' is-active' : ''}`}
+                      onClick={() => setSoloGoodsUiTab(GOODS_DETAIL_VIEW_TONKHO)}
+                    >
+                      Mô tả
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU}
+                      className={`ah-solo-product-tab${soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU ? ' is-active' : ''}`}
+                      onClick={() => setSoloGoodsUiTab(GOODS_DETAIL_VIEW_LICHSU)}
+                    >
+                      Lịch sử kho
+                    </button>
+                    {soloGoodsCtx?.product && isComboCatalogProduct(soloGoodsCtx.product) ? (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={soloGoodsUiTab === GOODS_DETAIL_VIEW_COMBO}
+                        className={`ah-solo-product-tab${soloGoodsUiTab === GOODS_DETAIL_VIEW_COMBO ? ' is-active' : ''}`}
+                        onClick={() => setSoloGoodsUiTab(GOODS_DETAIL_VIEW_COMBO)}
+                      >
+                        Thành phần combo
+                      </button>
+                    ) : null}
+                  </div>
+                  <div
+                    className="ah-solo-product-primary-tools ah-hub-tabstrip-tools--dark"
+                    role="toolbar"
+                    aria-label="Lưu và hủy thay đổi"
+                  >
+                    <button
+                      type="button"
+                      className="ah-solo-product-icon-btn ah-solo-product-icon-btn--discard"
+                      onClick={discardSoloGoodsDraftChanges}
+                      title="Hủy thay đổi (khôi phục từ danh mục)"
+                    >
+                      <svg className="ah-solo-product-tool-svg" viewBox="0 0 24 24" aria-hidden>
+                        <path
+                          fill="currentColor"
+                          d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+                        />
+                      </svg>
+                    </button>
+                    <button type="button" className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save" onClick={saveSoloGoodsDetail} title="Lưu">
+                      ✓
+                    </button>
+                  </div>
+                </div>
+                <div className="ah-solo-product-head-row ah-solo-product-head-row--title ah-solo-product-head-row--below-tabs">
+                  <h1 id="ah-solo-product-title" className="ah-solo-product-h1">
+                    {String(soloGoodsDraft.name || soloGoodsVariant.name || '').trim() || '—'}
+                  </h1>
+                  <div className="ah-solo-product-head-tools" role="toolbar" aria-label="Thao tác">
+                    <button type="button" className="ah-solo-product-icon-btn" onClick={copySoloGoodsDetail} title="Sao chép">
+                      ⧉
+                    </button>
+                    <button
+                      type="button"
+                      className="ah-solo-product-icon-btn ah-solo-product-icon-btn--danger"
+                      onClick={deleteSoloGoodsVariant}
+                      title="Xóa mặt hàng"
+                    >
+                      ×
+                    </button>
+                    <button type="button" className="ah-solo-product-close-tab" onClick={closeSoloProductTab}>
+                      Đóng tab
+                    </button>
+                  </div>
+                </div>
+              </header>
+              {soloGoodsUiTab === GOODS_DETAIL_VIEW_TONKHO && (
+              <div className="ah-solo-product-body">
+                <div className="ah-solo-product-photo" aria-label="Ảnh sản phẩm (placeholder)" />
+                <div className="ah-solo-product-main">
+                  {soloGoodsCtx.variants.length > 1 && (
+                    <>
+                      {(() => {
+                        const ordered = sortVariantsSmallestUnitFirst(soloGoodsCtx.variants)
+                        const baseV = ordered[0]
+                        const rest = ordered.slice(1)
+                        return (
+                          <div
+                            className="ah-goods-unit-smart-summary ah-goods-unit-smart-summary--solo"
+                            role="region"
+                            aria-label="Tóm tắt đơn vị"
+                          >
+                            <p className="ah-goods-unit-smart-summary__base">
+                              <strong>Đơn vị cơ bản:</strong>{' '}
+                              {normalizeCatalogUnitLabel(baseV.unitLabel)} · Mã{' '}
+                              <span className="ah-muted-code">
+                                {String(baseV.code || '').trim() || '—'}
+                              </span>{' '}
+                              · Giá bán{' '}
+                              <strong>{Number(baseV.price || 0).toLocaleString('vi-VN')} đ</strong>
+                            </p>
+                            {rest.length > 0 && (
+                              <>
+                                <p className="ah-goods-unit-smart-summary__subhead">Đơn vị quy đổi</p>
+                                <ul className="ah-goods-unit-smart-summary__list">
+                                  {rest.map((vv) => (
+                                    <li key={vv.id}>
+                                      <button
+                                        type="button"
+                                        className={`ah-goods-unit-smart-summary__btn${
+                                          vv.id === soloActiveVariantId ? ' is-active' : ''
+                                        }`}
+                                        onClick={() => applySoloGoodsVariantSelection(vv.id)}
+                                      >
+                                        <span className="ah-goods-unit-smart-summary__u">
+                                          {normalizeCatalogUnitLabel(vv.unitLabel)}
+                                        </span>
+                                        <span className="ah-goods-unit-smart-summary__meta">
+                                          {String(vv.code || '').trim() || '—'} —{' '}
+                                          {Number(vv.price || 0).toLocaleString('vi-VN')} đ
+                                          {vv.conversion != null && Number(vv.conversion) > 1
+                                            ? ` · ×${vv.conversion}`
+                                            : ''}
+                                        </span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })()}
+                      <div className="ah-solo-product-unit-row">
+                        <span className="ah-goods-detail-unit-label">Đang chỉnh</span>
+                        <select
+                          className="ah-goods-detail-unit-select"
+                          value={soloActiveVariantId ?? ''}
+                          onChange={(e) => applySoloGoodsVariantSelection(e.target.value)}
+                        >
+                          {soloGoodsCtx.variants.map((vv) => (
+                            <option key={vv.id} value={vv.id}>
+                              {normalizeCatalogUnitLabel(vv.unitLabel)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  <div className="ah-solo-product-grid">
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-code">
+                        Mã hàng
+                      </label>
+                      <input
+                        id="solo-gd-code"
+                        className="ah-goods-card-input"
+                        value={soloGoodsDraft.code}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, code: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-barcode">
+                        Mã vạch
+                      </label>
+                      <input
+                        id="solo-gd-barcode"
+                        className="ah-goods-card-input ah-goods-card-input--barcode"
+                        value={soloGoodsDraft.barcode}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, barcode: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field ah-solo-product-span-2">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-name">
+                        Tên hàng
+                      </label>
+                      <input
+                        id="solo-gd-name"
+                        className="ah-goods-card-input"
+                        value={soloGoodsDraft.name}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, name: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-unit">
+                        ĐVT
+                      </label>
+                      <input
+                        id="solo-gd-unit"
+                        readOnly
+                        className="ah-goods-card-input ah-goods-card-input--readonly"
+                        value={normalizeCatalogUnitLabel(soloGoodsVariant?.unitLabel)}
+                        title="Đổi ĐVT bằng cách chọn biến thể khác (nếu có)"
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-stock">
+                        Tồn kho
+                      </label>
+                      <input
+                        id="solo-gd-stock"
+                        className="ah-goods-card-input ah-goods-card-input--num"
+                        inputMode="decimal"
+                        value={soloGoodsDraft.stockQty}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, stockQty: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-norm">
+                        Tồn nhỏ nhất
+                      </label>
+                      <input
+                        id="solo-gd-norm"
+                        className="ah-goods-card-input ah-goods-card-input--num"
+                        inputMode="decimal"
+                        value={soloGoodsDraft.stockNormMin}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, stockNormMin: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-cost">
+                        Giá vốn
+                      </label>
+                      <input
+                        id="solo-gd-cost"
+                        className="ah-goods-card-input ah-goods-card-input--num"
+                        inputMode="numeric"
+                        value={soloGoodsDraft.cost}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, '')
+                          const n = digits === '' ? 0 : parseInt(digits, 10)
+                          patchSoloGoodsDraft((x) =>
+                            x
+                              ? {
+                                  ...x,
+                                  cost: digits === '' ? '' : formatMoneyDraftVi(n),
+                                }
+                              : x
+                          )
+                        }}
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-price">
+                        Giá bán lẻ
+                      </label>
+                      <input
+                        id="solo-gd-price"
+                        className="ah-goods-card-input ah-goods-card-input--num"
+                        inputMode="numeric"
+                        value={soloGoodsDraft.price}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, '')
+                          const n = digits === '' ? 0 : parseInt(digits, 10)
+                          patchSoloGoodsDraft((x) =>
+                            x
+                              ? {
+                                  ...x,
+                                  price: digits === '' ? '' : formatMoneyDraftVi(n),
+                                }
+                              : x
+                          )
+                        }}
+                      />
+                    </div>
+                    <div className="ah-goods-card-field">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-wholesale">
+                        Giá sỉ
+                      </label>
+                      <input
+                        id="solo-gd-wholesale"
+                        className="ah-goods-card-input ah-goods-card-input--num"
+                        inputMode="numeric"
+                        value={soloGoodsDraft.wholesalePrice ?? ''}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, '')
+                          const n = digits === '' ? 0 : parseInt(digits, 10)
+                          patchSoloGoodsDraft((x) =>
+                            x
+                              ? {
+                                  ...x,
+                                  wholesalePrice: digits === '' ? '' : formatMoneyDraftVi(n),
+                                }
+                              : x
+                          )
+                        }}
+                      />
+                    </div>
+                    <div className="ah-goods-card-field ah-solo-product-span-2">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-brand">
+                        Thương hiệu
+                      </label>
+                      <input
+                        id="solo-gd-brand"
+                        className="ah-goods-card-input"
+                        value={soloGoodsDraft.brand}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, brand: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                    <div className="ah-goods-card-field ah-solo-product-span-2">
+                      <label className="ah-goods-card-lbl" htmlFor="solo-gd-weight">
+                        Trọng lượng
+                      </label>
+                      <input
+                        id="solo-gd-weight"
+                        className="ah-goods-card-input"
+                        value={soloGoodsDraft.weightRaw}
+                        onChange={(e) =>
+                          patchSoloGoodsDraft((x) => (x ? { ...x, weightRaw: e.target.value } : x))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="ah-goods-unit-modal-open-wrap ah-goods-unit-modal-open-wrap--solo">
+                    <button
+                      type="button"
+                      className="ah-goods-unit-modal-open-link"
+                      onClick={() => openSoloGoodsUnitModal()}
+                    >
+                      + Thêm đơn vị tính
+                    </button>
+                  </div>
+                </div>
+              </div>
+              )}
+              {soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU && (
+                <div className="ah-solo-product-stock-panel">
+                  <p className="admin-hub-muted ah-solo-stock-lead">
+                    Thẻ kho — tổng biến động được căn về <strong>tồn kho hiện tại</strong> trên danh mục. Bấm mã chứng
+                    từ để mở chi tiết đơn trong <strong>tab trình duyệt mới</strong>.
+                  </p>
+                  <div className="admin-hub-table-wrap ah-solo-stock-table-wrap">
+                    <table className="admin-hub-table ah-solo-stock-table">
+                      <thead>
+                        <tr>
+                          <th>Ngày ghi nhận</th>
+                          <th>Nhân viên</th>
+                          <th>Thao tác</th>
+                          <th className="ah-num">Số lượng thay đổi</th>
+                          <th className="ah-num">Tồn kho</th>
+                          <th>Mã chứng từ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {soloStockLedgerRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="admin-hub-muted">
+                              Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).
+                            </td>
+                          </tr>
+                        ) : (
+                          soloStockLedgerRows.map((row) => {
+                            const detailUrl = row.docLink
+                              ? getStockLedgerDetailAbsoluteUrl(row.docLink)
+                              : ''
+                            return (
+                              <tr key={row.key}>
+                                <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
+                                <td>{row.staff}</td>
+                                <td>{row.action}</td>
+                                <td
+                                  className={`ah-num${
+                                    row.delta > 0
+                                      ? ' ah-solo-stock-delta--pos'
+                                      : row.delta < 0
+                                        ? ' ah-solo-stock-delta--neg'
+                                        : ''
+                                  }`}
+                                >
+                                  {row.deltaLabel}
+                                </td>
+                                <td className="ah-num">{row.balanceLabel}</td>
+                                <td onClick={(e) => e.stopPropagation()}>
+                                  {detailUrl ? (
+                                    <a
+                                      className="ah-solo-stock-doc-link"
+                                      href={detailUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Mở chi tiết chứng từ (tab mới)"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                      }}
+                                    >
+                                      {row.docNo}
+                                    </a>
+                                  ) : (
+                                    row.docNo
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {soloGoodsUiTab === GOODS_DETAIL_VIEW_COMBO &&
+                soloGoodsCtx?.product &&
+                isComboCatalogProduct(soloGoodsCtx.product) && (
+                  <div className="ah-solo-product-stock-panel ah-goods-combo-detail-wrap">
+                    <div className="ah-goods-combo-detail-head">
+                      <span className="admin-hub-muted ah-goods-combo-detail-lead">
+                        Khi bán combo, tồn kho trừ theo từng thành phần (POS).
+                      </span>
+                      <button
+                        type="button"
+                        className="ah-goods-combo-edit-btn"
+                        onClick={() => setComboModal({ mode: 'edit', product: soloGoodsCtx.product })}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                          <path
+                            d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+                            stroke="currentColor"
+                            strokeWidth="1.85"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        Chỉnh sửa
+                      </button>
+                    </div>
+                    <div className="admin-hub-table-wrap">
+                      <table className="admin-hub-table ah-goods-combo-bom-table">
+                        <thead>
+                          <tr>
+                            <th>STT</th>
+                            <th>Tên sản phẩm</th>
+                            <th>ĐVT</th>
+                            <th className="ah-num">Số lượng</th>
+                            <th className="ah-num">Giá bán lẻ</th>
+                            <th className="ah-num">Thành tiền</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const bom = getComboBom(soloGoodsCtx.product)
+                            let sum = 0
+                            const rows = bom.map((row, idx) => {
+                              const ctx = findVariantContext(catalogList, row.variantId)
+                              const vv = ctx?.clicked
+                              const name = String(vv?.name || row.nameSnap || '').trim() || '—'
+                              const u = normalizeCatalogUnitLabel(vv?.unitLabel || row.unitLabelSnap || 'Cái')
+                              const pr = Number(vv?.price) || 0
+                              const q = Number(row.qty) || 0
+                              const line = Math.round(pr * q)
+                              sum += line
+                              return (
+                                <tr key={`${row.variantId}-${idx}`}>
+                                  <td>{idx + 1}</td>
+                                  <td>{name}</td>
+                                  <td>{u}</td>
+                                  <td className="ah-num">{q.toLocaleString('vi-VN')}</td>
+                                  <td className="ah-num">{pr.toLocaleString('vi-VN')}</td>
+                                  <td className="ah-num">{line.toLocaleString('vi-VN')}</td>
+                                </tr>
+                              )
+                            })
+                            return (
+                              <>
+                                {rows}
+                                <tr className="ah-goods-combo-bom-tfoot">
+                                  <td colSpan={5} className="ah-goods-combo-bom-tfoot-lbl">
+                                    Tổng tiền thành phần
+                                  </td>
+                                  <td className="ah-num ah-goods-combo-bom-tfoot-sum">
+                                    {sum.toLocaleString('vi-VN')}
+                                  </td>
+                                </tr>
+                              </>
+                            )
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+            </section>
+          ) : (
+            <section className="ah-solo-product-root ah-solo-product-root--empty">
+              <p className="admin-hub-muted">Không tìm thấy sản phẩm hoặc đang tải…</p>
+              <button type="button" className="ah-solo-product-close-tab" onClick={closeSoloProductTab}>
+                Đóng tab
+              </button>
+            </section>
+          ))}
+
+        {isInboundDetailTabId(activeTab) && (
+            <section className="ah-inbound-detail-page" aria-labelledby="ah-inbound-detail-title">
+              {!inboundDetailTabOid ? (
+                <div className="ah-inbound-detail-missing">
+                  <p className="admin-hub-muted">Tab không hợp lệ.</p>
+                  <button type="button" className="ah-inbound-btn-create" onClick={() => onAdminHubNavItemActivate(TAB_ORDERS)}>
+                    Về Đơn hàng
+                  </button>
+                </div>
+              ) : inboundDetailOrderRow ? (
+                <>
+                  <header className="ah-inbound-detail-head">
+                    <div className="ah-inbound-detail-head-main">
+                      <h2 id="ah-inbound-detail-title" className="admin-hub-panel-title ah-inbound-detail-h2">
+                        Chi tiết {inboundDetailOrderRow.code || '—'}
+                      </h2>
+                      <p className="admin-hub-muted ah-inbound-detail-meta">
+                        {new Date(inboundDetailOrderRow.createdAtMs).toLocaleString('vi-VN')}
+                        {' · '}
+                        {inboundDetailOrderRow.supplier || '—'}
+                        {' · '}
+                        <strong>{inboundDetailOrderRow.totalValue.toLocaleString('vi-VN')} đ</strong>
+                      </p>
+                      <span
+                        className={`ah-inbound-status ah-inbound-status--${inboundDetailOrderRow.status}`}
+                        title={inboundStatusLabel(inboundDetailOrderRow.status)}
+                      >
+                        {inboundStatusLabel(inboundDetailOrderRow.status)}
+                      </span>
+                    </div>
+                    <div className="ah-inbound-detail-tools" role="toolbar" aria-label="Thao tác phiếu nhập">
+                      <button
+                        type="button"
+                        className="ah-inbound-row-act"
+                        onClick={() => openInboundReturnModal(inboundDetailOrderRow)}
+                        disabled={
+                          inboundDetailIsEditing ||
+                          inboundDetailOrderRow.status === 'cancelled' ||
+                          !inboundOrderCanPartialReturn(inboundDetailOrderRow)
+                        }
+                      >
+                        Hoàn trả
+                      </button>
+                      <button
+                        type="button"
+                        className="ah-inbound-row-act ah-inbound-row-act--danger"
+                        onClick={() => requestInboundCancel(inboundDetailOrderRow)}
+                        disabled={inboundDetailIsEditing || inboundDetailOrderRow.status === 'cancelled'}
+                      >
+                        Hủy đơn
+                      </button>
+                      <button
+                        type="button"
+                        className="ah-inbound-row-act ah-inbound-row-act--primary"
+                        onClick={() => startInboundDetailEdit(inboundDetailOrderRow)}
+                        disabled={inboundDetailIsEditing || inboundDetailOrderRow.status === 'cancelled'}
+                      >
+                        Sửa đơn
+                      </button>
+                    </div>
+                  </header>
+                  {inboundDetailIsEditing && (
+                    <div className="ah-inbound-detail-edit-bar" role="group" aria-label="Hoàn tất chỉnh sửa">
+                      <button
+                        type="button"
+                        className="ah-inbound-row-act"
+                        onClick={() => clearInboundDetailEdit(inboundDetailTabOid)}
+                      >
+                        Hủy sửa
+                      </button>
+                      <button type="button" className="ah-inbound-btn-create" onClick={submitInboundDetailCommit}>
+                        Hoàn thành
+                      </button>
+                    </div>
+                  )}
+                  <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap">
+                    <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table">
+                      <colgroup>
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--stt" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--code" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--name" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--dvt" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--qty" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--price" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--total" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th className="ah-inbound-ln-stt">STT</th>
+                          <th>Mã hàng</th>
+                          <th>Tên hàng</th>
+                          <th>ĐVT</th>
+                          <th className="ah-num">Số lượng</th>
+                          <th className="ah-num">Đơn giá</th>
+                          <th className="ah-num">Thành tiền</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(inboundDetailDraftLines ?? inboundDetailOrderRow.lines).length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="admin-hub-muted">
+                              Chưa có dòng hàng.
+                            </td>
+                          </tr>
+                        ) : (
+                          (inboundDetailDraftLines ?? inboundDetailOrderRow.lines).map((rawLn, idx) => {
+                            const ln = normalizeInboundLine(rawLn)
+                            const inboundDvtOptions = buildInboundDvtSelectOptions(catalogList, ln)
+                            const inboundDvtLocked = inboundDvtOptions.length <= 1
+                            return (
+                              <tr key={ln.lineId}>
+                                <td className="ah-inbound-ln-stt">{idx + 1}</td>
+                                <td>{ln.code || '—'}</td>
+                                <td>
+                                  {ln.variantId ? (
+                                    <a
+                                      className="ah-inbound-detail-name-link"
+                                      href={buildOpenHangHoaGoodsAbsUrl(ln.variantId, ln.code) || '#'}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Mở sản phẩm trên tab Hàng hóa"
+                                      onClick={(e) => {
+                                        const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, ln.code)
+                                        if (!u) e.preventDefault()
+                                      }}
+                                    >
+                                      {ln.name || '—'}
+                                    </a>
+                                  ) : (
+                                    ln.name || '—'
+                                  )}
+                                </td>
+                                <td className="ah-inbound-ln-dvt-cell">
+                                  {inboundDetailIsEditing ? (
+                                    <select
+                                      className={`ah-inbound-dvt-select${
+                                        inboundDvtLocked ? ' ah-inbound-dvt-select--locked' : ''
+                                      }`}
+                                      aria-label={`Đơn vị tính ${ln.name}`}
+                                      disabled={inboundDvtLocked}
+                                      value={normalizeCatalogUnitLabel(ln.unitLabel)}
+                                      onChange={(e) =>
+                                        changeInboundDetailDraftUnit(inboundDetailTabOid, ln, e.target.value)
+                                      }
+                                    >
+                                      {inboundDvtOptions.map((opt) => (
+                                        <option key={opt} value={opt}>
+                                          {opt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    normalizeCatalogUnitLabel(ln.unitLabel) || '—'
+                                  )}
+                                </td>
+                                <td className="ah-num">
+                                  {inboundDetailIsEditing ? (
+                                    <input
+                                      className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
+                                      type="text"
+                                      inputMode="numeric"
+                                      aria-label={`Số lượng ${ln.name}`}
+                                      value={ln.qty === 0 ? '' : String(ln.qty)}
+                                      onFocus={selectInboundInputOnFocus}
+                                      onChange={(e) => {
+                                        const raw = e.target.value.replace(/[^\d.]/g, '')
+                                        const n =
+                                          raw === ''
+                                            ? 0
+                                            : Math.max(0, parseFloat(raw.replace(/,/g, '.')) || 0)
+                                        updateInboundDetailDraftLine(inboundDetailTabOid, ln.lineId, { qty: n })
+                                      }}
+                                    />
+                                  ) : (
+                                    ln.qty.toLocaleString('vi-VN')
+                                  )}
+                                </td>
+                                <td className="ah-num">
+                                  {inboundDetailIsEditing ? (
+                                    <input
+                                      className="ah-inbound-cell-input ah-inbound-cell-input--soft"
+                                      type="text"
+                                      inputMode="decimal"
+                                      aria-label={`Đơn giá ${ln.name}`}
+                                      value={formatMoneyDraftVi(ln.unitPrice)}
+                                      onFocus={selectInboundInputOnFocus}
+                                      onChange={(e) =>
+                                        updateInboundDetailDraftLine(inboundDetailTabOid, ln.lineId, {
+                                          unitPrice: parseMoneyDraftVi(e.target.value),
+                                        })
+                                      }
+                                    />
+                                  ) : (
+                                    `${ln.unitPrice.toLocaleString('vi-VN')} đ`
+                                  )}
+                                </td>
+                                <td className="ah-num">
+                                  {inboundLineTotal(ln).toLocaleString('vi-VN')} đ
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="ah-inbound-detail-missing">
+                  <p className="admin-hub-muted">Không tìm thấy phiếu nhập này (có thể đã bị xóa).</p>
+                  <button
+                    type="button"
+                    className="ah-inbound-btn-create"
+                    onClick={() => closeInboundDetailTabByOrderId(inboundDetailTabOid)}
+                  >
+                    Đóng tab
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+
+        {isPosOrderDetailTabId(activeTab) && (
+          <section className="ah-inbound-detail-page ah-pos-order-detail-page" aria-labelledby="ah-pos-ord-title">
+            {!posDetailTabOid ? (
+              <div className="ah-inbound-detail-missing">
+                <p className="admin-hub-muted">Tab không hợp lệ.</p>
+                <button type="button" className="ah-inbound-btn-create" onClick={() => onAdminHubNavItemActivate(TAB_ORDERS)}>
+                  Về Đơn hàng
+                </button>
+              </div>
+            ) : posDetailNorm ? (
+              <>
+                <header className="ah-inbound-detail-head">
+                  <div className="ah-inbound-detail-head-main">
+                    <h2 id="ah-pos-ord-title" className="admin-hub-panel-title ah-inbound-detail-h2">
+                      Chi tiết {posDetailNorm.invoiceNo || '—'}
+                    </h2>
+                    <p className="admin-hub-muted ah-inbound-detail-meta">
+                      {new Date(posDetailNorm.createdAt).toLocaleString('vi-VN')}
+                      {posDetailNorm.customerName ? ` · ${posDetailNorm.customerName}` : ''}
+                      {' · '}
+                      <strong>{Number(posDetailNorm.total).toLocaleString('vi-VN')} đ</strong>
+                      {' · LN '}
+                      <strong>{Number(posDetailNorm.totalProfit).toLocaleString('vi-VN')} đ</strong>
+                    </p>
+                    <span
+                      className={`ah-inbound-status ah-inbound-status--${
+                        posDetailNorm.status === 'cancelled'
+                          ? 'cancelled'
+                          : posDetailNorm.status === 'returned_full'
+                            ? 'returned_full'
+                            : posDetailNorm.status === 'returned_partial'
+                              ? 'returned_partial'
+                              : 'completed'
+                      }`}
+                      title={posOrderStatusLabel(posDetailNorm.status)}
+                    >
+                      {posOrderStatusLabel(posDetailNorm.status)}
+                    </span>
+                  </div>
+                  <div className="ah-inbound-detail-tools" role="toolbar" aria-label="Thao tác đơn bán POS">
+                    <button
+                      type="button"
+                      className="ah-inbound-row-act ah-inbound-row-act--primary"
+                      onClick={() => startPosDetailEdit(posDetailNorm)}
+                      disabled={
+                        revenueReadOnly ||
+                        posDetailIsEditing ||
+                        posDetailNorm.status === 'cancelled'
+                      }
+                    >
+                      Sửa đơn
+                    </button>
+                    <button
+                      type="button"
+                      className="ah-inbound-row-act ah-inbound-row-act--danger"
+                      onClick={() => requestPosCancel(posDetailNorm)}
+                      disabled={revenueReadOnly || posDetailIsEditing || posDetailNorm.status === 'cancelled'}
+                    >
+                      Hủy đơn
+                    </button>
+                    <button
+                      type="button"
+                      className="ah-inbound-row-act"
+                      onClick={() => openPosReturnModal(posDetailNorm)}
+                      disabled={revenueReadOnly || posDetailIsEditing || posDetailNorm.status === 'cancelled'}
+                    >
+                      Hoàn trả
+                    </button>
+                  </div>
+                </header>
+                {posDetailIsEditing && posDetailTabOid && (
+                  <div className="ah-inbound-detail-edit-bar" role="group" aria-label="Hoàn tất chỉnh sửa đơn POS">
+                    <select
+                      className="ah-inbound-dvt-select ah-pos-order-add-select"
+                      aria-label="Thêm món từ danh mục"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v) addPosDetailLineFromVariantId(posDetailTabOid, v)
+                        e.target.value = ''
+                      }}
+                    >
+                      <option value="" disabled>
+                        + Thêm món từ danh mục…
+                      </option>
+                      {catalogFlatVariantsForPosAdd.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.code || '—'} — {v.name || '—'} ({v.unitLabel || '—'})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="ah-inbound-row-act"
+                      onClick={() => clearPosDetailEdit(posDetailTabOid)}
+                    >
+                      Hủy sửa
+                    </button>
+                    <button type="button" className="ah-inbound-btn-create" onClick={submitPosDetailEditCommit}>
+                      Hoàn thành
+                    </button>
+                  </div>
+                )}
+                <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap">
+                  <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table">
+                    <thead>
+                      <tr>
+                        <th className="ah-inbound-ln-stt">STT</th>
+                        <th>Mã hàng</th>
+                        <th>Tên hàng</th>
+                        <th>ĐVT</th>
+                        <th className="ah-num">Số lượng</th>
+                        <th className="ah-num">Đơn giá bán</th>
+                        <th className="ah-num">Giá vốn</th>
+                        <th className="ah-num">Thành tiền</th>
+                        {!posDetailIsEditing ? (
+                          <th className="ah-num">Đã hoàn</th>
+                        ) : (
+                          <th aria-label="Xóa dòng" />
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(posDetailDraft ?? posDetailNorm).items.length === 0 ? (
+                        <tr>
+                          <td colSpan={posDetailIsEditing ? 9 : 9} className="admin-hub-muted">
+                            Chưa có dòng hàng.
+                          </td>
+                        </tr>
+                      ) : (
+                        (posDetailDraft ?? posDetailNorm).items.map((rawIt, idx) => {
+                          const it = rawIt
+                          return (
+                            <tr key={it.orderLineId || idx}>
+                              <td className="ah-inbound-ln-stt">{idx + 1}</td>
+                              <td>{it.code || '—'}</td>
+                              <td>{it.name || '—'}</td>
+                              <td>{it.unitLabel || '—'}</td>
+                              <td className="ah-num">
+                                {posDetailIsEditing ? (
+                                  <input
+                                    className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
+                                    type="text"
+                                    inputMode="decimal"
+                                    aria-label={`Số lượng ${it.name}`}
+                                    value={it.qty === 0 ? '' : String(it.qty)}
+                                    onFocus={selectInboundInputOnFocus}
+                                    onChange={(e) => {
+                                      const raw = e.target.value.replace(/[^\d.]/g, '')
+                                      const n =
+                                        raw === ''
+                                          ? 0
+                                          : Math.max(0, parseFloat(raw.replace(/,/g, '.')) || 0)
+                                      updatePosDetailDraftItem(posDetailTabOid, it.orderLineId, { qty: n })
+                                    }}
+                                  />
+                                ) : (
+                                  Number(it.qty).toLocaleString('vi-VN')
+                                )}
+                              </td>
+                              <td className="ah-num">
+                                {posDetailIsEditing ? (
+                                  <input
+                                    className="ah-inbound-cell-input ah-inbound-cell-input--soft"
+                                    type="text"
+                                    inputMode="numeric"
+                                    aria-label={`Đơn giá ${it.name}`}
+                                    value={formatMoneyDraftVi(it.price)}
+                                    onFocus={selectInboundInputOnFocus}
+                                    onChange={(e) =>
+                                      updatePosDetailDraftItem(posDetailTabOid, it.orderLineId, {
+                                        price: parseMoneyDraftVi(e.target.value),
+                                      })
+                                    }
+                                  />
+                                ) : (
+                                  `${Number(it.price).toLocaleString('vi-VN')} đ`
+                                )}
+                              </td>
+                              <td className="ah-num">{Number(it.cost).toLocaleString('vi-VN')} đ</td>
+                              <td className="ah-num">
+                                {(Number(it.price) * Number(it.qty)).toLocaleString('vi-VN')} đ
+                              </td>
+                              {!posDetailIsEditing ? (
+                                <td className="ah-num">
+                                  {(Number(it.returnedQty) > 0
+                                    ? Number(it.returnedQty)
+                                    : 0
+                                  ).toLocaleString('vi-VN')}
+                                </td>
+                              ) : (
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="ah-inbound-row-del"
+                                    aria-label="Xóa dòng"
+                                    onClick={() => removePosDetailDraftLine(posDetailTabOid, it.orderLineId)}
+                                  >
+                                    ×
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="ah-inbound-detail-missing">
+                <p className="admin-hub-muted">Không tìm thấy đơn hàng (có thể đã bị xóa).</p>
+                <button
+                  type="button"
+                  className="ah-inbound-btn-create"
+                  onClick={() => closePosDetailTabByOrderId(posDetailTabOid)}
+                >
+                  Đóng tab
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {isPosReturnDetailTabId(activeTab) && (
+          <section
+            className="ah-pos-return-detail-page"
+            aria-labelledby="ah-pos-ret-detail-title"
+          >
+            {!posReturnDetailLedgerId ? (
+              <div className="ah-inbound-detail-missing">
+                <p className="admin-hub-muted">Tab không hợp lệ.</p>
+                <button type="button" className="ah-inbound-btn-create" onClick={() => onAdminHubNavItemActivate(TAB_OVERVIEW)}>
+                  Về Doanh thu
+                </button>
+              </div>
+            ) : posReturnDetailEntry ? (
+              <>
+                <header className="ah-pos-return-detail-head">
+                  <div className="ah-pos-return-detail-head-main">
+                    <h2 id="ah-pos-ret-detail-title" className="admin-hub-panel-title ah-pos-return-detail-h2">
+                      {(() => {
+                        const srcInv =
+                          String(posReturnDetailEntry.sourceInvoiceNo || '').trim() ||
+                          (() => {
+                            const ord = orders.find(
+                              (o) => String(o.id) === String(posReturnDetailEntry.orderId)
+                            )
+                            return String(ord?.invoiceNo || '').trim()
+                          })() ||
+                          String(posReturnDetailEntry.orderId || '').trim() ||
+                          '—'
+                        return `Chi tiết TH-${srcInv}`
+                      })()}
+                    </h2>
+                    <p className="admin-hub-muted ah-pos-return-detail-meta">
+                      Phiếu chi — hoàn trả khách ·{' '}
+                      {(() => {
+                        try {
+                          return new Date(posReturnDetailEntry.atMs).toLocaleString('vi-VN')
+                        } catch {
+                          return '—'
+                        }
+                      })()}
+                    </p>
+                    <span className="ah-pos-return-detail-badge">Trả hàng</span>
+                  </div>
+                  <div className="ah-pos-return-detail-tools">
+                    <button
+                      type="button"
+                      className="ah-inbound-btn-create"
+                      onClick={() => closePosReturnDetailTabByLedgerId(posReturnDetailLedgerId)}
+                    >
+                      Đóng tab
+                    </button>
+                  </div>
+                </header>
+                <div className="admin-hub-table-wrap ah-pos-return-detail-table-wrap">
+                  <table className="admin-hub-table ah-pos-return-detail-table">
+                    <thead>
+                      <tr>
+                        <th>Mã hàng</th>
+                        <th>Tên hàng</th>
+                        <th>ĐVT</th>
+                        <th className="ah-num">Số lượng trả</th>
+                        <th className="ah-num">Đơn giá hoàn tiền</th>
+                        <th className="ah-num">Thành tiền hoàn trả</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.isArray(posReturnDetailEntry.lines) && posReturnDetailEntry.lines.length > 0 ? (
+                        posReturnDetailEntry.lines.map((ln, idx) => (
+                          <tr key={`${ln.code}-${idx}`}>
+                            <td>{String(ln.code || '').trim() || '—'}</td>
+                            <td>{String(ln.name || '').trim() || '—'}</td>
+                            <td>{String(ln.unitLabel || '').trim() || '—'}</td>
+                            <td className="ah-num">
+                              {Number.isFinite(Number(ln.qtyReturned))
+                                ? Number(ln.qtyReturned).toLocaleString('vi-VN')
+                                : '—'}
+                            </td>
+                            <td className="ah-num">
+                              {Number.isFinite(Number(ln.unitRefund))
+                                ? `${Math.round(Number(ln.unitRefund)).toLocaleString('vi-VN')} đ`
+                                : '—'}
+                            </td>
+                            <td className="ah-num">
+                              {Number.isFinite(Number(ln.lineRefund))
+                                ? `${Math.round(Number(ln.lineRefund)).toLocaleString('vi-VN')} đ`
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="admin-hub-muted">
+                            Giao dịch lưu trước khi có chi tiết từng dòng — chỉ có tổng hoàn bên dưới.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="ah-pos-return-detail-tfoot">
+                        <td colSpan={5} className="ah-num ah-pos-return-detail-tfoot-label">
+                          <strong>Tổng tiền đã chi trả lại cho khách</strong>
+                        </td>
+                        <td className="ah-num ah-pos-return-detail-tfoot-sum">
+                          <strong>
+                            {Math.max(0, Number(posReturnDetailEntry.revenueSub) || 0).toLocaleString('vi-VN')} đ
+                          </strong>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="ah-inbound-detail-missing">
+                <p className="admin-hub-muted">Không tìm thấy giao dịch hoàn trả (có thể đã bị xóa).</p>
+                <button
+                  type="button"
+                  className="ah-inbound-btn-create"
+                  onClick={() => closePosReturnDetailTabByLedgerId(posReturnDetailLedgerId)}
+                >
+                  Đóng tab
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === TAB_INBOUND_DRAFT && (
+          <section
+            className="ah-inbound-draft-root"
+            aria-labelledby="ah-inbound-draft-title"
+            role="region"
+          >
+            <header className="ah-inbound-draft-head">
+              <h2 id="ah-inbound-draft-title" className="ah-inbound-draft-title">
+                {inboundFormEditOrderId
+                  ? `Sửa phiếu nhập (${
+                      inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.code ||
+                      inboundFormCode ||
+                      '—'
+                    })`
+                  : 'Phiếu nhập mới'}
+              </h2>
+              <button
+                type="button"
+                className="ah-inbound-draft-close"
+                aria-label={standaloneInboundCreate ? 'Thoát (đóng tab trình duyệt)' : 'Đóng tab phiếu nhập'}
+                onClick={closeInboundForm}
+              >
+                {standaloneInboundCreate ? 'Thoát' : 'Đóng'}
+              </button>
+            </header>
+
+            <div className="ah-inbound-draft-body">
+              <div className="ah-inbound-draft-col-lines">
+                <label className="ah-inbound-form-lbl" htmlFor="ah-inbound-prod-q">
+                  Tìm kiếm sản phẩm{' '}
+                  <span className="ah-inbound-req">
+                    (quét mã vạch / gõ tên, Enter để thêm · phím F3 vào ô tìm)
+                  </span>
+                </label>
+                <div className="ah-inbound-draft-search-row">
+                  <div className="ah-inbound-line-search-box ah-inbound-draft-line-search">
+                    <input
+                      ref={inboundProductSearchRef}
+                      id="ah-inbound-prod-q"
+                      className="ah-inbound-form-input ah-inbound-form-input--line-search"
+                      type="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={inboundFormProductQ}
+                      onChange={(e) => setInboundFormProductQ(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return
+                        const q = inboundFormProductQ.trim()
+                        if (!q || catalogList.length === 0) return
+                        e.preventDefault()
+                        if (posQueryLooksLikeBarcodeKeyInput(q)) {
+                          const needle = String(normalizeBarcodeValue(q))
+                          for (const p of catalogList) {
+                            for (const v of p.groupVariants || [p]) {
+                              if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
+                                addInboundFormLine(p, v)
+                                return
+                              }
+                            }
+                          }
+                        }
+                        if (inboundProductSuggest.length > 0) {
+                          const hit = inboundProductSuggest[0]
+                          addInboundFormLine(hit.product, hit.variant)
+                        }
+                      }}
+                      placeholder="Mã vạch, mã hàng hoặc tên…"
+                    />
+                    {inboundFormProductDebounced.trim() && inboundProductSuggest.length > 0 && (
+                      <ul className="ah-inbound-suggest-list" role="listbox">
+                        {inboundProductSuggest.map(({ product, variant }) => {
+                          const titleName =
+                            String(product.name || variant.name || '').trim() || '—'
+                          const dvt = normalizeCatalogUnitLabel(variant.unitLabel)
+                          const ton = formatInboundTonLabel(variant.stockQty)
+                          return (
+                            <li key={variant.id} role="none">
+                              <button
+                                type="button"
+                                role="option"
+                                className="ah-inbound-suggest-item ah-inbound-suggest-item--draft"
+                                title={`${titleName} · ${dvt} · ${ton}`}
+                                onClick={() => addInboundFormLine(product, variant)}
+                              >
+                                <span className="ah-inbound-sug-name">{titleName}</span>
+                                <span className="ah-inbound-sug-dvt">{dvt}</span>
+                                <span className="ah-inbound-sug-stock">{ton}</span>
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="ah-inbound-quick-pick-btn"
+                    onClick={() => {
+                      setInboundQuickPickSelected(new Set())
+                      setInboundQuickPickOpen(true)
+                    }}
+                  >
+                    Chọn nhanh
+                  </button>
+                </div>
+
+                {catalogList.length === 0 && (
+                  <p className="admin-hub-muted ah-inbound-catalog-warn">
+                    Chưa có danh mục hàng trên trình duyệt này — có thể lưu phiếu tạm, nhưng{' '}
+                    <strong>Hoàn thành</strong> sẽ không cập nhật được tồn kho.
+                  </p>
+                )}
+
+                <div className="admin-hub-table-wrap ah-inbound-lines-table-wrap ah-inbound-draft-table-wrap">
+                  <table className="admin-hub-table ah-inbound-lines-table ah-inbound-draft-lines-table">
+                    <colgroup>
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--del" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--stt" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--code" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--name" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--dvt" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--qty" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--price" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--disc" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--total" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th className="ah-inbound-draft-th-del" aria-label="Xóa dòng" />
+                        <th className="ah-inbound-ln-stt ah-inbound-draft-th-stt">STT</th>
+                        <th className="ah-inbound-draft-th-code">Mã hàng</th>
+                        <th className="ah-inbound-draft-th-name">Tên hàng</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread">ĐVT</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Số lượng</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Đơn giá</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Giảm giá</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Thành tiền</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inboundFormLines.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="admin-hub-muted">
+                            Chưa có dòng hàng — tìm và chọn sản phẩm ở ô phía trên.
+                          </td>
+                        </tr>
+                      ) : (
+                        inboundFormLines.map((ln, idx) => {
+                          const inboundDvtOptions = buildInboundDvtSelectOptions(catalogList, ln)
+                          const inboundDvtLocked = inboundDvtOptions.length <= 1
+                          return (
+                          <tr key={ln.lineId}>
+                            <td className="ah-inbound-ln-del ah-inbound-draft-td-del">
+                              <button
+                                type="button"
+                                className="ah-inbound-row-del"
+                                tabIndex={-1}
+                                aria-label="Xóa dòng (dùng chuột; Tab bỏ qua để nhập nhanh SL / Đơn giá / Giảm giá)"
+                                onClick={() => removeInboundFormLine(ln.lineId)}
+                              >
+                                ×
+                              </button>
+                            </td>
+                            <td className="ah-inbound-ln-stt ah-inbound-draft-td-stt">{idx + 1}</td>
+                            <td className="ah-inbound-ln-code ah-inbound-draft-td-code">{ln.code || '—'}</td>
+                            <td className="ah-inbound-draft-td-name">{ln.name || '—'}</td>
+                            <td className="ah-inbound-ln-mid ah-inbound-ln-dvt-cell ah-inbound-ln-spread">
+                              <select
+                                className={`ah-inbound-dvt-select${inboundDvtLocked ? ' ah-inbound-dvt-select--locked' : ''}`}
+                                aria-label={`Đơn vị tính ${ln.name}`}
+                                disabled={inboundDvtLocked}
+                                title={
+                                  inboundDvtLocked
+                                    ? 'Mặt hàng chỉ có một ĐVT trong danh mục'
+                                    : 'Chọn ĐVT theo danh mục KiotViet'
+                                }
+                                value={normalizeCatalogUnitLabel(ln.unitLabel)}
+                                onChange={(e) => {
+                                  const res = applyInboundLineUnitChange(catalogList, ln, e.target.value)
+                                  if (!res.ok || !res.changed) return
+                                  updateInboundFormLine(ln.lineId, res.line)
+                                }}
+                              >
+                                {inboundDvtOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
+                              <input
+                                className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
+                                type="text"
+                                inputMode="numeric"
+                                data-inbound-line={ln.lineId}
+                                data-inbound-field="qty"
+                                aria-label={`Số lượng ${ln.name}`}
+                                value={ln.qty === 0 ? '' : String(ln.qty)}
+                                onFocus={selectInboundInputOnFocus}
+                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'qty')}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/[^\d.]/g, '')
+                                  const n =
+                                    raw === '' ? 0 : Math.max(0, parseFloat(raw.replace(/,/g, '.')) || 0)
+                                  updateInboundFormLine(ln.lineId, { qty: n })
+                                }}
+                              />
+                            </td>
+                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
+                              <input
+                                className="ah-inbound-cell-input ah-inbound-cell-input--soft"
+                                type="text"
+                                inputMode="decimal"
+                                data-inbound-line={ln.lineId}
+                                data-inbound-field="unitPrice"
+                                aria-label={`Đơn giá ${ln.name}`}
+                                value={formatMoneyDraftVi(ln.unitPrice)}
+                                onFocus={selectInboundInputOnFocus}
+                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'unitPrice')}
+                                onChange={(e) =>
+                                  updateInboundFormLine(ln.lineId, {
+                                    unitPrice: parseMoneyDraftVi(e.target.value),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
+                              <input
+                                className="ah-inbound-cell-input ah-inbound-cell-input--soft"
+                                type="text"
+                                inputMode="decimal"
+                                data-inbound-line={ln.lineId}
+                                data-inbound-field="lineDiscount"
+                                aria-label={`Giảm giá ${ln.name}`}
+                                value={formatMoneyDraftVi(ln.lineDiscount)}
+                                onFocus={selectInboundInputOnFocus}
+                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'lineDiscount')}
+                                onChange={(e) =>
+                                  updateInboundFormLine(ln.lineId, {
+                                    lineDiscount: parseMoneyDraftVi(e.target.value),
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="ah-inbound-ln-mid ah-inbound-ln-total ah-inbound-ln-spread ah-inbound-ln-total-cell">
+                              {inboundLineTotal(ln).toLocaleString('vi-VN')} đ
+                            </td>
+                          </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <aside className="ah-inbound-draft-sidebar" aria-label="Thông tin đơn nhập">
+                <label className="ah-inbound-form-lbl">
+                  Nhà cung cấp <span className="ah-inbound-req">*</span>
+                </label>
+                <div className="ah-inbound-ncc-row ah-inbound-ncc-row--draft">
+                  <div className="ah-inbound-ncc-input-wrap">
+                    <input
+                      className="ah-inbound-form-input"
+                      type="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={inboundFormSupplierQ}
+                      onFocus={() => setInboundSupplierSuggestOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setInboundSupplierSuggestOpen(false), 160)
+                      }}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setInboundFormSupplierQ(v)
+                        setInboundFormSupplierName(v)
+                      }}
+                      placeholder="Thương hiệu / NCC (3 Miền, Knorr, Nestlé…)"
+                      aria-required
+                    />
+                    {inboundNccSuggest.length > 0 && (
+                      <ul className="ah-inbound-ncc-suggest ah-inbound-ncc-suggest--draft">
+                        {inboundNccSuggest.map((row) => (
+                          <li key={row.key}>
+                            <button
+                              type="button"
+                              className="ah-inbound-ncc-sug-btn"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setInboundFormSupplierName(row.name)
+                                setInboundFormSupplierQ(row.name)
+                              }}
+                            >
+                              <strong>{row.name}</strong>
+                              <span className="ah-inbound-ncc-sug-sub">{row.subtitle}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="ah-inbound-ncc-add"
+                    onClick={() => setSupplierModalOpen(true)}
+                    title="Thêm nhà cung cấp mới"
+                  >
+                    <span className="ah-inbound-ncc-add-plus" aria-hidden>
+                      +
+                    </span>
+                    Thêm NCC
+                  </button>
+                </div>
+                <p className="ah-inbound-ncc-hint">
+                  Menu gợi ý tối đa <strong>10</strong> thương hiệu (cột D). Gõ thêm để thu hẹp; nếu chưa
+                  có trong danh sách, nhập tay hoặc dùng <strong>+ Thêm NCC</strong> để lưu SĐT / địa chỉ.
+                </p>
+
+                <label className="ah-inbound-form-lbl" htmlFor="ah-inbound-order-code">
+                  Mã đơn hàng
+                </label>
+                <input
+                  id="ah-inbound-order-code"
+                  className="ah-inbound-form-input"
+                  type="text"
+                  value={inboundFormCode}
+                  onChange={(e) => setInboundFormCode(e.target.value)}
+                  placeholder={`Để trống → ${computeNextInboundCode(inboundOrders)}`}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+
+                <div className="ah-inbound-readonly-block">
+                  <span className="ah-inbound-readonly-lbl">Tổng tiền hàng</span>
+                  <strong className="ah-inbound-readonly-val">
+                    {inboundFormGoodsSubtotal.toLocaleString('vi-VN')} đ
+                  </strong>
+                </div>
+
+                <fieldset className="ah-inbound-disc-fieldset">
+                  <legend className="ah-inbound-form-lbl">Giảm giá đơn hàng</legend>
+                  <div className="ah-inbound-disc-mode">
+                    <label className="ah-inbound-radio">
+                      <input
+                        type="radio"
+                        name="inbound-disc-mode"
+                        checked={inboundFormDiscMode === 'amount'}
+                        onChange={() => setInboundFormDiscMode('amount')}
+                      />
+                      Số tiền (đ)
+                    </label>
+                    <label className="ah-inbound-radio">
+                      <input
+                        type="radio"
+                        name="inbound-disc-mode"
+                        checked={inboundFormDiscMode === 'percent'}
+                        onChange={() => setInboundFormDiscMode('percent')}
+                      />
+                      Phần trăm (%)
+                    </label>
+                  </div>
+                  <input
+                    className="ah-inbound-form-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={inboundFormDiscRaw}
+                    onChange={(e) => setInboundFormDiscRaw(e.target.value)}
+                    placeholder={inboundFormDiscMode === 'percent' ? 'Ví dụ: 5' : 'Ví dụ: 50000'}
+                  />
+                </fieldset>
+
+                <div className="ah-inbound-readonly-block ah-inbound-readonly-block--accent">
+                  <span className="ah-inbound-readonly-lbl">Tổng thanh toán</span>
+                  <strong className="ah-inbound-readonly-val">
+                    {inboundFormTotalPay.toLocaleString('vi-VN')} đ
+                  </strong>
+                </div>
+
+                <label className="ah-inbound-form-lbl" htmlFor="ah-inbound-note">
+                  Ghi chú
+                </label>
+                <textarea
+                  id="ah-inbound-note"
+                  className="ah-inbound-form-textarea"
+                  rows={3}
+                  value={inboundFormNote}
+                  onChange={(e) => setInboundFormNote(e.target.value)}
+                  placeholder="Lưu ý cho đơn nhập…"
+                />
+              </aside>
+            </div>
+
+            <footer className="ah-inbound-draft-foot">
+              {!inboundEditFromStockApplied && (
+                <button
+                  type="button"
+                  className="ah-inbound-footer-btn ah-inbound-footer-btn--draft"
+                  onClick={() => saveInboundForm('saved_temp')}
+                >
+                  Lưu tạm
+                </button>
+              )}
+              <button
+                type="button"
+                className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
+                onClick={() => saveInboundForm('completed')}
+              >
+                Hoàn thành
+              </button>
+            </footer>
+          </section>
+        )}
+          </>
+        </AdminHubTabErrorBoundary>
+      </main>
+
+      {selected && (
+        <div
+          className="dash-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dash-detail-title"
+          onClick={(e) => e.target === e.currentTarget && setSelected(null)}
+        >
+          <div className="dash-modal dash-modal-wide">
+            <div className="dash-modal-head">
+              <h3 id="dash-detail-title">Chi tiết {selected.invoiceNo}</h3>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setSelected(null)}
+                aria-label="Đóng"
+              >
+                ×
+              </button>
+            </div>
+            <p className="dash-detail-meta">
+              {new Date(selected.createdAt).toLocaleString('vi-VN')}
+            </p>
+            <ul className="dash-detail-lines">
+              {(selected.items || []).map((it, i) => {
+                const rev = orderLineRevenue(it)
+                const ctot = orderLineCostTotal(it)
+                const lp = orderLineProfit(it)
+                return (
+                  <li key={i}>
+                    <span className="dd-name">{it.name}</span>
+                    <span className="dd-sub">
+                      Giá bán {Number(it.price).toLocaleString('vi-VN')} đ × {it.qty} ={' '}
+                      {rev.toLocaleString('vi-VN')} đ
+                    </span>
+                    <span className="dd-cost">
+                      Giá vốn {(Number(it.cost) || 0).toLocaleString('vi-VN')} đ × {it.qty} ={' '}
+                      {ctot.toLocaleString('vi-VN')} đ
+                    </span>
+                    <span className="dd-profit">
+                      Lợi nhuận dòng: <strong>{lp.toLocaleString('vi-VN')} đ</strong>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            {Number(selected.discount) > 0 && (
+              <div className="dash-detail-total dash-detail-subrow">
+                <span>Chiết khấu</span>
+                <strong>-{Number(selected.discount).toLocaleString('vi-VN')} đ</strong>
+              </div>
+            )}
+            <div className="dash-detail-total dash-detail-subrow">
+              <span>Tổng giá vốn đơn</span>
+              <strong>{orderTotalCost(selected).toLocaleString('vi-VN')} đ</strong>
+            </div>
+            <div className="dash-detail-total dash-detail-subrow dash-detail-profit-row">
+              <span>Lợi nhuận đơn</span>
+              <strong>{orderTotalProfit(selected).toLocaleString('vi-VN')} đ</strong>
+            </div>
+            <div className="dash-detail-total">
+              <span>Tổng thanh toán</span>
+              <strong>{Number(selected.total).toLocaleString('vi-VN')} đ</strong>
+            </div>
+            <div className="dash-modal-actions">
+              <button
+                type="button"
+                className="btn-dash btn-dash-primary"
+                onClick={() => handleReprint(selected)}
+              >
+                In lại hóa đơn
+              </button>
+              <button type="button" className="btn-dash" onClick={() => setSelected(null)}>
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <CostAdjustQuickPickModal
+        open={inboundQuickPickOpen && activeTab === TAB_INBOUND_DRAFT}
+        products={catalogList}
+        selectedIds={inboundQuickPickSelected}
+        onToggleId={toggleInboundQuickPickSel}
+        onConfirm={confirmInboundQuickPick}
+        onCancel={() => {
+          setInboundQuickPickOpen(false)
+          setInboundQuickPickSelected(new Set())
+        }}
+      />
+
+      {supplierModalOpen && (
+        <div
+          className="ah-inbound-sup-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setSupplierModalOpen(false)
+              setNewSup({ name: '', phone: '', address: '', cccd: '' })
+            }
+          }}
+        >
+          <div
+            className="ah-inbound-sup-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-inbound-sup-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="ah-inbound-sup-title" className="ah-inbound-sup-title">
+              Thêm nhà cung cấp
+            </h3>
+            <label className="ah-inbound-sup-field">
+              <span>Tên NCC</span>
+              <input
+                type="text"
+                className="ah-inbound-form-input"
+                value={newSup.name}
+                onChange={(e) => setNewSup((s) => ({ ...s, name: e.target.value }))}
+                autoComplete="organization"
+                autoFocus
+              />
+            </label>
+            <label className="ah-inbound-sup-field">
+              <span>Số điện thoại</span>
+              <input
+                type="tel"
+                className="ah-inbound-form-input"
+                value={newSup.phone}
+                onChange={(e) => setNewSup((s) => ({ ...s, phone: e.target.value }))}
+                autoComplete="tel"
+              />
+            </label>
+            <label className="ah-inbound-sup-field">
+              <span>Địa chỉ</span>
+              <input
+                type="text"
+                className="ah-inbound-form-input"
+                value={newSup.address}
+                onChange={(e) => setNewSup((s) => ({ ...s, address: e.target.value }))}
+                autoComplete="street-address"
+              />
+            </label>
+            <label className="ah-inbound-sup-field">
+              <span>CCCD</span>
+              <input
+                type="text"
+                className="ah-inbound-form-input"
+                value={newSup.cccd}
+                onChange={(e) => setNewSup((s) => ({ ...s, cccd: e.target.value }))}
+                autoComplete="off"
+              />
+            </label>
+            <div className="ah-inbound-sup-actions">
+              <button
+                type="button"
+                className="ah-inbound-footer-btn ah-inbound-footer-btn--ghost"
+                onClick={() => {
+                  setSupplierModalOpen(false)
+                  setNewSup({ name: '', phone: '', address: '', cccd: '' })
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
+                onClick={submitNewSupplier}
+              >
+                Lưu NCC
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inboundCostDiffModal && (
+        <div
+          className="ah-iv-modal-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) cancelInboundCostDiffModal()
+          }}
+        >
+          <div
+            className="ah-iv-modal ah-iv-modal--save-price"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-iv-save-price-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-iv-modal__head">
+              <h2 id="ah-iv-save-price-title" className="ah-iv-modal__title">
+                Lưu giá nhập
+              </h2>
+            </header>
+            <div className="ah-iv-modal__body">
+              <p className="ah-iv-modal__lead">
+                Một số mặt hàng có <strong>đơn giá nhập</strong> trên phiếu khác <strong>giá vốn</strong> hiện
+                tại trong danh mục. Bạn có muốn ghi đè giá vốn theo đơn giá nhập không?
+              </p>
+              <ul className="ah-iv-diff-list">
+                {inboundCostDiffModal.diffs.map((d) => (
+                  <li key={d.variantId} className="ah-iv-diff-item">
+                    <span className="ah-iv-diff-code">{d.code}</span>
+                    <span className="ah-iv-diff-name"> — {d.name}</span>
+                    <div className="ah-iv-diff-prices">
+                      <span>Giá vốn cũ: {d.oldCost.toLocaleString('vi-VN')} đ</span>
+                      <span> → </span>
+                      <span className="ah-iv-diff-new">Giá nhập: {d.newPrice.toLocaleString('vi-VN')} đ</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <footer className="ah-iv-modal__foot">
+              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={cancelInboundCostDiffModal}>
+                Hủy
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={confirmInboundCostSave}>
+                Cập nhật
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {inboundCostResultModal && (
+        <div
+          className="ah-iv-result-float"
+          role="region"
+          aria-label="Thông báo cập nhật giá nhập mới (luôn hiển thị cho đến khi Xác nhận)"
+        >
+          <div
+            className="ah-iv-modal ah-iv-modal--result ah-iv-modal--float-result"
+            aria-labelledby="ah-iv-result-title"
+          >
+            <header className="ah-iv-modal__head">
+              <h2 id="ah-iv-result-title" className="ah-iv-modal__title">
+                Cập nhật giá nhập mới cho sản phẩm
+              </h2>
+            </header>
+            <div className="ah-iv-modal__body">
+              <p className="ah-iv-modal__status">Xử lý dữ liệu hoàn tất!</p>
+              <div className="ah-iv-result-summary-row">
+                <span>
+                  Sản phẩm được cập nhật thành công:{' '}
+                  <strong className="ah-iv-result-num--ok">
+                    {inboundCostResultModal.updated.length}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  className="ah-iv-result-detail-toggle"
+                  onClick={() => setInboundCostResultDetailsOpen((o) => !o)}
+                >
+                  Chi tiết
+                  <span className="ah-iv-chevron" aria-hidden>
+                    {inboundCostResultDetailsOpen ? '▴' : '▾'}
+                  </span>
+                </button>
+              </div>
+              {inboundCostResultDetailsOpen && (
+                <div className="ah-iv-result-box">
+                  <ul className="ah-iv-result-ul">
+                    {inboundCostResultModal.updated.map((it) => (
+                      <li key={it.variantId}>
+                        <button
+                          type="button"
+                          className="ah-iv-result-rowlink"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            openProductDetailTab(it.variantId)
+                          }}
+                        >
+                          <span className="ah-iv-result-code-link">{it.code}</span>
+                          <span> — {it.name}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="ah-iv-result-fail">
+                Sản phẩm cập nhật không thành công:{' '}
+                <strong className="ah-iv-result-num--fail">{inboundCostResultModal.failCount}</strong>
+              </p>
+            </div>
+            <footer className="ah-iv-modal__foot ah-iv-modal__foot--single">
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={dismissInboundCostResultModal}>
+                Xác nhận
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {inboundReturnModal && (
+        <div
+          className="ah-inbound-float-panel ah-inbound-float-panel--left ah-inbound-float-panel--return-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ah-inbound-ret-title"
+        >
+          <div className="ah-inbound-float-panel__card">
+            <header className="ah-inbound-float-panel__head">
+              <h2 id="ah-inbound-ret-title" className="ah-inbound-float-panel__title">
+                Trả hàng — {inboundReturnModal.code}
+              </h2>
+              <button
+                type="button"
+                className="ah-inbound-float-panel__x"
+                aria-label="Đóng"
+                onClick={() => {
+                  setInboundReturnModal(null)
+                  setInboundReturnQtyDraft({})
+                }}
+              >
+                ×
+              </button>
+            </header>
+            <p className="ah-inbound-float-panel__lead">
+              Nhập <strong>số lượng trả</strong> cho từng dòng (mặc định 0). Khi hoàn tất, hệ thống{' '}
+              <strong>trừ tồn kho</strong> theo số lượng trả. Bạn vẫn có thể chuyển tab khác.
+            </p>
+            <div className="ah-inbound-float-panel__scroll">
+              <table className="ah-inbound-ret-table ah-return-lines-table">
+                <thead>
+                  <tr>
+                    <th className="ah-return-col-stt">#</th>
+                    <th className="ah-return-col-thumb" aria-hidden />
+                    <th>Sản phẩm</th>
+                    <th>ĐVT</th>
+                    <th className="ah-return-col-qty">SL trả / đã mua</th>
+                    <th className="ah-num ah-return-col-price">Đơn giá</th>
+                    <th className="ah-num ah-return-col-refund">Giá trị trả</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const list = normalizeInboundRow(inboundReturnModal).lines
+                      .map((raw) => {
+                        const ln = normalizeInboundLine(raw)
+                        const rq = inboundLineReturnableQty(ln)
+                        if (rq <= 0 || !ln.variantId) return null
+                        const purchased = ln.qty
+                        const draft = parseReturnQtyDraft(inboundReturnQtyDraft[ln.lineId], rq)
+                        const unitP = Math.max(0, Number(ln.unitPrice) || 0)
+                        const refund = Math.round(draft * unitP)
+                        const lineGross = Math.round(purchased * unitP)
+                        return { ln, rq, purchased, draft, unitP, refund, lineGross }
+                      })
+                      .filter(Boolean)
+                    return list.map((row, idx) => {
+                      const { ln, rq, purchased, draft, unitP, refund, lineGross } = row
+                      return (
+                        <tr key={ln.lineId}>
+                          <td className="ah-return-col-stt">{idx + 1}</td>
+                          <td className="ah-return-col-thumb">
+                            <div className="ah-return-thumb" title="Ảnh" />
+                          </td>
+                          <td>
+                            <div className="ah-return-prod-name">{ln.name || '—'}</div>
+                            <div className="ah-return-prod-sub">Mặc định</div>
+                            <div className="ah-return-prod-code">{ln.code || '—'}</div>
+                          </td>
+                          <td>{ln.unitLabel || '—'}</td>
+                          <td className="ah-return-col-qty">
+                            <span className="ah-return-qty-split">
+                              <input
+                                className="ah-return-qty-input"
+                                type="text"
+                                inputMode="decimal"
+                                aria-label={`Số lượng trả ${ln.name}`}
+                                placeholder="0"
+                                value={inboundReturnQtyDraft[ln.lineId] ?? ''}
+                                onChange={(e) =>
+                                  setInboundReturnQtyDraft((m) => ({
+                                    ...m,
+                                    [ln.lineId]: e.target.value,
+                                  }))
+                                }
+                              />
+                              <span className="ah-return-qty-sep">/</span>
+                              <span className="ah-return-qty-max">{purchased.toLocaleString('vi-VN')}</span>
+                            </span>
+                            <div className="ah-return-qty-cap">Tối đa còn trả: {rq.toLocaleString('vi-VN')}</div>
+                          </td>
+                          <td className="ah-num ah-return-col-price ah-inbound-ret-code">
+                            {unitP.toLocaleString('vi-VN')}
+                          </td>
+                          <td className="ah-num ah-return-col-refund">
+                            {draft > 0 ? (
+                              <>
+                                <span className="ah-return-strike">{lineGross.toLocaleString('vi-VN')}</span>
+                                <br />
+                                <strong>{refund.toLocaleString('vi-VN')}</strong>
+                              </>
+                            ) : (
+                              <strong>0</strong>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  })()}
+                </tbody>
+              </table>
+            </div>
+            <footer className="ah-inbound-float-panel__foot">
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--ghost"
+                onClick={() => {
+                  setInboundReturnModal(null)
+                  setInboundReturnQtyDraft({})
+                }}
+              >
+                Đóng
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={confirmInboundReturnSubmit}>
+                Hoàn thành trả hàng
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {inboundCancelModal && (
+        <div
+          className="ah-inbound-float-panel ah-inbound-float-panel--left ah-inbound-float-panel--narrow"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ah-inbound-can-title"
+        >
+          <div className="ah-inbound-float-panel__card">
+            <header className="ah-inbound-float-panel__head">
+              <h2 id="ah-inbound-can-title" className="ah-inbound-float-panel__title">
+                Hủy đơn nhập?
+              </h2>
+              <button
+                type="button"
+                className="ah-inbound-float-panel__x"
+                aria-label="Đóng"
+                onClick={() => setInboundCancelModal(null)}
+              >
+                ×
+              </button>
+            </header>
+            <p className="ah-inbound-float-panel__lead">
+              Đơn <strong>{inboundCancelModal.code}</strong>: hệ thống sẽ trừ toàn bộ số lượng còn trong kho từ
+              phiếu này và đánh dấu <strong>Hủy đơn</strong>.
+            </p>
+            <footer className="ah-inbound-float-panel__foot">
+              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={() => setInboundCancelModal(null)}>
+                Không
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={confirmInboundCancelSubmit}>
+                Hủy đơn
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {posReturnModal && (
+        <div
+          className="ah-inbound-float-panel ah-inbound-float-panel--left ah-inbound-float-panel--return-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ah-pos-ret-title"
+        >
+          <div className="ah-inbound-float-panel__card">
+            <header className="ah-inbound-float-panel__head">
+              <h2 id="ah-pos-ret-title" className="ah-inbound-float-panel__title">
+                Trả hàng — {posReturnModal.invoiceNo || '—'}
+              </h2>
+              <button
+                type="button"
+                className="ah-inbound-float-panel__x"
+                aria-label="Đóng"
+                onClick={() => {
+                  setPosReturnModal(null)
+                  setPosReturnQtyDraft({})
+                }}
+              >
+                ×
+              </button>
+            </header>
+            <p className="ah-inbound-float-panel__lead">
+              Nhập <strong>số lượng trả</strong> (mặc định 0). Tiền hoàn theo <strong>đơn giá / giá vốn đã lưu trên
+              đơn</strong>. Khi hoàn tất, hệ thống trừ doanh thu / vốn / lợi nhuận vào <strong>báo cáo ngày hôm
+              nay</strong>; dòng khớp được biến thể trong danh mục thì <strong>cộng tồn kho</strong> tương ứng.
+            </p>
+            <div className="ah-inbound-float-panel__scroll">
+              <table className="ah-inbound-ret-table ah-return-lines-table">
+                <thead>
+                  <tr>
+                    <th className="ah-return-col-stt">#</th>
+                    <th className="ah-return-col-thumb" aria-hidden />
+                    <th>Sản phẩm</th>
+                    <th>ĐVT</th>
+                    <th className="ah-return-col-qty">SL trả / đã mua</th>
+                    <th className="ah-num ah-return-col-price">Đơn giá</th>
+                    <th className="ah-num ah-return-col-refund">Tiền hoàn</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const norm = normalizePosOrder(posReturnModal, catalogList, {
+                      preferStoredLineFinancials: true,
+                    })
+                    const list = norm.items
+                      .map((it, idx) => {
+                        const rq = posOrderLineReturnableQty(it)
+                        if (rq <= 0) return null
+                        const lid =
+                          String(it.orderLineId || `row-${norm.id}-${idx}-${it.code || ''}`).trim() ||
+                          `row-${idx}`
+                        const purchased = Math.max(0, Number(it.qty) || 0)
+                        const draft = parseReturnQtyDraft(posReturnQtyDraft[lid], rq)
+                        const price = Math.max(0, Number(it.price) || 0)
+                        const refund = Math.round(draft * price)
+                        const lineSold = Math.round(purchased * price)
+                        const hasVid = Boolean(String(it.variantId || '').trim())
+                        return { it, lid, rq, purchased, draft, price, refund, lineSold, hasVid }
+                      })
+                      .filter(Boolean)
+                    return list.map((row, idx) => {
+                      const { it, lid, rq, purchased, draft, price, refund, lineSold, hasVid } = row
+                      return (
+                        <tr key={`${lid}-${idx}`}>
+                          <td className="ah-return-col-stt">{idx + 1}</td>
+                          <td className="ah-return-col-thumb">
+                            <div className="ah-return-thumb" title="Ảnh" />
+                          </td>
+                          <td>
+                            <div className="ah-return-prod-name">{it.name || '—'}</div>
+                            <div className="ah-return-prod-sub">
+                              {hasVid ? 'Mặc định' : 'Chưa khớp biến thể — hoàn tiền theo đơn; không tự cộng tồn'}
+                            </div>
+                            <div className="ah-return-prod-code">{it.code || '—'}</div>
+                          </td>
+                          <td>{it.unitLabel || '—'}</td>
+                          <td className="ah-return-col-qty">
+                            <span className="ah-return-qty-split">
+                              <input
+                                className="ah-return-qty-input"
+                                type="text"
+                                inputMode="decimal"
+                                aria-label={`Số lượng trả ${it.name}`}
+                                placeholder="0"
+                                value={posReturnQtyDraft[lid] ?? ''}
+                                onChange={(e) =>
+                                  setPosReturnQtyDraft((m) => ({
+                                    ...m,
+                                    [lid]: e.target.value,
+                                  }))
+                                }
+                              />
+                              <span className="ah-return-qty-sep">/</span>
+                              <span className="ah-return-qty-max">{purchased.toLocaleString('vi-VN')}</span>
+                            </span>
+                            <div className="ah-return-qty-cap">Tối đa còn trả: {rq.toLocaleString('vi-VN')}</div>
+                          </td>
+                          <td className="ah-num ah-return-col-price ah-inbound-ret-code">
+                            {price.toLocaleString('vi-VN')}
+                          </td>
+                          <td className="ah-num ah-return-col-refund">
+                            {draft > 0 ? (
+                              <>
+                                <span className="ah-return-strike">{lineSold.toLocaleString('vi-VN')}</span>
+                                <br />
+                                <strong>{refund.toLocaleString('vi-VN')}</strong>
+                              </>
+                            ) : (
+                              <strong>0</strong>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  })()}
+                </tbody>
+              </table>
+            </div>
+            <footer className="ah-inbound-float-panel__foot">
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--ghost"
+                onClick={() => {
+                  setPosReturnModal(null)
+                  setPosReturnQtyDraft({})
+                }}
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--primary"
+                onClick={() => void confirmPosReturnSubmit()}
+              >
+                Hoàn thành trả hàng
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {posCancelModal && (
+        <div
+          className="ah-inbound-float-panel ah-inbound-float-panel--left ah-inbound-float-panel--narrow"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ah-pos-can-title"
+        >
+          <div className="ah-inbound-float-panel__card">
+            <header className="ah-inbound-float-panel__head">
+              <h2 id="ah-pos-can-title" className="ah-inbound-float-panel__title">
+                Hủy đơn bán?
+              </h2>
+              <button
+                type="button"
+                className="ah-inbound-float-panel__x"
+                aria-label="Đóng"
+                onClick={() => setPosCancelModal(null)}
+              >
+                ×
+              </button>
+            </header>
+            <p className="ah-inbound-float-panel__lead">
+              Đơn <strong>{posCancelModal.invoiceNo || '—'}</strong>: hoàn toàn bộ hàng còn lại vào kho và đánh dấu{' '}
+              <strong>Hủy đơn</strong>.
+            </p>
+            <footer className="ah-inbound-float-panel__foot">
+              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={() => setPosCancelModal(null)}>
+                Không
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={() => void confirmPosCancelSubmit()}>
+                Hủy đơn
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {comboModal && (
+        <AdminHubComboModal
+          open
+          onClose={() => setComboModal(null)}
+          catalogList={catalogList}
+          searchRowsExcludingCombos={comboSearchRowsExcludingCombos}
+          mode={comboModal.mode}
+          initialDisplayProduct={comboModal.mode === 'edit' ? comboModal.product : null}
+          onSaveDisplayProduct={handleComboSaveDisplay}
+          revenueReadOnly={revenueReadOnly}
+        />
+      )}
+
+      {goodsNewModalOpen && (
+        <div
+          className={`ah-goods-create-overlay${
+            unitModal?.source === 'goods_create' ? ' ah-goods-create-overlay--dim' : ''
+          }`}
+          role="presentation"
+          onClick={closeGoodsCreateModal}
+        >
+          <div
+            className="ah-goods-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-goods-create-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-goods-create-head">
+              <h2 id="ah-goods-create-title" className="ah-goods-create-title">
+                Tạo hàng hóa
+              </h2>
+              <button
+                type="button"
+                className="ah-goods-create-close"
+                aria-label="Đóng"
+                onClick={closeGoodsCreateModal}
+              >
+                ×
+              </button>
+            </header>
+            <div className="ah-goods-create-body">
+              <div className="ah-goods-create-grid">
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    Mã vạch <span className="ah-goods-create-hint">(ưu tiên quét; có thể gõ)</span>
+                  </span>
+                  <input
+                    key={`gnew-bc-${goodsCreateFieldsKey}`}
+                    ref={goodsNewBarcodeRef}
+                    className="ah-goods-create-input ah-goods-create-input--barcode"
+                    type="text"
+                    defaultValue=""
+                    placeholder="Quét hoặc nhập mã vạch"
+                    autoComplete="off"
+                    spellCheck={false}
+                    inputMode="text"
+                    onInput={revalidateGoodsNewBarcode}
+                  />
+                  {goodsNewBarcodeDupMsg ? (
+                    <p className="ah-goods-create-barcode-err" role="alert">
+                      {goodsNewBarcodeDupMsg}
+                    </p>
+                  ) : null}
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    Mã hàng <span className="ah-goods-create-hint">(gợi ý tự động, có thể sửa)</span>
+                  </span>
+                  <input
+                    key={`gnew-code-${goodsCreateFieldsKey}`}
+                    ref={goodsNewCodeRef}
+                    className="ah-goods-create-input"
+                    type="text"
+                    defaultValue=""
+                    placeholder={suggestNextProductCodeFromCatalog(catalogList)}
+                    title="Để trống: khi Lưu hệ thống gán đúng mã gợi ý (kiểm tra trùng trước khi gán)"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    Tên hàng <span className="ah-goods-create-req">*</span>
+                  </span>
+                  <input
+                    key={`gnew-name-${goodsCreateFieldsKey}`}
+                    ref={goodsNewNameRef}
+                    className="ah-goods-create-input"
+                    type="text"
+                    defaultValue=""
+                    placeholder="Nhập tên sản phẩm"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">Thương hiệu</span>
+                  <input
+                    className="ah-goods-create-input"
+                    type="text"
+                    value={goodsNewBrand}
+                    onChange={(e) => setGoodsNewBrand(e.target.value)}
+                    list="ah-goods-new-brand-datalist"
+                    placeholder="Nhập hoặc chọn từ gợi ý"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <datalist id="ah-goods-new-brand-datalist">
+                    {brandOptions.map((b) => (
+                      <option key={b} value={b} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">ĐVT (Đơn vị tính cơ bản)</span>
+                  <input
+                    className="ah-goods-create-input"
+                    type="text"
+                    value={goodsNewUnit}
+                    onChange={(e) => setGoodsNewUnit(e.target.value)}
+                    placeholder="cái, chai, thùng…"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">Giá bán lẻ</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewPrice}
+                    onChange={(e) => setGoodsNewPrice(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">Giá sỉ</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewWholesale}
+                    onChange={(e) => setGoodsNewWholesale(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">Giá vốn</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewCost}
+                    onChange={(e) => setGoodsNewCost(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">Tồn kho</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewStock}
+                    onChange={(e) => setGoodsNewStock(e.target.value)}
+                    onBlur={() =>
+                      setGoodsNewStock((v) =>
+                        String(v ?? '').trim() === '' ? '0' : formatMoneyDraftVi(parseMoneyDraftVi(v))
+                      )
+                    }
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <div className="ah-goods-create-field ah-goods-create-field--full ah-goods-create-expiry-row">
+                  <span className="ah-goods-create-label">Quản lý theo hạn sử dụng</span>
+                  <div className="ah-goods-create-expiry-inner">
+                    <select
+                      className="ah-goods-create-select"
+                      value={goodsNewUseExpiry}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setGoodsNewUseExpiry(v)
+                        if (v === 'no') setGoodsNewExpiryYmd('')
+                      }}
+                      aria-label="Quản lý theo hạn sử dụng"
+                    >
+                      <option value="no">Không</option>
+                      <option value="yes">Có</option>
+                    </select>
+                    {goodsNewUseExpiry === 'yes' ? (
+                      <input
+                        className="ah-goods-create-input ah-goods-create-input--date"
+                        type="date"
+                        value={goodsNewExpiryYmd}
+                        onChange={(e) => setGoodsNewExpiryYmd(e.target.value)}
+                        aria-label="Hạn sử dụng"
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div className="ah-goods-create-field ah-goods-create-field--full">
+                  <div className="ah-goods-create-uom-row">
+                    <div className="ah-goods-create-uom-text">
+                      <div className="ah-goods-create-uom-title">Quản lý theo đơn vị tính và thuộc tính</div>
+                      <p className="ah-goods-create-uom-desc">
+                        Tạo nhiều đơn vị bán hoặc nhập (chai, lốc, thùng). Đặt công thức quy đổi (ví dụ: 1 thùng = 24
+                        lon). Mỗi đơn vị có thể có mã hàng riêng.
+                      </p>
+                      {goodsNewMultiVariants?.length > 1 ? (
+                        <p className="ah-goods-create-uom-status">
+                          Đã thiết lập {goodsNewMultiVariants.length} đơn vị — bấm Thiết lập để chỉnh lại.
+                        </p>
+                      ) : null}
+                    </div>
+                    <button type="button" className="ah-goods-create-uom-btn" onClick={openGoodsCreateUnitModal}>
+                      Thiết lập
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <footer className="ah-goods-create-foot">
+              <button type="button" className="ah-goods-create-btn ah-goods-create-btn--ghost" onClick={closeGoodsCreateModal}>
+                Bỏ qua
+              </button>
+              <button
+                type="button"
+                className="ah-goods-create-btn ah-goods-create-btn--primary"
+                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg}
+                onClick={submitGoodsCreateModal}
+              >
+                Lưu
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {unitModal && (
+        <div
+          className="ah-unit-modal-overlay"
+          role="presentation"
+          onClick={closeUnitModal}
+        >
+          <div
+            className="ah-unit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-unit-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-unit-modal__head">
+              <h2 id="ah-unit-modal-title" className="ah-unit-modal__title">
+                Thiết lập đơn vị tính và thuộc tính
+              </h2>
+              <button type="button" className="ah-unit-modal__close" aria-label="Đóng" onClick={closeUnitModal}>
+                ×
+              </button>
+            </header>
+            <div className="ah-unit-modal__body">
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">Đơn vị tính</h3>
+                <p className="ah-unit-modal__lead">
+                  Thêm đơn vị bán hoặc nhập như chai, lốc, thùng. Đặt công thức quy đổi để tính nhanh giá và tồn
+                  kho. Ví dụ: 1 lốc = 6 chai, 1 thùng = 24 chai.
+                </p>
+                <div className="ah-unit-modal__chips" aria-label="Danh sách đơn vị">
+                  {unitModalSortedRows.map((row, idx) => {
+                    const baseLbl =
+                      normalizeCatalogUnitLabel(unitModalSortedRows[0]?.unitLabel || '').trim() ||
+                      'đơn vị cơ bản'
+                    const conv = parsePositiveConversion(row.conversion) ?? 1
+                    const sub =
+                      idx === 0
+                        ? 'Đơn vị cơ bản'
+                        : `1 ${normalizeCatalogUnitLabel(row.unitLabel) || '…'} = ${conv} ${baseLbl}`
+                    return (
+                      <div
+                        key={row.key}
+                        className={`ah-unit-modal__chip${idx === 0 ? ' ah-unit-modal__chip--base' : ''}`}
+                      >
+                        <div className="ah-unit-modal__chip-meta">{sub}</div>
+                        <div className="ah-unit-modal__chip-fields">
+                          <label className="ah-unit-modal__sr" htmlFor={`um-u-${row.key}`}>
+                            Đơn vị
+                          </label>
+                          <input
+                            id={`um-u-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__chip-input"
+                            value={row.unitLabel}
+                            onChange={(e) =>
+                              setUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                            placeholder="Ví dụ: Chai"
+                            autoComplete="off"
+                          />
+                          <label className="ah-unit-modal__sr" htmlFor={`um-c-${row.key}`}>
+                            Quy đổi
+                          </label>
+                          <input
+                            id={`um-c-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__chip-input ah-unit-modal__chip-input--conv"
+                            inputMode="decimal"
+                            value={row.conversion}
+                            onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                            placeholder="1"
+                          />
+                          {idx > 0 ? (
+                            <button
+                              type="button"
+                              className="ah-unit-modal__chip-remove"
+                              aria-label="Xóa đơn vị"
+                              onClick={() => removeUnitModalRowKey(row.key)}
+                            >
+                              ×
+                            </button>
+                          ) : (
+                            <span className="ah-unit-modal__chip-spacer" aria-hidden />
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <button type="button" className="ah-unit-modal__add-inline" onClick={addUnitModalRow}>
+                  + Thêm đơn vị
+                </button>
+              </section>
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">Thuộc tính</h3>
+                <p className="ah-unit-modal__muted">Chưa có thuộc tính.</p>
+              </section>
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">Hàng cùng loại</h3>
+                <p className="ah-unit-modal__lead ah-unit-modal__lead--tight">
+                  Bảng đồng bộ với đơn vị ở trên. Nhập giá vốn / giá bán ở đơn vị nhỏ nhất để hệ thống nhân theo tỷ
+                  lệ quy đổi (có thể chỉnh tay từng dòng).
+                </p>
+                <div className="admin-hub-table-wrap ah-unit-modal__table-wrap">
+                  <table className="admin-hub-table ah-unit-modal__table">
+                    <thead>
+                      <tr>
+                        <th>Đơn vị</th>
+                        <th className="ah-num">Quy đổi</th>
+                        <th>Mã hàng</th>
+                        <th>Mã vạch</th>
+                        <th className="ah-num">Giá vốn</th>
+                        <th className="ah-num">Giá bán</th>
+                        <th aria-label="Xóa" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {unitModalSortedRows.map((row, idx) => (
+                        <tr key={`tbl-${row.key}`}>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.unitLabel}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--narrow"
+                              inputMode="decimal"
+                              value={row.conversion}
+                              onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.code}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, code: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.barcode}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, barcode: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
+                              inputMode="numeric"
+                              value={row.cost}
+                              onChange={(e) =>
+                                updateUnitModalCostAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
+                              inputMode="numeric"
+                              value={row.price}
+                              onChange={(e) =>
+                                updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </td>
+                          <td>
+                            {idx > 0 ? (
+                              <button
+                                type="button"
+                                className="ah-unit-modal__row-remove"
+                                aria-label="Xóa dòng"
+                                onClick={() => removeUnitModalRowKey(row.key)}
+                              >
+                                Xóa
+                              </button>
+                            ) : (
+                              <span className="admin-hub-muted">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+            <footer className="ah-unit-modal__foot">
+              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={closeUnitModal}>
+                Bỏ qua
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={commitUnitModal}>
+                Xong
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {goodsSaveToastGen > 0 && (
+        <div
+          key={goodsSaveToastGen}
+          className="ah-save-toast"
+          role="status"
+          aria-live="polite"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return
+            setGoodsSaveToastGen(0)
+          }}
+        >
+          Cập nhật thành công
+        </div>
+      )}
+    </div>
+  )
+}
