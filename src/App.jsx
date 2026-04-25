@@ -92,6 +92,12 @@ import {
   salableComboPackCount,
 } from './comboCatalog.js'
 
+/** File trong `public/` (Vite/Vercel: cùng gốc với trang) — tự tải khi chưa có catalog lưu cục bộ. */
+const DEFAULT_PUBLIC_CATALOG_NAME = 'Kiotnew csv.csv'
+function getDefaultPublicCatalogUrl() {
+  return `${import.meta.env.BASE_URL}${encodeURIComponent(DEFAULT_PUBLIC_CATALOG_NAME)}`
+}
+
 /**
  * Tách một dòng CSV/delimited, hỗ trợ dấu ngoặc kép và ký tự phân cách tùy chọn (, hoặc ;).
  */
@@ -2283,6 +2289,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [eInvoiceModalOpen, setEInvoiceModalOpen] = useState(false)
   const [eInvoiceModalDraft, setEInvoiceModalDraft] = useState(() => loadEInvoiceSettings())
   const [nowTick, setNowTick] = useState(() => new Date())
+  /** Lần đầu: đang tải CSV mặc định từ `public` (ẩn màn “Chọn file” cho tới khi xong / lỗi). */
+  const [initialCatalogLoadPending, setInitialCatalogLoadPending] = useState(
+    !catalogBoot.products?.length
+  )
   const [sellWholesaleMode, setSellWholesaleMode] = useState(false)
   const [activeSellerId, setActiveSellerId] = useState(
     () => readStoredSellerId() ?? 'admin'
@@ -2448,13 +2458,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     void saveCatalogSnapshot(products, fileName)
   }, [catalogStoreHydrated, products, fileName])
 
-  /** Khởi động: load catalog từ IndexedDB (hoặc migrate từ localStorage cũ) — không cần chọn lại CSV sau F5. */
+  /** Khởi động: load catalog từ IndexedDB (hoặc migrate từ localStorage cũ) — không cần chọn lại CSV sau F5. Nếu trống, tải `public/…Kiotnew csv.csv`. */
   useEffect(() => {
     let cancelled = false
     void (async () => {
       const snap = await fetchProducts()
       if (cancelled) return
       if (snap?.products?.length) {
+        setInitialCatalogLoadPending(false)
         setProducts((prev) => {
           if (prev.length > 0) return prev
           queueMicrotask(() => {
@@ -2464,6 +2475,55 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           })
           return prepareCatalogForPosSearch(snap.products)
         })
+      } else {
+        setInitialCatalogLoadPending(true)
+        const url = getDefaultPublicCatalogUrl()
+        try {
+          const res = await fetch(url, { cache: 'default' })
+          if (!res.ok) throw new Error(String(res.status))
+          const buf = await res.arrayBuffer()
+          if (cancelled) return
+          const file = new File(
+            [buf],
+            DEFAULT_PUBLIC_CATALOG_NAME,
+            res.headers.get('content-type')?.includes('text/csv')
+              ? { type: 'text/csv' }
+              : { type: 'text/plain' }
+          )
+          const resParse = await parseCatalogBlobFile(file)
+          if (resParse.error) {
+            const detail = resParse.error && resParse.error.length < 500 ? ` (${resParse.error})` : ''
+            setError(
+              `Không đọc được dữ liệu mặc định. Vui lòng dùng «Nhập CSV» để chọn file thủ công.${detail}`
+            )
+          } else {
+            const prepared = prepareCatalogForPosSearch(resParse.products)
+            startTransition(() => {
+              setFileName(resParse.fileName || DEFAULT_PUBLIC_CATALOG_NAME)
+              setCsvRowCount(resParse.rowCount)
+              setProducts(prepared)
+              setSellOrders((orders) =>
+                orders.map((o) => ({
+                  ...o,
+                  cart: (o.cart || []).map((line) =>
+                    remapCartLineFromCatalog(line, prepared, false)
+                  ),
+                }))
+              )
+              setSalesRefresh((x) => x + 1)
+            })
+          }
+        } catch (e) {
+          if (!cancelled) {
+            const msg = e instanceof Error ? e.message : String(e)
+            console.warn('[catalog] default public CSV', url, msg)
+            setError(
+              'Không tải được file dữ liệu mặc định. Vui lòng nhấn «Nhập CSV» để nạp thủ công (UTF-8).'
+            )
+          }
+        } finally {
+          if (!cancelled) setInitialCatalogLoadPending(false)
+        }
       }
       setCatalogStoreHydrated(true)
     })()
@@ -2596,6 +2656,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const onFile = useCallback(async (e) => {
     const file = e.target.files?.[0]
+    setInitialCatalogLoadPending(false)
     setError('')
     setProducts([])
     setCsvRowCount(0)
@@ -5650,7 +5711,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         </div>
       )}
 
-      {activeView === 'sell' && products.length === 0 && !error && (
+      {activeView === 'sell' && products.length === 0 && initialCatalogLoadPending && !error && (
+        <div className="welcome welcome--loading">
+          <p>Đang tải dữ liệu hàng từ máy chủ…</p>
+        </div>
+      )}
+      {activeView === 'sell' && products.length === 0 && !initialCatalogLoadPending && (
         <div className="welcome">
           <p>Chọn file CSV (UTF-8) xuất từ KiotViet hoặc có cột <strong>mã</strong>,{' '}
             <strong>tên</strong>, <strong>giá</strong> tương ứng.</p>
