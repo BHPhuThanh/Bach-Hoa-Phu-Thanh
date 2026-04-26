@@ -74,8 +74,40 @@ function moneyCellString(n) {
   return String(Math.round(x))
 }
 
+/** Chuỗi text cho cột `text` trên Supabase (không để undefined). */
+function dbTextCell(raw) {
+  const s = String(raw ?? '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+  return s
+}
+
+/** Giá / tiền → Number (ô trống = 0), dùng parsePrice để khớp CSV Kiot. */
+function dbNumericPrice(raw) {
+  const n = parsePrice(raw)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Tồn kho → Number hoặc null (ô trống = null). */
+function dbNumericStock(raw) {
+  const q = parseStockQty(raw)
+  if (q == null || !Number.isFinite(q)) return null
+  return Number(q)
+}
+
+function formatSupabaseWriteError(err) {
+  if (!err || typeof err !== 'object') return String(err)
+  return {
+    message: err.message,
+    details: err.details,
+    hint: err.hint,
+    code: err.code,
+  }
+}
+
 /**
- * Một biến thể danh mục POS → một dòng `public.products` (chuỗi, khớp CSV Kiot).
+ * Một biến thể danh mục POS → một dòng payload `public.products` (kiểu khớp PostgREST / bảng migration).
+ * `gia_ban`, `gia_von`, `ton_kho` là Number | null; còn lại là text; `imported_at` là ISO timestamptz.
  * @param {object} v
  */
 function displayVariantToProductsRow(v) {
@@ -84,32 +116,58 @@ function displayVariantToProductsRow(v) {
     v?.conversion != null && Number.isFinite(Number(v.conversion)) && Number(v.conversion) > 0
       ? String(v.conversion)
       : ''
+  const maHang = dbTextCell(v?.code)
   return {
-    ma_hang: String(v?.code ?? '').trim(),
-    ma_vach: String(v?.barcode ?? '').trim(),
-    ten_hang: String(v?.name ?? '').trim(),
-    thuong_hieu: String(v?.brand ?? '').trim(),
-    gia_ban: moneyCellString(v?.price),
-    gia_von: moneyCellString(v?.cost),
-    ton_kho:
-      v?.stockQty == null || v.stockQty === ''
-        ? ''
-        : moneyCellString(v.stockQty),
+    ma_hang: maHang,
+    ma_vach: dbTextCell(v?.barcode),
+    ten_hang: dbTextCell(v?.name),
+    thuong_hieu: dbTextCell(v?.brand),
+    gia_ban: dbNumericPrice(v?.price),
+    gia_von: dbNumericPrice(v?.cost),
+    ton_kho: dbNumericStock(v?.stockQty),
     kh_dat: '',
     du_kien_het_hang: '',
-    ton_nho_nhat: v?.stockNormMin == null ? '' : moneyCellString(v.stockNormMin),
-    ton_lon_nhat: v?.stockNormMax == null ? '' : moneyCellString(v.stockNormMax),
-    dvt: String(v?.unitLabel ?? '').trim(),
+    ton_nho_nhat: v?.stockNormMin == null || v.stockNormMin === '' ? '' : dbTextCell(moneyCellString(v.stockNormMin)),
+    ton_lon_nhat: v?.stockNormMax == null || v.stockNormMax === '' ? '' : dbTextCell(moneyCellString(v.stockNormMax)),
+    dvt: dbTextCell(v?.unitLabel),
     ma_dvt_co_ban: '',
-    quy_doi: conv,
+    quy_doi: dbTextCell(conv),
     thuoc_tinh: '',
-    ma_hh_lien_quan: String(v?.linkedMasterCode ?? '').trim(),
-    trong_luong: String(v?.weightRaw ?? '').trim(),
+    ma_hh_lien_quan: dbTextCell(v?.linkedMasterCode),
+    trong_luong: dbTextCell(v?.weightRaw),
     dang_kinh_doanh: '',
     duoc_ban_truc_tiep: '',
-    gia_si: moneyCellString(v?.wholesalePrice),
+    gia_si: dbNumericPrice(v?.wholesalePrice),
     imported_at: nowIso,
   }
+}
+
+/**
+ * Chỉ giữ các cột được phép; ép kiểu null an toàn cho JSON (không gửi undefined).
+ * @param {Record<string, unknown>} row
+ * @param {Set<string>} allow
+ */
+function pickAllowedProductColumns(row, allow) {
+  const o = {}
+  for (const k of allow) {
+    let v = row[k]
+    if (v === undefined) {
+      v = k === 'gia_ban' || k === 'gia_von' || k === 'gia_si' ? 0 : k === 'ton_kho' ? null : ''
+    }
+    o[k] = v
+  }
+  return o
+}
+
+/** Trùng `ma_hang` trong một request làm lỗi upsert — giữ bản cuối. */
+function dedupeRowsByMaHang(rows) {
+  const map = new Map()
+  for (const r of rows) {
+    const key = String(r.ma_hang ?? '').trim()
+    if (!key) continue
+    map.set(key, r)
+  }
+  return [...map.values()]
 }
 
 function flattenDisplayCatalogToVariants(products) {
@@ -138,27 +196,64 @@ function catalogSnapshotDedupeKey(products, fileName) {
 }
 
 /**
+ * Upsert một mảng dòng; nếu lỗi thì chia đôi đệ quy để khoanh dòng lỗi (PostgREST 400 thường do một vài dòng).
+ * @param {import('@supabase/supabase-js').SupabaseClient} sb
+ * @param {Record<string, unknown>[]} part
+ */
+async function upsertProductChunkRecursive(sb, part) {
+  const { error } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: 'ma_hang' })
+  if (!error) return
+  if (part.length <= 1) {
+    const row = part[0]
+    console.error('[saveProductsToSupabase] Lỗi tại một dòng — kiểm tra ma_hang / kiểu dữ liệu', {
+      ma_hang: row?.ma_hang,
+      ten_hang: row?.ten_hang,
+      row,
+      supabase: formatSupabaseWriteError(error),
+    })
+    throw error
+  }
+  const mid = Math.ceil(part.length / 2)
+  console.warn(
+    `[saveProductsToSupabase] Đợt ${part.length} dòng lỗi — chia ${mid} + ${part.length - mid}. ` +
+      `ma_hang đầu/cuối: "${part[0]?.ma_hang}" … "${part[part.length - 1]?.ma_hang}"`,
+    formatSupabaseWriteError(error)
+  )
+  await upsertProductChunkRecursive(sb, part.slice(0, mid))
+  await upsertProductChunkRecursive(sb, part.slice(mid))
+}
+
+/**
  * @param {import('@supabase/supabase-js').SupabaseClient} sb
  * @param {Array} products — display catalog (nhóm + groupVariants)
  */
 async function upsertProductRowsFromDisplayCatalog(sb, products) {
   const flat = flattenDisplayCatalogToVariants(products)
-  const rows = flat.map(displayVariantToProductsRow).filter((r) => r.ma_hang)
+  const rawRows = flat.map(displayVariantToProductsRow)
+  const withCode = rawRows.filter((r) => String(r.ma_hang ?? '').trim().length > 0)
+  const skippedNoCode = rawRows.length - withCode.length
+  if (skippedNoCode > 0) {
+    console.warn(
+      `[saveProductsToSupabase] Đã loại ${skippedNoCode} dòng không có ma_hang (thiếu hoặc rỗng), không gửi lên Supabase.`
+    )
+  }
+  const deduped = dedupeRowsByMaHang(withCode)
+  if (deduped.length < withCode.length) {
+    console.warn(
+      `[saveProductsToSupabase] Gộp trùng ma_hang: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
+    )
+  }
+  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
+  const rows = deduped.map((row) => pickAllowedProductColumns(row, allow))
   if (rows.length === 0) return
   const total = rows.length
-  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
   for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
-    const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK).map((row) => {
-      const o = {}
-      for (const k of allow) o[k] = row[k] ?? ''
-      return o
-    })
+    const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK)
     const batchEnd = Math.min(i + part.length, total)
     console.log(
       `[saveProductsToSupabase] Đang lưu ${batchEnd}/${total}… (${part.length} dòng / đợt, ma_hang)`
     )
-    const { error } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: 'ma_hang' })
-    if (error) throw error
+    await upsertProductChunkRecursive(sb, part)
   }
 }
 
@@ -175,9 +270,12 @@ export async function saveProductsToSupabase(products) {
     return
   }
   const flat = flattenDisplayCatalogToVariants(products || [])
-  const n = flat.filter((v) => String(v?.code ?? '').trim()).length
+  const rawRows = flat.map(displayVariantToProductsRow)
+  const withCode = rawRows.filter((r) => String(r.ma_hang ?? '').trim().length > 0)
+  const toSend = dedupeRowsByMaHang(withCode)
   console.log(
-    `[saveProductsToSupabase] Bắt đầu: ${n} dòng có ma_hang — gửi theo đợt tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request (không gửi hết một lần).`
+    `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (ma_hang hợp lệ, đã gộp trùng), ` +
+      `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; nếu đợt lỗi sẽ chia nhỏ và log dòng.`
   )
   await upsertProductRowsFromDisplayCatalog(sb, products || [])
   console.log('[saveProductsToSupabase] Hoàn tất.')
