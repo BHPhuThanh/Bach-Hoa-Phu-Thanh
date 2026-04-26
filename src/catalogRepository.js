@@ -32,7 +32,8 @@ export const CATALOG_SNAPSHOT_VERSION = 1
 
 /** Bảng flat Kiot (mã hàng PK) — đồng bộ kèm snapshot khi lưu danh mục từ web. */
 const PRODUCTS_TABLE = 'products'
-const PRODUCTS_UPSERT_CHUNK = 400
+/** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
+const PRODUCTS_UPSERT_CHUNK = 200
 
 /** Tránh gọi upsert chồng chéo (vòng lặp / double effect). */
 let saveCatalogSnapshotInFlight = false
@@ -144,6 +145,7 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
   const flat = flattenDisplayCatalogToVariants(products)
   const rows = flat.map(displayVariantToProductsRow).filter((r) => r.ma_hang)
   if (rows.length === 0) return
+  const total = rows.length
   const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
   for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
     const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK).map((row) => {
@@ -151,6 +153,10 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
       for (const k of allow) o[k] = row[k] ?? ''
       return o
     })
+    const batchEnd = Math.min(i + part.length, total)
+    console.log(
+      `[saveProductsToSupabase] Đang lưu ${batchEnd}/${total}… (${part.length} dòng / đợt, ma_hang)`
+    )
     const { error } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: 'ma_hang' })
     if (error) throw error
   }
@@ -170,7 +176,9 @@ export async function saveProductsToSupabase(products) {
   }
   const flat = flattenDisplayCatalogToVariants(products || [])
   const n = flat.filter((v) => String(v?.code ?? '').trim()).length
-  console.log('[saveProductsToSupabase] Đang upsert', n, 'dòng vào bảng products (ma_hang)…')
+  console.log(
+    `[saveProductsToSupabase] Bắt đầu: ${n} dòng có ma_hang — gửi theo đợt tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request (không gửi hết một lần).`
+  )
   await upsertProductRowsFromDisplayCatalog(sb, products || [])
   console.log('[saveProductsToSupabase] Hoàn tất.')
 }
