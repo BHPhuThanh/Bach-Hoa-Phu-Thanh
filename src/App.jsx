@@ -2320,6 +2320,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const posDraftHydratingRef = useRef(false)
   /** Sau khi đọc xong IndexedDB (lần đầu) mới cho phép auto-save — tránh xóa DB khi state tạm []. */
   const [catalogStoreHydrated, setCatalogStoreHydrated] = useState(false)
+  const catalogStoreHydratedRef = useRef(false)
+  const initialCatalogLoadPendingRef = useRef(initialCatalogLoadPending)
+  const catalogFileNameRef = useRef(fileName)
+  catalogFileNameRef.current = fileName
+  useEffect(() => {
+    catalogStoreHydratedRef.current = catalogStoreHydrated
+  }, [catalogStoreHydrated])
+  useEffect(() => {
+    initialCatalogLoadPendingRef.current = initialCatalogLoadPending
+  }, [initialCatalogLoadPending])
   const [storeBootstrapBusy, setStoreBootstrapBusy] = useState(false)
   const [storeBootstrapHint, setStoreBootstrapHint] = useState('')
   const storeBootstrapAbortRef = useRef(null)
@@ -2431,49 +2441,60 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (!variantIds?.length) return
     setProducts((prev) => {
       const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
-      if (next.length === 0) {
-        setFileName('')
-        setCsvRowCount(0)
-      }
+      queueMicrotask(() => {
+        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+        if (next.length === 0) {
+          catalogFileNameRef.current = ''
+          void saveCatalogSnapshot([], '')
+          setFileName('')
+          setCsvRowCount(0)
+        } else {
+          void saveCatalogSnapshot(next, catalogFileNameRef.current)
+        }
+      })
       return next
     })
   }, [])
 
   const handleReplaceCatalogGroup = useCallback((anchorVariantId, replacements) => {
     if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) return
-    setProducts((prev) =>
-      applyProductDataToCatalog(prev, {
+    setProducts((prev) => {
+      const next = applyProductDataToCatalog(prev, {
         type: 'replace_group',
         anchorVariantId,
         replacements,
       })
-    )
+      queueMicrotask(() => {
+        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+      })
+      return next
+    })
   }, [])
 
   const handleAppendCatalogVariants = useCallback((variants) => {
     if (!Array.isArray(variants) || variants.length === 0) return
-    setProducts((prev) =>
-      applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
-    )
+    setProducts((prev) => {
+      const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
+      queueMicrotask(() => {
+        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+      })
+      return next
+    })
   }, [])
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
-    setProducts((prev) =>
-      applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
-    )
+    setProducts((prev) => {
+      const next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
+      queueMicrotask(() => {
+        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+      })
+      return next
+    })
   }, [])
-
-  useEffect(() => {
-    if (!catalogStoreHydrated) return
-    if (initialCatalogLoadPending) return
-    /**
-     * Tránh ghi đè Supabase bằng catalog rỗng khi vừa hydrate (fetch chưa đổ state / không có snapshot).
-     * Xóa toàn bộ danh mục vẫn dùng `saveCatalogSnapshot([], …)` gọi trực tiếp từ AdminHub / handler, không qua effect này.
-     */
-    if (isSupabaseConfigured() && products.length === 0) return
-    void saveCatalogSnapshot(products, fileName)
-  }, [catalogStoreHydrated, initialCatalogLoadPending, products, fileName])
 
   /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/kiotnew.csv` khi *không* cấu hình Supabase. */
   useEffect(() => {
@@ -2519,8 +2540,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               )
             } else {
               const prepared = prepareCatalogForPosSearch(resParse.products)
+              const fn = resParse.fileName || DEFAULT_PUBLIC_CATALOG_NAME
               startTransition(() => {
-                setFileName(resParse.fileName || DEFAULT_PUBLIC_CATALOG_NAME)
+                setFileName(fn)
                 setCsvRowCount(resParse.rowCount)
                 setProducts(prepared)
                 setSellOrders((orders) =>
@@ -2532,6 +2554,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   }))
                 )
                 setSalesRefresh((x) => x + 1)
+              })
+              queueMicrotask(() => {
+                if (!catalogStoreHydratedRef.current) return
+                void saveCatalogSnapshot(prepared, fn)
               })
             }
           } catch (e) {
@@ -2709,8 +2735,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return
       }
       const prepared = prepareCatalogForPosSearch(res.products)
+      const importedName = res.fileName
       startTransition(() => {
-        setFileName(res.fileName)
+        setFileName(importedName)
         setCsvRowCount(res.rowCount)
         setProducts(prepared)
         setSellOrders((orders) =>
@@ -2719,6 +2746,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             cart: (o.cart || []).map((line) => remapCartLineFromCatalog(line, prepared, sellWholesaleMode)),
           }))
         )
+      })
+      queueMicrotask(() => {
+        if (!catalogStoreHydratedRef.current) return
+        void saveCatalogSnapshot(prepared, importedName)
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không đọc được file.')
@@ -3632,7 +3663,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ...l,
         qty: effectiveCartLineQty(l, cartQtyDraftByLine),
       }))
-      setProducts((prev) => applySoldQtyToCatalog(prev, cartForStock))
+      setProducts((prev) => {
+        const next = applySoldQtyToCatalog(prev, cartForStock)
+        queueMicrotask(() => {
+          if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+          void saveCatalogSnapshot(next, catalogFileNameRef.current)
+        })
+        return next
+      })
     } catch (e) {
       console.error(e)
       alert(

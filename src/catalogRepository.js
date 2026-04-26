@@ -34,6 +34,11 @@ export const CATALOG_SNAPSHOT_VERSION = 1
 const PRODUCTS_TABLE = 'products'
 const PRODUCTS_UPSERT_CHUNK = 400
 
+/** Tránh gọi upsert chồng chéo (vòng lặp / double effect). */
+let saveCatalogSnapshotInFlight = false
+/** Bỏ qua lưu trùng cùng nội dung ngay sau lần trước (giảm 500 / spam). */
+let saveCatalogSnapshotLastOkKey = ''
+
 /** Bảng Supabase lưu snapshot JSON cho POS (mỗi dòng = một id, thường dùng `catalog`). */
 export const CATALOG_SNAPSHOT_TABLE = 'catalog_snapshots'
 /** Một dòng trong bảng snapshot chứa toàn bộ JSON danh mục. */
@@ -111,6 +116,24 @@ function flattenDisplayCatalogToVariants(products) {
   return products.flatMap((p) =>
     Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
   )
+}
+
+function catalogSnapshotDedupeKey(products, fileName) {
+  const flat = flattenDisplayCatalogToVariants(products || [])
+  const sig = flat
+    .map((v) =>
+      [
+        v.id,
+        String(v.code ?? ''),
+        String(v.name ?? ''),
+        String(v.price ?? ''),
+        String(v.stockQty ?? ''),
+        String(v.cost ?? ''),
+      ].join('\t')
+    )
+    .sort()
+    .join('\n')
+  return `${String(fileName || '')}\n${sig}`
 }
 
 /**
@@ -407,11 +430,17 @@ export async function fetchProducts() {
  * Ghi snapshot: IndexedDB (+ API nếu bật). Không ghi JSON lớn vào localStorage.
  */
 export async function saveCatalogSnapshot(products, fileName) {
+  const dedupeKey = catalogSnapshotDedupeKey(products, fileName)
+  if (dedupeKey === saveCatalogSnapshotLastOkKey) return
+  if (saveCatalogSnapshotInFlight) return
+  saveCatalogSnapshotInFlight = true
   try {
     if (isSupabaseConfigured()) {
       const flat = flattenDisplayCatalogToVariants(products || [])
       const product = flat.length ? flat[flat.length - 1] : null
-      console.log('Đang gửi dữ liệu lên Supabase...', product ?? { empty: true, fileName })
+      if (import.meta.env.DEV) {
+        console.log('Đang gửi dữ liệu lên Supabase...', product ?? { empty: true, fileName })
+      }
       await saveCatalogSnapshotToSupabase(products, fileName)
       try {
         localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
@@ -419,6 +448,7 @@ export async function saveCatalogSnapshot(products, fileName) {
         /* ignore */
       }
       bumpCrossTabSync()
+      saveCatalogSnapshotLastOkKey = dedupeKey
       return
     }
     if (!products?.length) {
@@ -429,6 +459,7 @@ export async function saveCatalogSnapshot(products, fileName) {
         /* ignore */
       }
       bumpCrossTabSync()
+      saveCatalogSnapshotLastOkKey = dedupeKey
       return
     }
     const payload = {
@@ -457,8 +488,11 @@ export async function saveCatalogSnapshot(products, fileName) {
         console.warn('[catalogRepository] saveCatalogSnapshot remote (bỏ qua)', e)
       }
     }
+    saveCatalogSnapshotLastOkKey = dedupeKey
   } catch (e) {
     console.warn('[catalogRepository] saveCatalogSnapshot', e)
+  } finally {
+    saveCatalogSnapshotInFlight = false
   }
 }
 
