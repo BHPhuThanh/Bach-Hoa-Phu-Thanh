@@ -1,5 +1,5 @@
 /**
- * Đẩy file CSV danh mục lên bảng `products` (dòng id = 'catalog', cột snapshot).
+ * Đẩy CSV: snapshot POS → bảng `catalog_snapshots`; đồng thời (nếu parse được) các dòng phẳng → `products`.
  *
  * Biến môi trường (PowerShell ví dụ):
  *   $env:SUPABASE_URL="https://xxx.supabase.co"
@@ -14,12 +14,14 @@ import { readFileSync, existsSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { parseCsvTextToDisplayCatalog } from '../src/catalogCsv.js'
+import { parseKiotnewCsvToProductRows } from '../src/storeBootstrap.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
 
 const CATALOG_SNAPSHOT_VERSION = 1
 const CATALOG_ROW_ID = 'catalog'
+const CATALOG_SNAPSHOT_TABLE = 'catalog_snapshots'
 
 function loadEnvFile() {
   const p = path.join(root, '.env')
@@ -97,7 +99,8 @@ const snapshot = {
 }
 
 const sb = createClient(url.trim(), key.trim())
-const { error } = await sb.from('products').upsert(
+
+const { error } = await sb.from(CATALOG_SNAPSHOT_TABLE).upsert(
   {
     id: CATALOG_ROW_ID,
     snapshot,
@@ -107,11 +110,27 @@ const { error } = await sb.from('products').upsert(
 )
 
 if (error) {
-  console.error('Upsert Supabase thất bại:', error.message, error)
+  console.error('Upsert catalog_snapshots thất bại:', error.message, error)
   process.exit(1)
 }
 
-console.log('OK — đã ghi catalog lên Supabase `products` (id = catalog).')
+const flat = parseKiotnewCsvToProductRows(text)
+if (!flat.error && flat.rows.length > 0) {
+  const CHUNK = 400
+  for (let i = 0; i < flat.rows.length; i += CHUNK) {
+    const part = flat.rows.slice(i, i + CHUNK)
+    const { error: pe } = await sb.from('products').upsert(part, { onConflict: 'ma_hang' })
+    if (pe) {
+      console.error('Upsert products (dòng phẳng):', pe.message, pe)
+      process.exit(1)
+    }
+  }
+  console.log('  Đã ghi', flat.rows.length, 'dòng vào bảng `products`.')
+} else if (flat.error) {
+  console.warn('  Bỏ qua bảng products:', flat.error)
+}
+
+console.log('OK — snapshot POS → `catalog_snapshots` (id = catalog).')
 console.log('  File:', fileName)
 console.log('  Dòng dữ liệu CSV (data):', parsed.rowCount)
 console.log('  Nhóm sản phẩm (display):', parsed.products.length)

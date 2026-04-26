@@ -4985,11 +4985,74 @@
   color: #cbd5e1;
 }
 
+/* Nút nổi: khởi tạo schema + đẩy kiotnew.csv lên Supabase */
+.store-bootstrap-fab-wrap {
+  position: fixed;
+  bottom: 1.1rem;
+  right: 1.1rem;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.45rem;
+  max-width: min(28rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+
+.store-bootstrap-fab-wrap > * {
+  pointer-events: auto;
+}
+
+.store-bootstrap-fab {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  padding: 0.85rem 1.35rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  text-align: center;
+  color: #0c1220;
+  cursor: pointer;
+  background: linear-gradient(145deg, #fbbf24 0%, #f59e0b 45%, #ea580c 100%);
+  box-shadow:
+    0 4px 18px rgba(245, 158, 11, 0.45),
+    0 0 0 2px rgba(255, 255, 255, 0.2) inset;
+  transition: transform 0.12s ease, filter 0.12s ease, opacity 0.12s ease;
+}
+
+.store-bootstrap-fab:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.store-bootstrap-fab:disabled {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+.store-bootstrap-fab-hint {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  padding: 0.45rem 0.65rem;
+  max-width: 100%;
+  word-break: break-word;
+}
+
 @media print {
   .app {
     min-height: 0 !important;
     height: auto !important;
     max-height: none !important;
     overflow: visible !important;
+  }
+
+  .store-bootstrap-fab-wrap {
+    display: none !important;
   }
 }

@@ -19,7 +19,9 @@ export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-
 export const CATALOG_SYNC_BUMP_KEY = 'csv-preview-catalog-sync-bump-v1'
 export const CATALOG_SNAPSHOT_VERSION = 1
 
-/** Một dòng trong bảng `products` (Supabase) chứa toàn bộ snapshot JSON. */
+/** Bảng Supabase lưu snapshot JSON cho POS (mỗi dòng = một id, thường dùng `catalog`). */
+export const CATALOG_SNAPSHOT_TABLE = 'catalog_snapshots'
+/** Một dòng trong bảng snapshot chứa toàn bộ JSON danh mục. */
 export const CATALOG_SUPABASE_ROW_ID = 'catalog'
 
 /** Bật khi có endpoint (ví dụ VITE_CATALOG_API_URL). */
@@ -90,7 +92,7 @@ async function fetchCatalogSnapshotFromSupabase() {
   if (!sb) return null
   try {
     const { data, error } = await sb
-      .from('products')
+      .from(CATALOG_SNAPSHOT_TABLE)
       .select('snapshot')
       .eq('id', CATALOG_SUPABASE_ROW_ID)
       .maybeSingle()
@@ -127,7 +129,7 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
           savedAt: now,
           products,
         }
-  const { error } = await sb.from('products').upsert(
+  const { error } = await sb.from(CATALOG_SNAPSHOT_TABLE).upsert(
     {
       id: CATALOG_SUPABASE_ROW_ID,
       snapshot,
