@@ -409,6 +409,9 @@ export async function fetchProducts() {
 export async function saveCatalogSnapshot(products, fileName) {
   try {
     if (isSupabaseConfigured()) {
+      const flat = flattenDisplayCatalogToVariants(products || [])
+      const product = flat.length ? flat[flat.length - 1] : null
+      console.log('Đang gửi dữ liệu lên Supabase...', product ?? { empty: true, fileName })
       await saveCatalogSnapshotToSupabase(products, fileName)
       try {
         localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)

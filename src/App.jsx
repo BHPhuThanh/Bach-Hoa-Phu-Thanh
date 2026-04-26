@@ -2466,8 +2466,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   useEffect(() => {
     if (!catalogStoreHydrated) return
+    if (initialCatalogLoadPending) return
+    /**
+     * Tránh ghi đè Supabase bằng catalog rỗng khi vừa hydrate (fetch chưa đổ state / không có snapshot).
+     * Xóa toàn bộ danh mục vẫn dùng `saveCatalogSnapshot([], …)` gọi trực tiếp từ AdminHub / handler, không qua effect này.
+     */
+    if (isSupabaseConfigured() && products.length === 0) return
     void saveCatalogSnapshot(products, fileName)
-  }, [catalogStoreHydrated, products, fileName])
+  }, [catalogStoreHydrated, initialCatalogLoadPending, products, fileName])
 
   /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/kiotnew.csv` khi *không* cấu hình Supabase. */
   useEffect(() => {
