@@ -789,6 +789,33 @@ function cleanDisplayName(rawName, code) {
 }
 
 /**
+ * Ô số kiểu Kiot (chấm = nghìn, một phẩy = thập phân): bỏ hết chấm phân nghìn, phẩy → chấm thập phân, rồi `Number`.
+ * Đúng pipeline: `String(val).replace(/\./g, '').replace(',', '.')` trên phần chỉ còn `0-9` và `.,`.
+ * Ví dụ `60.000,0` → chuỗi chuẩn `60000.0` → `60000`. Không parse được → `null`.
+ * (Chỉ dùng cho export Kiot; số kiểu Mỹ `1,234.56` cần {@link parsePrice}.)
+ * @param {unknown} val
+ * @returns {number | null}
+ */
+export function kiotLocaleStringToNumber(val) {
+  if (val == null || val === '') return null
+  if (typeof val === 'number' && Number.isFinite(val)) return val
+  let s = String(val)
+    .trim()
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s/g, '')
+    .replace(/đ/gi, '')
+  if (!s) return null
+  const neg = /^-/.test(s)
+  s = s.replace(/^-/, '')
+  s = s.replace(/[^\d.,]/g, '')
+  if (!s) return null
+  const normalized = s.replace(/\./g, '').replace(',', '.')
+  const n = Number(normalized)
+  if (!Number.isFinite(n)) return null
+  return neg ? -n : n
+}
+
+/**
  * Chuẩn hóa ô tiền / số từ export Kiot (CSV thường phân tách `;`).
  * Định dạng phổ biến VN/EU: dấu chấm = nghìn, dấu phẩy = thập phân — ví dụ `60.000,0` → `60000`.
  * Dùng khi import CSV và khi ép kiểu gửi lên Supabase (`gia_ban`, `gia_von`, `gia_si`, …).

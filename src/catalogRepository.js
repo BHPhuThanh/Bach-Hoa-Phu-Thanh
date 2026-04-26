@@ -9,6 +9,7 @@
  */
 
 import {
+  kiotLocaleStringToNumber,
   mergeFlatCatalogRowsBySmartUomGroups,
   normalizeBarcodeValue,
   parsePrice,
@@ -34,6 +35,19 @@ export const CATALOG_SNAPSHOT_VERSION = 1
 const PRODUCTS_TABLE = 'products'
 /** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
 const PRODUCTS_UPSERT_CHUNK = 200
+
+/** Cột gửi lên PostgREST dạng `Number` (ô Kiot `60.000,0` → 60000; JSON không còn chuỗi có dấu chấm nghìn). */
+const SUPABASE_NUMERIC_PRODUCT_COLUMNS = new Set([
+  'gia_ban',
+  'gia_von',
+  'ton_kho',
+  'kh_dat',
+  'ton_nho_nhat',
+  'ton_lon_nhat',
+  'quy_doi',
+  'trong_luong',
+  'gia_si',
+])
 
 /** Tránh gọi upsert chồng chéo (vòng lặp / double effect). */
 let saveCatalogSnapshotInFlight = false
@@ -76,33 +90,10 @@ function dbTextCell(raw) {
   return s
 }
 
-/**
- * Giá / tiền → `Number` thuần (JSON Supabase). Ô trống = 0.
- * Chuỗi kiểu Kiot `60.000,0` do {@link parsePrice} xử lý.
- */
-function dbNumericPrice(raw) {
-  const n = parsePrice(raw)
-  const out = Number(n)
-  return Number.isFinite(out) ? out : 0
-}
-
-/**
- * Tồn kho → `Number` hoặc `null` (ô trống / không đọc được = `null` trên DB).
- * Cùng parser với CSV (`60.000,0`, thập phân bằng phẩy).
- */
-function dbNumericStock(raw) {
-  const q = parseStockQty(raw)
-  if (q == null || !Number.isFinite(q)) return null
-  const out = Number(q)
-  return Number.isFinite(out) ? out : null
-}
-
-/** Cột định mức tồn dạng `text` trên DB — luôn chuỗi số đã parse (hỗ trợ ô `60.000,0`). */
-function dbStockNormTextCell(raw) {
-  if (raw == null || raw === '') return ''
-  const q = parseStockQty(raw)
-  if (q == null || !Number.isFinite(q)) return ''
-  return String(Number(q))
+/** `Number` cho payload Supabase: `String(...).replace(/\./g,'').replace(',', '.')` rồi `Number` — ô trống → 0. */
+function dbKiotNumberOrZero(raw) {
+  const n = kiotLocaleStringToNumber(raw)
+  return n == null ? 0 : Number(n)
 }
 
 function formatSupabaseWriteError(err) {
@@ -117,8 +108,7 @@ function formatSupabaseWriteError(err) {
 
 /**
  * Một biến thể danh mục POS → một dòng payload `public.products` (kiểu khớp PostgREST / bảng migration).
- * `gia_ban`, `gia_von`, `gia_si` là `Number`; `ton_kho` là `Number | null` (ô trống).
- * Cột `text` còn lại khớp tên SQL trong {@link KIOTNEW_PRODUCT_DB_COLUMNS}; `imported_at` là ISO timestamptz.
+ * Các cột trong {@link SUPABASE_NUMERIC_PRODUCT_COLUMNS} là `Number` (ô Kiot `60.000,0` → 60000); `imported_at` là ISO timestamptz.
  * @param {object} v
  */
 function displayVariantToProductsRow(v) {
@@ -128,27 +118,28 @@ function displayVariantToProductsRow(v) {
       ? String(v.conversion)
       : ''
   const maHang = dbTextCell(v?.code)
+  const khRaw = v?.kh_dat ?? v?.khDat ?? v?.reservedQty ?? ''
   return {
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
     ten_hang: dbTextCell(v?.name),
     thuong_hieu: dbTextCell(v?.brand),
-    gia_ban: dbNumericPrice(v?.price),
-    gia_von: dbNumericPrice(v?.cost),
-    ton_kho: dbNumericStock(v?.stockQty),
-    kh_dat: '',
+    gia_ban: dbKiotNumberOrZero(v?.price),
+    gia_von: dbKiotNumberOrZero(v?.cost),
+    ton_kho: dbKiotNumberOrZero(v?.stockQty),
+    kh_dat: dbKiotNumberOrZero(khRaw),
     du_kien_het_hang: '',
-    ton_nho_nhat: dbTextCell(dbStockNormTextCell(v?.stockNormMin)),
-    ton_lon_nhat: dbTextCell(dbStockNormTextCell(v?.stockNormMax)),
+    ton_nho_nhat: dbKiotNumberOrZero(v?.stockNormMin),
+    ton_lon_nhat: dbKiotNumberOrZero(v?.stockNormMax),
     dvt: dbTextCell(v?.unitLabel),
     ma_dvt_co_ban: '',
-    quy_doi: dbTextCell(conv),
+    quy_doi: dbKiotNumberOrZero(conv),
     thuoc_tinh: '',
     ma_hh_lien_quan: dbTextCell(v?.linkedMasterCode),
-    trong_luong: dbTextCell(v?.weightRaw),
+    trong_luong: dbKiotNumberOrZero(v?.weightRaw),
     dang_kinh_doanh: '',
     duoc_ban_truc_tiep: '',
-    gia_si: dbNumericPrice(v?.wholesalePrice),
+    gia_si: dbKiotNumberOrZero(v?.wholesalePrice),
     imported_at: nowIso,
   }
 }
@@ -163,7 +154,7 @@ function pickAllowedProductColumns(row, allow) {
   for (const k of allow) {
     let v = row[k]
     if (v === undefined) {
-      v = k === 'gia_ban' || k === 'gia_von' || k === 'gia_si' ? 0 : k === 'ton_kho' ? null : ''
+      v = SUPABASE_NUMERIC_PRODUCT_COLUMNS.has(k) ? 0 : ''
     }
     o[k] = v
   }
