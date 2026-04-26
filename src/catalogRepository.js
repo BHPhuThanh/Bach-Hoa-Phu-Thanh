@@ -68,12 +68,6 @@ function bumpCrossTabSync() {
   }
 }
 
-function moneyCellString(n) {
-  const x = Number(n)
-  if (!Number.isFinite(x)) return ''
-  return String(Math.round(x))
-}
-
 /** Chuỗi text cho cột `text` trên Supabase (không để undefined). */
 function dbTextCell(raw) {
   const s = String(raw ?? '')
@@ -82,17 +76,33 @@ function dbTextCell(raw) {
   return s
 }
 
-/** Giá / tiền → Number (ô trống = 0), dùng parsePrice để khớp CSV Kiot. */
+/**
+ * Giá / tiền → `Number` thuần (JSON Supabase). Ô trống = 0.
+ * Chuỗi kiểu Kiot `60.000,0` do {@link parsePrice} xử lý.
+ */
 function dbNumericPrice(raw) {
   const n = parsePrice(raw)
-  return Number.isFinite(n) ? n : 0
+  const out = Number(n)
+  return Number.isFinite(out) ? out : 0
 }
 
-/** Tồn kho → Number hoặc null (ô trống = null). */
+/**
+ * Tồn kho → `Number` hoặc `null` (ô trống / không đọc được = `null` trên DB).
+ * Cùng parser với CSV (`60.000,0`, thập phân bằng phẩy).
+ */
 function dbNumericStock(raw) {
   const q = parseStockQty(raw)
   if (q == null || !Number.isFinite(q)) return null
-  return Number(q)
+  const out = Number(q)
+  return Number.isFinite(out) ? out : null
+}
+
+/** Cột định mức tồn dạng `text` trên DB — luôn chuỗi số đã parse (hỗ trợ ô `60.000,0`). */
+function dbStockNormTextCell(raw) {
+  if (raw == null || raw === '') return ''
+  const q = parseStockQty(raw)
+  if (q == null || !Number.isFinite(q)) return ''
+  return String(Number(q))
 }
 
 function formatSupabaseWriteError(err) {
@@ -107,7 +117,8 @@ function formatSupabaseWriteError(err) {
 
 /**
  * Một biến thể danh mục POS → một dòng payload `public.products` (kiểu khớp PostgREST / bảng migration).
- * `gia_ban`, `gia_von`, `ton_kho` là Number | null; còn lại là text; `imported_at` là ISO timestamptz.
+ * `gia_ban`, `gia_von`, `gia_si` là `Number`; `ton_kho` là `Number | null` (ô trống).
+ * Cột `text` còn lại khớp tên SQL trong {@link KIOTNEW_PRODUCT_DB_COLUMNS}; `imported_at` là ISO timestamptz.
  * @param {object} v
  */
 function displayVariantToProductsRow(v) {
@@ -127,8 +138,8 @@ function displayVariantToProductsRow(v) {
     ton_kho: dbNumericStock(v?.stockQty),
     kh_dat: '',
     du_kien_het_hang: '',
-    ton_nho_nhat: v?.stockNormMin == null || v.stockNormMin === '' ? '' : dbTextCell(moneyCellString(v.stockNormMin)),
-    ton_lon_nhat: v?.stockNormMax == null || v.stockNormMax === '' ? '' : dbTextCell(moneyCellString(v.stockNormMax)),
+    ton_nho_nhat: dbTextCell(dbStockNormTextCell(v?.stockNormMin)),
+    ton_lon_nhat: dbTextCell(dbStockNormTextCell(v?.stockNormMax)),
     dvt: dbTextCell(v?.unitLabel),
     ma_dvt_co_ban: '',
     quy_doi: dbTextCell(conv),

@@ -1,4 +1,7 @@
-/** Cột bảng `public.products` (file Kiot / kiotnew.csv) — dùng chung bootstrap CSV và đồng bộ từ POS. */
+/**
+ * Tên cột khớp `public.products` (migration Supabase / Kiot `kiotnew.csv`).
+ * Dùng chung bootstrap CSV và upsert từ POS — không đổi thứ tự tùy tiện.
+ */
 export const KIOTNEW_PRODUCT_DB_COLUMNS = [
   'ma_hang',
   'ma_vach',

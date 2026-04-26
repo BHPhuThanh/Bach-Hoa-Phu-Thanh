@@ -788,7 +788,12 @@ function cleanDisplayName(rawName, code) {
   return n || String(rawName ?? '').replace(/\s+/g, ' ').trim()
 }
 
-/** Chuẩn hóa chuỗi giá: 10.000 / 10,000 (nghìn), 1.234,56 / 1,234.56 (thập phân). */
+/**
+ * Chuẩn hóa ô tiền / số từ export Kiot (CSV thường phân tách `;`).
+ * Định dạng phổ biến VN/EU: dấu chấm = nghìn, dấu phẩy = thập phân — ví dụ `60.000,0` → `60000`.
+ * Dùng khi import CSV và khi ép kiểu gửi lên Supabase (`gia_ban`, `gia_von`, `gia_si`, …).
+ * @returns {number}
+ */
 export function parsePrice(raw) {
   let s = String(raw ?? '').trim()
   if (!s) return 0
@@ -829,7 +834,10 @@ export function parsePrice(raw) {
   return negative ? -n : n
 }
 
-/** Số tồn kho từ ô CSV (hỗ trợ thập phân, ví dụ cân ký). */
+/**
+ * Số tồn từ ô CSV (cùng quy tắc thập phân / nghìn như {@link parsePrice}, ví dụ `1.234,5` kg).
+ * Ô trống → `null`. Dùng cho `ton_kho` khi đồng bộ `public.products`.
+ */
 export function parseStockQty(raw) {
   const s = String(raw ?? '').trim()
   if (!s) return null
