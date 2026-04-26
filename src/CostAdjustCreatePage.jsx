@@ -8,7 +8,7 @@ import {
 import {
   applyProductDataToCatalog,
   fetchProducts,
-  saveCatalogSnapshot,
+  persistCatalogSnapshotAndProducts,
 } from './catalogRepository.js'
 import {
   appendCostAdjustVoucher,
@@ -300,7 +300,7 @@ export default function CostAdjustCreatePage() {
     }
     setSaving(true)
     try {
-      await saveCatalogSnapshot(nextProducts, fileName)
+      await persistCatalogSnapshotAndProducts(nextProducts, fileName)
       const prev = await loadCostAdjustVouchersFromStore()
       const voucher = createHoanThanhCostAdjustVoucher(prev, {
         createdBy: creatorLabel(),

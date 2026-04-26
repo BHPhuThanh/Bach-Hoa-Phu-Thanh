@@ -82,8 +82,8 @@ import {
   CATALOG_SYNC_BUMP_KEY,
   applyProductDataToCatalog,
   fetchProducts,
+  persistCatalogSnapshotAndProducts,
   readCatalogSnapshotSync,
-  saveCatalogSnapshot,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import { runStoreDataBootstrap } from './storeBootstrap.js'
@@ -2445,11 +2445,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         if (next.length === 0) {
           catalogFileNameRef.current = ''
-          void saveCatalogSnapshot([], '')
+          void persistCatalogSnapshotAndProducts([], '')
           setFileName('')
           setCsvRowCount(0)
         } else {
-          void saveCatalogSnapshot(next, catalogFileNameRef.current)
+          void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
         }
       })
       return next
@@ -2466,7 +2466,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
       })
       return next
     })
@@ -2478,7 +2478,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
       })
       return next
     })
@@ -2490,7 +2490,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void saveCatalogSnapshot(next, catalogFileNameRef.current)
+        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
       })
       return next
     })
@@ -2557,7 +2557,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               })
               queueMicrotask(() => {
                 if (!catalogStoreHydratedRef.current) return
-                void saveCatalogSnapshot(prepared, fn)
+                void persistCatalogSnapshotAndProducts(prepared, fn)
               })
             }
           } catch (e) {
@@ -2723,7 +2723,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (!file) return
 
     try {
-      await saveCatalogSnapshot([], '')
+      await persistCatalogSnapshotAndProducts([], '')
     } catch {
       /* ignore */
     }
@@ -2749,7 +2749,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current) return
-        void saveCatalogSnapshot(prepared, importedName)
+        void persistCatalogSnapshotAndProducts(prepared, importedName)
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không đọc được file.')
@@ -3667,7 +3667,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const next = applySoldQtyToCatalog(prev, cartForStock)
         queueMicrotask(() => {
           if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-          void saveCatalogSnapshot(next, catalogFileNameRef.current)
+          void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
         })
         return next
       })

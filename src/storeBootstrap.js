@@ -1,5 +1,5 @@
 import { parseCsvTextToDisplayCatalog } from './catalogCsv.js'
-import { saveCatalogSnapshot } from './catalogRepository.js'
+import { persistCatalogSnapshotAndProducts } from './catalogRepository.js'
 import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
@@ -180,26 +180,8 @@ export async function runStoreDataBootstrap(opts = {}) {
   if (parsed.error) throw new Error(parsed.error)
   if (!parsed.products?.length) throw new Error('Parse danh mục POS rỗng.')
 
-  const CHUNK = 400
-  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    if (signal?.aborted) {
-      const e = new Error('Đã huỷ')
-      e.name = 'AbortError'
-      throw e
-    }
-    const part = rows.slice(i, i + CHUNK).map((row) => {
-      const o = {}
-      for (const k of allow) o[k] = row[k] ?? ''
-      return o
-    })
-    onPhase?.('upload', `${Math.min(i + CHUNK, rows.length)} / ${rows.length}`)
-    const { error: upErr } = await sb.from('products').upsert(part, { onConflict: 'ma_hang' })
-    if (upErr) throw new Error(upErr.message || 'Lỗi ghi bảng products')
-  }
-
-  onPhase?.('snapshot', 'catalog_snapshots')
-  await saveCatalogSnapshot(parsed.products, 'kiotnew.csv')
+  onPhase?.('upload', 'catalog_snapshots + products (một lần)')
+  await persistCatalogSnapshotAndProducts(parsed.products, 'kiotnew.csv')
 
   onPhase?.('done', String(rows.length))
   return { productRowCount: rows.length, displayGroupCount: parsed.products.length }

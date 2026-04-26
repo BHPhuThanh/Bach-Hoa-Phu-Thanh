@@ -8,7 +8,7 @@ import {
 import {
   applyProductDataToCatalog,
   fetchProducts,
-  saveCatalogSnapshot,
+  persistCatalogSnapshotAndProducts,
 } from './catalogRepository.js'
 import {
   appendStockCheckVoucher,
@@ -296,7 +296,7 @@ export default function StockCheckCreatePage() {
     }
     setSaving(true)
     try {
-      await saveCatalogSnapshot(nextProducts, fileName)
+      await persistCatalogSnapshotAndProducts(nextProducts, fileName)
       const prev = loadStockCheckVouchers()
       const voucher = createHoanThanhStockCheckVoucher(prev, {
         createdBy: creatorLabel(),

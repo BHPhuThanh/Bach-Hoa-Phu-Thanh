@@ -110,7 +110,7 @@ import {
   CATALOG_SYNC_BUMP_KEY,
   fetchProducts,
   readCatalogSnapshotSync,
-  saveCatalogSnapshot,
+  persistCatalogSnapshotAndProducts,
 } from './catalogRepository.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
@@ -1410,7 +1410,7 @@ export default function AdminHub({
 
   const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint) => {
     const fn = String(fileNameHint || '')
-    await saveCatalogSnapshot(nextProducts, fn)
+    await persistCatalogSnapshotAndProducts(nextProducts, fn)
     if (!nextProducts?.length) {
       setStandaloneCatalog(null)
       return
@@ -2694,7 +2694,7 @@ export default function AdminHub({
     e.target.value = ''
     if (!file) return
     try {
-      await saveCatalogSnapshot([], '')
+      await persistCatalogSnapshotAndProducts([], '')
     } catch {
       /* ignore */
     }
@@ -2704,7 +2704,7 @@ export default function AdminHub({
         alert(res.error)
         return
       }
-      await saveCatalogSnapshot(res.products, file.name)
+      await persistCatalogSnapshotAndProducts(res.products, file.name)
       const refreshed = refreshCatalogSearchTexts(res.products)
       startTransition(() => {
         setStandaloneCatalog({

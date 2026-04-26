@@ -157,6 +157,33 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
 }
 
 /**
+ * Upsert toàn bộ biến thể catalog POS → `public.products` (`onConflict: ma_hang`).
+ * Chỉ gọi từ hành động người dùng (Lưu, nhập file, khởi tạo…) — không gắn useEffect.
+ * @param {Array} products — display catalog (nhóm + groupVariants)
+ */
+export async function saveProductsToSupabase(products) {
+  if (!isSupabaseConfigured()) return
+  const sb = getSupabaseClient()
+  if (!sb) {
+    console.warn('[saveProductsToSupabase] Không tạo được Supabase client.')
+    return
+  }
+  const flat = flattenDisplayCatalogToVariants(products || [])
+  const n = flat.filter((v) => String(v?.code ?? '').trim()).length
+  console.log('[saveProductsToSupabase] Đang upsert', n, 'dòng vào bảng products (ma_hang)…')
+  await upsertProductRowsFromDisplayCatalog(sb, products || [])
+  console.log('[saveProductsToSupabase] Hoàn tất.')
+}
+
+/**
+ * Ghi snapshot (Supabase/IDB) rồi đồng bộ bảng `products` — một lần mỗi lần gọi (sự kiện UI).
+ */
+export async function persistCatalogSnapshotAndProducts(products, fileName) {
+  await saveCatalogSnapshot(products, fileName)
+  await saveProductsToSupabase(products)
+}
+
+/**
  * Đọc legacy từ localStorage (bản đồng bộ cũ, có thể quá lớn — sẽ migrate sang IndexedDB).
  * @returns {{ products: Array, fileName: string, csvRowCount: number } | null}
  */
@@ -346,7 +373,6 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
     { onConflict: 'id' }
   )
   if (error) throw error
-  await upsertProductRowsFromDisplayCatalog(sb, products)
 }
 
 /**
@@ -436,11 +462,6 @@ export async function saveCatalogSnapshot(products, fileName) {
   saveCatalogSnapshotInFlight = true
   try {
     if (isSupabaseConfigured()) {
-      const flat = flattenDisplayCatalogToVariants(products || [])
-      const product = flat.length ? flat[flat.length - 1] : null
-      if (import.meta.env.DEV) {
-        console.log('Đang gửi dữ liệu lên Supabase...', product ?? { empty: true, fileName })
-      }
       await saveCatalogSnapshotToSupabase(products, fileName)
       try {
         localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
@@ -578,7 +599,7 @@ export async function updateProduct(currentProducts, fileName, productData) {
       ? String(productData.fileName ?? '')
       : String(fileName || '')
   const next = applyProductDataToCatalog(currentProducts, productData)
-  await saveCatalogSnapshot(next, fn)
+  await persistCatalogSnapshotAndProducts(next, fn)
   return {
     products: next,
     fileName: fn,
