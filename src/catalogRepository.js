@@ -8,9 +8,19 @@
  * (đọc IndexedDB → gọi fetch API) và saveCatalogSnapshot() (ghi API + optional cache IDB).
  */
 
-import { mergeFlatCatalogRowsBySmartUomGroups } from './catalogCsv.js'
+import {
+  mergeFlatCatalogRowsBySmartUomGroups,
+  normalizeBarcodeValue,
+  parsePrice,
+  parseStockQty,
+} from './catalogCsv.js'
 import { prepareCatalogForPosSearch } from './catalogSearchSimple.js'
-import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
+import {
+  buildDisplayCatalog,
+  normalizeCatalogUnitLabel,
+  normalizeGroupRoot,
+  parseConversionRatio,
+} from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
 import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
@@ -184,6 +194,105 @@ async function fetchCatalogSnapshotFromSupabase() {
 }
 
 /**
+ * Đọc toàn bộ `public.products` (phân trang PostgREST).
+ * @param {import('@supabase/supabase-js').SupabaseClient} sb
+ */
+async function fetchAllProductRows(sb) {
+  const pageSize = 1000
+  let from = 0
+  const all = []
+  for (;;) {
+    const to = from + pageSize - 1
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .select('*')
+      .order('ma_hang', { ascending: true })
+      .range(from, to)
+    if (error) throw error
+    const chunk = data || []
+    all.push(...chunk)
+    if (chunk.length < pageSize) break
+    from += pageSize
+  }
+  return all
+}
+
+/**
+ * Một dòng bảng `products` → dòng phẳng giống sau `rowsToProducts` (catalogCsv), để gom nhóm ĐVT.
+ * @param {Record<string, unknown>} row
+ * @param {number} rowIndex
+ */
+function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
+  const code = String(row.ma_hang ?? '').trim()
+  if (!code) return null
+  const importedMs = row.imported_at ? Date.parse(String(row.imported_at)) : NaN
+  const baseMs = Number.isFinite(importedMs) ? importedMs : Date.now()
+  const barcode = String(normalizeBarcodeValue(row.ma_vach ?? ''))
+  const nameRaw = String(row.ten_hang ?? '').trim()
+  const name = nameRaw || code
+  const convRawStr = String(row.quy_doi ?? '').trim()
+  const conversion = parseConversionRatio(convRawStr)
+  const stockNormMinRaw = String(row.ton_nho_nhat ?? '').trim()
+  const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
+  const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
+  const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
+  return {
+    id: `sb-${rowIndex}-${code}`,
+    code,
+    barcode,
+    name,
+    nameRaw,
+    price: parsePrice(row.gia_ban),
+    wholesalePrice: parsePrice(row.gia_si),
+    cost: parsePrice(row.gia_von),
+    stockQty: parseStockQty(row.ton_kho),
+    supplier: '',
+    brand: String(row.thuong_hieu ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    linkedMasterCode: String(row.ma_hh_lien_quan ?? '').trim(),
+    baseGroupCode: '',
+    unitLabel: normalizeCatalogUnitLabel(String(row.dvt ?? '')),
+    conversion,
+    ...(conversion != null ? { conversionValue: conversion } : {}),
+    weightRaw: String(row.trong_luong ?? '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    stockNormMin,
+    stockNormMax,
+    createdAtMs: baseMs + rowIndex,
+    raw: row,
+  }
+}
+
+/**
+ * Khi không có snapshot JSON (hoặc snapshot rỗng) nhưng bảng `products` đã có dữ liệu — dựng lại catalog POS.
+ * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
+ */
+async function fetchDisplayCatalogFromSupabaseProductsTable() {
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  let rows
+  try {
+    rows = await fetchAllProductRows(sb)
+  } catch (e) {
+    console.warn('[catalogRepository] Supabase đọc bảng products', e)
+    return null
+  }
+  if (!rows?.length) return null
+  const flat = rows.map((r, i) => supabaseProductRowToFlatCatalogRow(r, i)).filter(Boolean)
+  if (!flat.length) return null
+  const merged = mergeFlatCatalogRowsBySmartUomGroups(flat)
+  const display = prepareCatalogForPosSearch(buildDisplayCatalog(merged))
+  return {
+    products: display,
+    fileName: 'supabase-products',
+    csvRowCount: countVariantRowsInProducts(display),
+  }
+}
+
+/**
  * @param {Array} products
  * @param {string} fileName
  */
@@ -225,8 +334,10 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
  */
 export async function fetchCatalogSnapshotFromPersistentStore() {
   if (isSupabaseConfigured()) {
-    const fromSb = await fetchCatalogSnapshotFromSupabase()
-    if (fromSb) return fromSb
+    const fromProducts = await fetchDisplayCatalogFromSupabaseProductsTable()
+    if (fromProducts?.products?.length) return fromProducts
+    const fromSnap = await fetchCatalogSnapshotFromSupabase()
+    if (fromSnap) return fromSnap
     return null
   }
   if (isCatalogRemoteEnabled()) {

@@ -2469,7 +2469,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     void saveCatalogSnapshot(products, fileName)
   }, [catalogStoreHydrated, products, fileName])
 
-  /** Khởi động: load catalog từ Supabase (nếu cấu hình .env) hoặc IndexedDB / migrate localStorage cũ. Nếu trống, tải `public/kiotnew.csv`. */
+  /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/kiotnew.csv` khi *không* cấu hình Supabase. */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -2487,6 +2487,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             })
             return prepareCatalogForPosSearch(snap.products)
           })
+        } else if (isSupabaseConfigured()) {
+          setInitialCatalogLoadPending(false)
+          /* Không đọc file tĩnh: danh mục lấy từ Supabase (snapshot hoặc bảng products) hoặc để trống tới khi «KHỞI TẠO…» / «Nhập CSV». */
         } else {
           setInitialCatalogLoadPending(true)
           const url = getDefaultPublicCatalogUrl()

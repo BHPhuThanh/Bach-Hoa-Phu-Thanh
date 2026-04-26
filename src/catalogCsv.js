@@ -789,7 +789,7 @@ function cleanDisplayName(rawName, code) {
 }
 
 /** Chuẩn hóa chuỗi giá: 10.000 / 10,000 (nghìn), 1.234,56 / 1,234.56 (thập phân). */
-function parsePrice(raw) {
+export function parsePrice(raw) {
   let s = String(raw ?? '').trim()
   if (!s) return 0
   s = s.replace(/\s/g, '').replace(/đ/gi, '')
@@ -830,7 +830,7 @@ function parsePrice(raw) {
 }
 
 /** Số tồn kho từ ô CSV (hỗ trợ thập phân, ví dụ cân ký). */
-function parseStockQty(raw) {
+export function parseStockQty(raw) {
   const s = String(raw ?? '').trim()
   if (!s) return null
   const n = parsePrice(s)
