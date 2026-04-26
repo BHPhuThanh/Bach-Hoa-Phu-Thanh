@@ -93,7 +93,7 @@ import {
 } from './comboCatalog.js'
 
 /** File trong thư mục `public/` ở repo — sau build: phục vụ từ gốc site (Vite `BASE_URL`). Tự tải khi chưa có catalog lưu cục bộ. */
-const DEFAULT_PUBLIC_CATALOG_NAME = 'Kiotnew csv.csv'
+const DEFAULT_PUBLIC_CATALOG_NAME = 'kiotnew.csv'
 function getDefaultPublicCatalogUrl() {
   const name = encodeURI(DEFAULT_PUBLIC_CATALOG_NAME)
   const base = import.meta.env.BASE_URL || '/'
@@ -2464,7 +2464,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     void saveCatalogSnapshot(products, fileName)
   }, [catalogStoreHydrated, products, fileName])
 
-  /** Khởi động: load catalog từ IndexedDB (hoặc migrate từ localStorage cũ) — không cần chọn lại CSV sau F5. Nếu trống, tải `public/Kiotnew csv.csv` (cùng origin, không cần bấm «Nhập CSV»). */
+  /** Khởi động: load catalog từ Supabase (nếu cấu hình .env) hoặc IndexedDB / migrate localStorage cũ. Nếu trống, tải `public/kiotnew.csv`. */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -2541,7 +2541,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [])
 
-  /** Tab khác (cùng origin) cập nhật catalog trong IndexedDB → bump localStorage → đồng bộ không cần F5. */
+  /** Tab khác (cùng origin): bump localStorage → đọc lại catalog (Supabase hoặc IndexedDB). */
   useEffect(() => {
     const onStorage = (e) => {
       if (e.storageArea !== localStorage) return
@@ -3622,7 +3622,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     } catch (e) {
       console.error(e)
       alert(
-        'Không lưu được đơn hàng vào trình duyệt (IndexedDB). Vẫn in hóa đơn; kiểm tra quyền lưu trữ hoặc dung lượng.'
+        'Không lưu được đơn hàng (Supabase hoặc IndexedDB). Vẫn in hóa đơn; kiểm tra mạng, biến môi trường hoặc quyền lưu trữ.'
       )
     }
     const cartPrint = cart.map((l) => ({

@@ -12,11 +12,15 @@ import { mergeFlatCatalogRowsBySmartUomGroups } from './catalogCsv.js'
 import { prepareCatalogForPosSearch } from './catalogSearchSimple.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
+import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
 /** Tab khác ghi catalog → localStorage chỉ nhận bump nhỏ (snapshot nằm trong IndexedDB). */
 export const CATALOG_SYNC_BUMP_KEY = 'csv-preview-catalog-sync-bump-v1'
 export const CATALOG_SNAPSHOT_VERSION = 1
+
+/** Một dòng trong bảng `products` (Supabase) chứa toàn bộ snapshot JSON. */
+export const CATALOG_SUPABASE_ROW_ID = 'catalog'
 
 /** Bật khi có endpoint (ví dụ VITE_CATALOG_API_URL). */
 export function isCatalogRemoteEnabled() {
@@ -79,12 +83,73 @@ function snapshotFromPayload(j) {
 }
 
 /**
+ * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
+ */
+async function fetchCatalogSnapshotFromSupabase() {
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from('products')
+      .select('snapshot')
+      .eq('id', CATALOG_SUPABASE_ROW_ID)
+      .maybeSingle()
+    if (error) throw error
+    const raw = data?.snapshot
+    if (raw == null) return null
+    const j = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return snapshotFromPayload(j)
+  } catch (e) {
+    console.warn('[catalogRepository] Supabase đọc catalog', e)
+    return null
+  }
+}
+
+/**
+ * @param {Array} products
+ * @param {string} fileName
+ */
+async function saveCatalogSnapshotToSupabase(products, fileName) {
+  const sb = getSupabaseClient()
+  if (!sb) return
+  const now = new Date().toISOString()
+  const snapshot =
+    !products?.length
+      ? {
+          v: CATALOG_SNAPSHOT_VERSION,
+          fileName: String(fileName || ''),
+          savedAt: now,
+          products: [],
+        }
+      : {
+          v: CATALOG_SNAPSHOT_VERSION,
+          fileName: String(fileName || ''),
+          savedAt: now,
+          products,
+        }
+  const { error } = await sb.from('products').upsert(
+    {
+      id: CATALOG_SUPABASE_ROW_ID,
+      snapshot,
+      updated_at: now,
+    },
+    { onConflict: 'id' }
+  )
+  if (error) throw error
+}
+
+/**
  * Lấy snapshot từ kho lưu bền (IndexedDB → migrate legacy localStorage).
  * Sau này thay phần đọc IndexedDB bằng fetch('/api/catalog') rồi vẫn trả cùng hình dạng object.
  *
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function fetchCatalogSnapshotFromPersistentStore() {
+  if (isSupabaseConfigured()) {
+    const fromSb = await fetchCatalogSnapshotFromSupabase()
+    if (fromSb) return fromSb
+    return null
+  }
   if (isCatalogRemoteEnabled()) {
     try {
       const base = String(import.meta.env.VITE_CATALOG_API_URL).replace(/\/$/, '')
@@ -153,6 +218,16 @@ export async function fetchProducts() {
  */
 export async function saveCatalogSnapshot(products, fileName) {
   try {
+    if (isSupabaseConfigured()) {
+      await saveCatalogSnapshotToSupabase(products, fileName)
+      try {
+        localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
+      } catch {
+        /* ignore */
+      }
+      bumpCrossTabSync()
+      return
+    }
     if (!products?.length) {
       await idbPutCatalogSnapshot(null)
       try {
