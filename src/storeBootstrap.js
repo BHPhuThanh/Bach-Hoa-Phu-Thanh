@@ -1,30 +1,9 @@
 import { parseCsvTextToDisplayCatalog } from './catalogCsv.js'
 import { saveCatalogSnapshot } from './catalogRepository.js'
+import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
-/** Cột DB (snake_case) theo thứ tự cột chuẩn file Kiot / kiotnew.csv */
-export const KIOTNEW_PRODUCT_DB_COLUMNS = [
-  'ma_hang',
-  'ma_vach',
-  'ten_hang',
-  'thuong_hieu',
-  'gia_ban',
-  'gia_von',
-  'ton_kho',
-  'kh_dat',
-  'du_kien_het_hang',
-  'ton_nho_nhat',
-  'ton_lon_nhat',
-  'dvt',
-  'ma_dvt_co_ban',
-  'quy_doi',
-  'thuoc_tinh',
-  'ma_hh_lien_quan',
-  'trong_luong',
-  'dang_kinh_doanh',
-  'duoc_ban_truc_tiep',
-  'gia_si',
-]
+export { KIOTNEW_PRODUCT_DB_COLUMNS }
 
 function stripAccents(s) {
   return String(s)

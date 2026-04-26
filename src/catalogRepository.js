@@ -12,12 +12,17 @@ import { mergeFlatCatalogRowsBySmartUomGroups } from './catalogCsv.js'
 import { prepareCatalogForPosSearch } from './catalogSearchSimple.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
+import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
 /** Tab khác ghi catalog → localStorage chỉ nhận bump nhỏ (snapshot nằm trong IndexedDB). */
 export const CATALOG_SYNC_BUMP_KEY = 'csv-preview-catalog-sync-bump-v1'
 export const CATALOG_SNAPSHOT_VERSION = 1
+
+/** Bảng flat Kiot (mã hàng PK) — đồng bộ kèm snapshot khi lưu danh mục từ web. */
+const PRODUCTS_TABLE = 'products'
+const PRODUCTS_UPSERT_CHUNK = 400
 
 /** Bảng Supabase lưu snapshot JSON cho POS (mỗi dòng = một id, thường dùng `catalog`). */
 export const CATALOG_SNAPSHOT_TABLE = 'catalog_snapshots'
@@ -44,6 +49,77 @@ function bumpCrossTabSync() {
     localStorage.setItem(CATALOG_SYNC_BUMP_KEY, String(Date.now()))
   } catch {
     /* ignore */
+  }
+}
+
+function moneyCellString(n) {
+  const x = Number(n)
+  if (!Number.isFinite(x)) return ''
+  return String(Math.round(x))
+}
+
+/**
+ * Một biến thể danh mục POS → một dòng `public.products` (chuỗi, khớp CSV Kiot).
+ * @param {object} v
+ */
+function displayVariantToProductsRow(v) {
+  const nowIso = new Date().toISOString()
+  const conv =
+    v?.conversion != null && Number.isFinite(Number(v.conversion)) && Number(v.conversion) > 0
+      ? String(v.conversion)
+      : ''
+  return {
+    ma_hang: String(v?.code ?? '').trim(),
+    ma_vach: String(v?.barcode ?? '').trim(),
+    ten_hang: String(v?.name ?? '').trim(),
+    thuong_hieu: String(v?.brand ?? '').trim(),
+    gia_ban: moneyCellString(v?.price),
+    gia_von: moneyCellString(v?.cost),
+    ton_kho:
+      v?.stockQty == null || v.stockQty === ''
+        ? ''
+        : moneyCellString(v.stockQty),
+    kh_dat: '',
+    du_kien_het_hang: '',
+    ton_nho_nhat: v?.stockNormMin == null ? '' : moneyCellString(v.stockNormMin),
+    ton_lon_nhat: v?.stockNormMax == null ? '' : moneyCellString(v.stockNormMax),
+    dvt: String(v?.unitLabel ?? '').trim(),
+    ma_dvt_co_ban: '',
+    quy_doi: conv,
+    thuoc_tinh: '',
+    ma_hh_lien_quan: String(v?.linkedMasterCode ?? '').trim(),
+    trong_luong: String(v?.weightRaw ?? '').trim(),
+    dang_kinh_doanh: '',
+    duoc_ban_truc_tiep: '',
+    gia_si: moneyCellString(v?.wholesalePrice),
+    imported_at: nowIso,
+  }
+}
+
+function flattenDisplayCatalogToVariants(products) {
+  if (!Array.isArray(products) || products.length === 0) return []
+  return products.flatMap((p) =>
+    Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
+  )
+}
+
+/**
+ * @param {import('@supabase/supabase-js').SupabaseClient} sb
+ * @param {Array} products — display catalog (nhóm + groupVariants)
+ */
+async function upsertProductRowsFromDisplayCatalog(sb, products) {
+  const flat = flattenDisplayCatalogToVariants(products)
+  const rows = flat.map(displayVariantToProductsRow).filter((r) => r.ma_hang)
+  if (rows.length === 0) return
+  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
+  for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
+    const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK).map((row) => {
+      const o = {}
+      for (const k of allow) o[k] = row[k] ?? ''
+      return o
+    })
+    const { error } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: 'ma_hang' })
+    if (error) throw error
   }
 }
 
@@ -138,6 +214,7 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
     { onConflict: 'id' }
   )
   if (error) throw error
+  await upsertProductRowsFromDisplayCatalog(sb, products)
 }
 
 /**
