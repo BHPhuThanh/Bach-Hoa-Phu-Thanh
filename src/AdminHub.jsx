@@ -809,6 +809,8 @@ const STAFF_ROWS = [
   { name: 'Nhân viên bán hàng', phone: '—', address: '—', cccd: '—' },
 ]
 
+/** Một reference cố định — tránh `?? []` tạo mảng mới mỗi render làm `catalogList` đổi identity → vòng lặp useEffect. */
+const EMPTY_CATALOG_LIST = []
 
 export default function AdminHub({
   printReceiptHtml = () => {},
@@ -1087,7 +1089,9 @@ export default function AdminHub({
     return () => window.removeEventListener('storage', onStorage)
   }, [parentCatalogSupplied])
 
-  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? [])
+  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+  const catalogListRef = useRef(catalogList)
+  catalogListRef.current = catalogList
   const catalogDisplayName = parentCatalogSupplied
     ? catalogFileName
     : (standaloneCatalog?.fileName || catalogFileName || '')
@@ -1518,7 +1522,7 @@ export default function AdminHub({
     setGoodsNewMultiVariants(null)
     setGoodsNewBarcodeDupMsg('')
     setGoodsNewModalOpen(true)
-  }, [catalogList, revenueReadOnly])
+  }, [revenueReadOnly])
 
   useEffect(() => {
     if (!goodsNewModalOpen) return
@@ -1526,7 +1530,7 @@ export default function AdminHub({
       revalidateGoodsNewBarcode()
     })
     return () => window.cancelAnimationFrame(id)
-  }, [goodsNewModalOpen, goodsCreateFieldsKey, catalogList, revalidateGoodsNewBarcode])
+  }, [goodsNewModalOpen, goodsCreateFieldsKey, revalidateGoodsNewBarcode])
 
   const openGoodsCreateUnitModal = useCallback(() => {
     if (revenueReadOnly) return

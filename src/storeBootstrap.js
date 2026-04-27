@@ -1,9 +1,9 @@
 import { parseCsvTextToDisplayCatalog } from './catalogCsv.js'
 import { persistCatalogSnapshotAndProducts } from './catalogRepository.js'
-import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
+import { KIOTNEW_PRODUCT_DB_COLUMNS, PRODUCT_COL } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
-export { KIOTNEW_PRODUCT_DB_COLUMNS }
+export { KIOTNEW_PRODUCT_DB_COLUMNS, PRODUCT_COL }
 
 function stripAccents(s) {
   return String(s)
@@ -57,26 +57,26 @@ function headerCellToDbKey(h) {
     ' '
   )
   const map = {
-    'ma hang': 'ma_hang',
-    'ma vach': 'ma_vach',
-    'ten hang': 'ten_hang',
-    'thuong hieu': 'thuong_hieu',
-    'gia ban': 'gia_ban',
-    'gia von': 'gia_von',
-    'ton kho': 'ton_kho',
-    'kh dat': 'kh_dat',
-    'du kien het hang': 'du_kien_het_hang',
-    'ton nho nhat': 'ton_nho_nhat',
-    'ton lon nhat': 'ton_lon_nhat',
-    dvt: 'dvt',
-    'ma dvt co ban': 'ma_dvt_co_ban',
-    'quy doi': 'quy_doi',
-    'thuoc tinh': 'thuoc_tinh',
-    'ma hh lien quan': 'ma_hh_lien_quan',
-    'trong luong': 'trong_luong',
-    'dang kinh doanh': 'dang_kinh_doanh',
-    'duoc ban truc tiep': 'duoc_ban_truc_tiep',
-    'gia si': 'gia_si',
+    'ma hang': PRODUCT_COL.MA_HANG,
+    'ma vach': PRODUCT_COL.MA_VACH,
+    'ten hang': PRODUCT_COL.TEN_HANG,
+    'thuong hieu': PRODUCT_COL.THUONG_HIEU,
+    'gia ban': PRODUCT_COL.GIA_BAN,
+    'gia von': PRODUCT_COL.GIA_VON,
+    'ton kho': PRODUCT_COL.TON_KHO,
+    'kh dat': PRODUCT_COL.KH_DAT,
+    'du kien het hang': PRODUCT_COL.DU_KIEN_HET_HANG,
+    'ton nho nhat': PRODUCT_COL.TON_NHO_NHAT,
+    'ton lon nhat': PRODUCT_COL.TON_LON_NHAT,
+    dvt: PRODUCT_COL.DVT,
+    'ma dvt co ban': PRODUCT_COL.MA_DVT_CO_BAN,
+    'quy doi': PRODUCT_COL.QUY_DOI,
+    'thuoc tinh': PRODUCT_COL.THUOC_TINH,
+    'ma hh lien quan': PRODUCT_COL.MA_HH_LIEN_QUAN,
+    'trong luong': PRODUCT_COL.TRONG_LUONG,
+    'dang kinh doanh': PRODUCT_COL.DANG_KINH_DOANH,
+    'duoc ban truc tiep': PRODUCT_COL.DUOC_BAN_TRUC_TIEP,
+    'gia si': PRODUCT_COL.GIA_SI,
   }
   return map[k] || null
 }
@@ -109,7 +109,7 @@ export function parseKiotnewCsvToProductRows(text) {
       const raw = cells[c]
       row[dbk] = raw == null ? '' : String(raw).trim()
     }
-    const ma = String(row.ma_hang ?? '').trim()
+    const ma = String(row[PRODUCT_COL.MA_HANG] ?? '').trim()
     if (!ma) continue
     for (const k of KIOTNEW_PRODUCT_DB_COLUMNS) {
       if (row[k] === undefined) row[k] = ''
