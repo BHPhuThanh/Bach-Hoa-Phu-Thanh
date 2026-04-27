@@ -36,6 +36,15 @@ export function getSupabaseClient() {
   const { url, key } = getSupabaseCredentialsFromBuild()
   if (!url || !key) return null
   if (clientSingleton) return clientSingleton
-  clientSingleton = createClient(url, key)
+  clientSingleton = createClient(url, key, {
+    global: {
+      /** Tránh HTTP cache (F5 / refetch sau ghi vẫn thấy bản cũ). */
+      fetch: (input, init = {}) =>
+        fetch(input, {
+          ...init,
+          cache: 'no-store',
+        }),
+    },
+  })
   return clientSingleton
 }

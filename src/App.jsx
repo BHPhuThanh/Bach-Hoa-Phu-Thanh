@@ -84,6 +84,7 @@ import {
   fetchProducts,
   persistCatalogSnapshotAndProducts,
   readCatalogSnapshotSync,
+  revalidateCatalogFromStore,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import { runStoreDataBootstrap } from './storeBootstrap.js'
@@ -2437,24 +2438,40 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [location.pathname, location.search])
 
+  /** Sau ghi Supabase: đọc lại DB (revalidate) để UI/POS khớp server — tránh cache client. */
+  const applyServerCatalogAfterPersist = useCallback(async () => {
+    if (!isSupabaseConfigured()) return
+    const fresh = await revalidateCatalogFromStore()
+    if (!fresh?.products?.length) return
+    startTransition(() => {
+      setProducts(prepareCatalogForPosSearch(fresh.products))
+      setFileName(fresh.fileName)
+      setCsvRowCount(fresh.csvRowCount)
+      setSalesRefresh((x) => x + 1)
+    })
+  }, [])
+
   const handleRemoveCatalogVariants = useCallback((variantIds) => {
     if (!variantIds?.length) return
     setProducts((prev) => {
       const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        if (next.length === 0) {
-          catalogFileNameRef.current = ''
-          void persistCatalogSnapshotAndProducts([], '')
-          setFileName('')
-          setCsvRowCount(0)
-        } else {
-          void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-        }
+        void (async () => {
+          if (next.length === 0) {
+            catalogFileNameRef.current = ''
+            await persistCatalogSnapshotAndProducts([], '')
+            setFileName('')
+            setCsvRowCount(0)
+          } else {
+            await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          }
+          await applyServerCatalogAfterPersist()
+        })()
       })
       return next
     })
-  }, [])
+  }, [applyServerCatalogAfterPersist])
 
   const handleReplaceCatalogGroup = useCallback((anchorVariantId, replacements) => {
     if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) return
@@ -2466,11 +2483,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+        void (async () => {
+          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          await applyServerCatalogAfterPersist()
+        })()
       })
       return next
     })
-  }, [])
+  }, [applyServerCatalogAfterPersist])
 
   const handleAppendCatalogVariants = useCallback((variants) => {
     if (!Array.isArray(variants) || variants.length === 0) return
@@ -2478,11 +2498,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+        void (async () => {
+          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          await applyServerCatalogAfterPersist()
+        })()
       })
       return next
     })
-  }, [])
+  }, [applyServerCatalogAfterPersist])
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
@@ -2490,11 +2513,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+        void (async () => {
+          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          await applyServerCatalogAfterPersist()
+        })()
       })
       return next
     })
-  }, [])
+  }, [applyServerCatalogAfterPersist])
 
   /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/kiotnew.csv` khi *không* cấu hình Supabase. */
   useEffect(() => {
@@ -2506,7 +2532,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         if (snap?.products?.length) {
           setInitialCatalogLoadPending(false)
           setProducts((prev) => {
-            if (prev.length > 0) return prev
+            /* Có Supabase: luôn áp dữ liệu từ server khi boot (tránh state khởi tạo cũ / IDB che hàng mới sau F5). */
+            if (!isSupabaseConfigured() && prev.length > 0) return prev
             queueMicrotask(() => {
               setFileName(snap.fileName)
               setCsvRowCount(snap.csvRowCount)

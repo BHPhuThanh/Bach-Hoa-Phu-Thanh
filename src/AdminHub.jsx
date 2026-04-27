@@ -111,7 +111,9 @@ import {
   fetchProducts,
   readCatalogSnapshotSync,
   persistCatalogSnapshotAndProducts,
+  revalidateCatalogFromStore,
 } from './catalogRepository.js'
+import { isSupabaseConfigured } from './supabaseClient.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
   buildCatalogVariantsFromUnitModal,
@@ -1275,9 +1277,8 @@ export default function AdminHub({
   /** null | { mode: 'create' } | { mode: 'edit', product } */
   const [comboModal, setComboModal] = useState(null)
 
-  useEffect(() => {
-    goodsNewModalOpenRef.current = goodsNewModalOpen
-  }, [goodsNewModalOpen])
+  /** Đồng bộ trước layout effect / capture keydown — tránh ref cũ khi vừa mở modal. */
+  goodsNewModalOpenRef.current = goodsNewModalOpen
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
@@ -1415,6 +1416,16 @@ export default function AdminHub({
   const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint) => {
     const fn = String(fileNameHint || '')
     await persistCatalogSnapshotAndProducts(nextProducts, fn)
+    if (isSupabaseConfigured()) {
+      const fresh = await revalidateCatalogFromStore()
+      if (fresh?.products?.length) {
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(fresh.products),
+          fileName: fresh.fileName || fn,
+        })
+        return
+      }
+    }
     if (!nextProducts?.length) {
       setStandaloneCatalog(null)
       return
@@ -1490,6 +1501,10 @@ export default function AdminHub({
     setGoodsNewBrand('')
     setGoodsNewWholesale('')
     setGoodsNewBarcodeDupMsg('')
+    setGoodsNewUnit('Cái')
+    setGoodsNewPrice('')
+    setGoodsNewCost('')
+    setGoodsNewStock('0')
     goodsCreateScanBufferRef.current = { buf: '', times: [] }
   }, [])
 
@@ -1522,12 +1537,9 @@ export default function AdminHub({
     setGoodsNewModalOpen(true)
   }, [revenueReadOnly])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!goodsNewModalOpen) return
-    const id = window.requestAnimationFrame(() => {
-      revalidateGoodsNewBarcode()
-    })
-    return () => window.cancelAnimationFrame(id)
+    revalidateGoodsNewBarcode()
   }, [goodsNewModalOpen, goodsCreateFieldsKey, revalidateGoodsNewBarcode])
 
   const openGoodsCreateUnitModal = useCallback(() => {
@@ -1639,8 +1651,8 @@ export default function AdminHub({
     )
 
     const primaryBc = String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')).trim()
-    if (primaryBc && catalogHasNormalizedBarcode(catalogList, primaryBc)) {
-      setGoodsNewBarcodeDupMsg('Mã QR đã có sẵn')
+    if (primaryBc && catalogHasNormalizedBarcode(catalogListRef.current, primaryBc)) {
+      setGoodsNewBarcodeDupMsg((p) => (p === 'Mã QR đã có sẵn' ? p : 'Mã QR đã có sẵn'))
       return
     }
 

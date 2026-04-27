@@ -603,6 +603,14 @@ export async function fetchProducts() {
 }
 
 /**
+ * Tải lại danh mục từ nguồn bền (Supabase `products` / snapshot, …) — dùng sau insert/update như mutate/revalidate.
+ * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
+ */
+export async function revalidateCatalogFromStore() {
+  return fetchCatalogSnapshotFromPersistentStore()
+}
+
+/**
  * Ghi snapshot: IndexedDB (+ API nếu bật). Không ghi JSON lớn vào localStorage.
  */
 export async function saveCatalogSnapshot(products, fileName) {
