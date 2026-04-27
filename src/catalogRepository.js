@@ -276,6 +276,7 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
       `[saveProductsToSupabase] Gộp trùng ${PRODUCT_PK_COLUMN}: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
     )
   }
+  /** Mọi cột danh mục Kiot + `imported_at` (chuỗi rỗng nếu không có dữ liệu) — đủ cho bảng chỉ có NOT NULL trên PK + default. */
   const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
   const rows = deduped.map((row) => finalizeProductRowForSupabase(row, allow))
   if (rows.length === 0) return { written: 0, skippedUpsert: 0 }

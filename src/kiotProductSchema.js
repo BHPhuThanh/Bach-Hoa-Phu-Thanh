@@ -10,15 +10,18 @@ export const PRODUCT_COL = {
   GIA_BAN: 'Giá bán',
   GIA_VON: 'Giá vốn',
   TON_KHO: 'Tồn kho',
-  KH_DAT: 'Kh đặt',
+  /** Khớp Supabase Table Editor (hai chữ HOA KH). */
+  KH_DAT: 'KH đặt',
   DU_KIEN_HET_HANG: 'Dự kiến hết hàng',
   TON_NHO_NHAT: 'Tồn nhỏ nhất',
   TON_LON_NHAT: 'Tồn lớn nhất',
   DVT: 'ĐVT',
-  MA_DVT_CO_BAN: 'Mã ĐVT cơ bản',
+  /** Chữ C viết hoa trong «Cơ bản» — khớp cột trên Supabase. */
+  MA_DVT_CO_BAN: 'Mã ĐVT Cơ bản',
   QUY_DOI: 'Quy đổi',
   THUOC_TINH: 'Thuộc tính',
-  MA_HH_LIEN_QUAN: 'Mã HH liên quan',
+  /** Chữ L viết hoa trong «Liên quan». */
+  MA_HH_LIEN_QUAN: 'Mã HH Liên quan',
   TRONG_LUONG: 'Trọng lượng',
   DANG_KINH_DOANH: 'Đang kinh doanh',
   DUOC_BAN_TRUC_TIEP: 'Được bán trực tiếp',

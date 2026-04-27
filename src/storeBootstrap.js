@@ -57,6 +57,8 @@ function headerCellToDbKey(h) {
     ' '
   )
   const map = {
+    /** Một số môi trường giữ chữ «đ» sau stripAccents — thêm alias. */
+    'kh đặt': PRODUCT_COL.KH_DAT,
     'ma hang': PRODUCT_COL.MA_HANG,
     'ma vach': PRODUCT_COL.MA_VACH,
     'ten hang': PRODUCT_COL.TEN_HANG,

@@ -862,7 +862,7 @@ export default function AdminHub({
     [syncHubUrlToMainTab]
   )
   const parentCatalogSupplied = productsProp !== undefined && productsProp !== null
-  const parentProducts = parentCatalogSupplied ? productsProp : []
+  const parentProducts = parentCatalogSupplied ? productsProp : EMPTY_CATALOG_LIST
   const [activeTab, setActiveTab] = useState(() => {
     if (standaloneInboundCreate) return TAB_INBOUND_DRAFT
     if (hangHoaGoodsOpenRequest?.rawId) return TAB_GOODS
@@ -1496,12 +1496,10 @@ export default function AdminHub({
   const revalidateGoodsNewBarcode = useCallback(() => {
     const raw = goodsNewBarcodeRef.current?.value ?? ''
     const n = String(normalizeBarcodeValue(raw)).trim()
-    if (!n) {
-      setGoodsNewBarcodeDupMsg('')
-      return
-    }
-    setGoodsNewBarcodeDupMsg(catalogHasNormalizedBarcode(catalogList, n) ? 'Mã QR đã có sẵn' : '')
-  }, [catalogList])
+    const list = catalogListRef.current
+    const nextMsg = !n ? '' : catalogHasNormalizedBarcode(list, n) ? 'Mã QR đã có sẵn' : ''
+    setGoodsNewBarcodeDupMsg((prev) => (prev === nextMsg ? prev : nextMsg))
+  }, [])
 
   const openGoodsCreateModal = useCallback(() => {
     if (revenueReadOnly) {
