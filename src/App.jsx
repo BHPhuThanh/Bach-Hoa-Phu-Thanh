@@ -2499,7 +2499,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+            upsertOnlyVariants: variants,
+          })
           await applyServerCatalogAfterPersist()
         })()
       })

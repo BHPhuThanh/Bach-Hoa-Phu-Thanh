@@ -101,7 +101,6 @@ export function parseKiotnewCsvToProductRows(text) {
   }
   const usedKeys = new Set()
   const rows = []
-  const nowIso = new Date().toISOString()
   for (let r = 1; r < lines.length; r++) {
     const cells = parseDelimitedLine(lines[r], delim)
     const row = {}
@@ -116,7 +115,6 @@ export function parseKiotnewCsvToProductRows(text) {
     for (const k of KIOTNEW_PRODUCT_DB_COLUMNS) {
       if (row[k] === undefined) row[k] = ''
     }
-    row.imported_at = nowIso
     if (usedKeys.has(ma)) continue
     usedKeys.add(ma)
     rows.push(row)
@@ -124,7 +122,7 @@ export function parseKiotnewCsvToProductRows(text) {
   if (rows.length === 0) {
     return { rows: [], headerKeys: [], error: 'Không có dòng nào có Mã hàng.' }
   }
-  return { rows, headerKeys: [...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'], error: null }
+  return { rows, headerKeys: [...KIOTNEW_PRODUCT_DB_COLUMNS], error: null }
 }
 
 function chunkArray(arr, size) {

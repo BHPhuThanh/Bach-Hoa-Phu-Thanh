@@ -1413,9 +1413,13 @@ export default function AdminHub({
     setGoodsSaveToastGen((g) => g + 1)
   }, [])
 
-  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint) => {
+  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint, upsertOnlyVariants) => {
     const fn = String(fileNameHint || '')
-    await persistCatalogSnapshotAndProducts(nextProducts, fn)
+    await persistCatalogSnapshotAndProducts(
+      nextProducts,
+      fn,
+      upsertOnlyVariants?.length ? { upsertOnlyVariants } : undefined
+    )
     if (isSupabaseConfigured()) {
       const fresh = await revalidateCatalogFromStore()
       if (fresh?.products?.length) {
@@ -1685,7 +1689,8 @@ export default function AdminHub({
         const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
         void persistStandaloneProducts(
           nextProducts,
-          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
+          rows
         )
       }
       closeGoodsCreateModal()
@@ -1756,7 +1761,8 @@ export default function AdminHub({
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
       void persistStandaloneProducts(
         nextProducts,
-        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
+        [row]
       )
     }
     closeGoodsCreateModal()

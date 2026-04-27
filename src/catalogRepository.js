@@ -128,7 +128,6 @@ function formatSupabaseWriteError(err) {
  * @param {object} v
  */
 function displayVariantToProductsRow(v) {
-  const nowIso = new Date().toISOString()
   const conv =
     v?.conversion != null && Number.isFinite(Number(v.conversion)) && Number(v.conversion) > 0
       ? String(v.conversion)
@@ -156,7 +155,6 @@ function displayVariantToProductsRow(v) {
     [PRODUCT_COL.DANG_KINH_DOANH]: '',
     [PRODUCT_COL.DUOC_BAN_TRUC_TIEP]: '',
     [PRODUCT_COL.GIA_SI]: v?.wholesalePrice,
-    imported_at: nowIso,
   }
 }
 
@@ -260,9 +258,14 @@ async function upsertProductChunkResilient(sb, part) {
 /**
  * @returns {Promise<{ written: number, skippedUpsert: number }>}
  */
-async function upsertProductRowsFromDisplayCatalog(sb, products) {
-  const flat = flattenDisplayCatalogToVariants(products)
-  const rawRows = flat.map(displayVariantToProductsRow)
+/** Khớp tên cột Supabase (Unicode) — không gửi `imported_at` nếu bảng không có cột đó. */
+const PRODUCT_ROW_KEYS_FOR_DB = new Set(KIOTNEW_PRODUCT_DB_COLUMNS)
+
+/**
+ * Upsert các dòng đã map {@link displayVariantToProductsRow} (chunk + dedupe theo Mã hàng).
+ * @returns {{ written: number, skippedUpsert: number }}
+ */
+async function upsertRawProductRows(sb, rawRows) {
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   const skippedNoCode = rawRows.length - withCode.length
   if (skippedNoCode > 0) {
@@ -276,9 +279,7 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
       `[saveProductsToSupabase] Gộp trùng ${PRODUCT_PK_COLUMN}: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
     )
   }
-  /** Mọi cột danh mục Kiot + `imported_at` (chuỗi rỗng nếu không có dữ liệu) — đủ cho bảng chỉ có NOT NULL trên PK + default. */
-  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
-  const rows = deduped.map((row) => finalizeProductRowForSupabase(row, allow))
+  const rows = deduped.map((row) => finalizeProductRowForSupabase(row, PRODUCT_ROW_KEYS_FOR_DB))
   if (rows.length === 0) return { written: 0, skippedUpsert: 0 }
   const total = rows.length
   let written = 0
@@ -299,6 +300,12 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
     )
   }
   return { written, skippedUpsert }
+}
+
+async function upsertProductRowsFromDisplayCatalog(sb, products) {
+  const flat = flattenDisplayCatalogToVariants(products || [])
+  const rawRows = flat.map(displayVariantToProductsRow)
+  return upsertRawProductRows(sb, rawRows)
 }
 
 /**
@@ -326,10 +333,31 @@ export async function saveProductsToSupabase(products) {
 }
 
 /**
- * Ghi snapshot (Supabase/IDB) rồi đồng bộ bảng `products` — một lần mỗi lần gọi (sự kiện UI).
+ * Chỉ upsert các biến thể vừa thêm/sửa — không gửi lại cả danh mục (thousands rows).
+ * @param {Array<object>} flatDisplayVariants — dòng phẳng POS (giống phần tử trong groupVariants).
  */
-export async function persistCatalogSnapshotAndProducts(products, fileName) {
+export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
+  if (!isSupabaseConfigured()) return
+  const sb = getSupabaseClient()
+  if (!sb || !flatDisplayVariants?.length) return
+  const rawRows = flatDisplayVariants.map(displayVariantToProductsRow)
+  console.log(
+    `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
+  )
+  await upsertRawProductRows(sb, rawRows)
+}
+
+/**
+ * Ghi snapshot (Supabase/IDB) rồi đồng bộ bảng `products`.
+ * @param {object} [options]
+ * @param {Array<object>} [options.upsertOnlyVariants] — nếu có: chỉ upsert các biến thể này lên `products`, vẫn ghi snapshot đầy đủ `products`.
+ */
+export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
   await saveCatalogSnapshot(products, fileName)
+  if (options?.upsertOnlyVariants?.length) {
+    await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
+    return
+  }
   await saveProductsToSupabase(products)
 }
 
@@ -425,7 +453,8 @@ async function fetchAllProductRows(sb) {
 function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const code = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
   if (!code) return null
-  const importedMs = row.imported_at ? Date.parse(String(row.imported_at)) : NaN
+  const importedMs =
+    row.imported_at != null ? Date.parse(String(row.imported_at)) : NaN
   const baseMs = Number.isFinite(importedMs) ? importedMs : Date.now()
   const barcode = String(normalizeBarcodeValue(row[PRODUCT_COL.MA_VACH] ?? ''))
   const nameRaw = String(row[PRODUCT_COL.TEN_HANG] ?? '').trim()
