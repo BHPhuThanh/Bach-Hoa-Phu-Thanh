@@ -114,7 +114,9 @@ import {
   fetchProducts,
   readCatalogSnapshotSync,
   persistCatalogSnapshotAndProducts,
+  revalidateCatalogFromStore,
 } from './catalogRepository.js'
+import { isSupabaseConfigured } from './supabaseClient.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
   buildCatalogVariantsFromUnitModal,
@@ -846,6 +848,8 @@ const STAFF_ROWS = [
   { name: 'Nhân viên bán hàng', phone: '—', address: '—', cccd: '—' },
 ]
 
+/** Một reference cố định — tránh `?? []` tạo mảng mới mỗi render làm `catalogList` đổi identity → vòng lặp useEffect. */
+const EMPTY_CATALOG_LIST = []
 
 export default function AdminHub({
   printReceiptHtml = () => {},
@@ -897,7 +901,7 @@ export default function AdminHub({
     [syncHubUrlToMainTab]
   )
   const parentCatalogSupplied = productsProp !== undefined && productsProp !== null
-  const parentProducts = parentCatalogSupplied ? productsProp : []
+  const parentProducts = parentCatalogSupplied ? productsProp : EMPTY_CATALOG_LIST
   const [activeTab, setActiveTab] = useState(() => {
     if (standaloneInboundCreate) return TAB_INBOUND_DRAFT
     if (hangHoaGoodsOpenRequest?.rawId) return TAB_GOODS
@@ -1124,7 +1128,9 @@ export default function AdminHub({
     return () => window.removeEventListener('storage', onStorage)
   }, [parentCatalogSupplied])
 
-  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? [])
+  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+  const catalogListRef = useRef(catalogList)
+  catalogListRef.current = catalogList
   const catalogDisplayName = parentCatalogSupplied
     ? catalogFileName
     : (standaloneCatalog?.fileName || catalogFileName || '')
@@ -1309,9 +1315,8 @@ export default function AdminHub({
   /** null | { mode: 'create' } | { mode: 'edit', product } */
   const [comboModal, setComboModal] = useState(null)
 
-  useEffect(() => {
-    goodsNewModalOpenRef.current = goodsNewModalOpen
-  }, [goodsNewModalOpen])
+  /** Đồng bộ trước layout effect / capture keydown — tránh ref cũ khi vừa mở modal. */
+  goodsNewModalOpenRef.current = goodsNewModalOpen
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
@@ -1446,9 +1451,23 @@ export default function AdminHub({
     setGoodsSaveToastGen((g) => g + 1)
   }, [])
 
-  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint) => {
+  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint, upsertOnlyVariants) => {
     const fn = String(fileNameHint || '')
-    await persistCatalogSnapshotAndProducts(nextProducts, fn)
+    await persistCatalogSnapshotAndProducts(
+      nextProducts,
+      fn,
+      upsertOnlyVariants?.length ? { upsertOnlyVariants } : undefined
+    )
+    if (isSupabaseConfigured()) {
+      const fresh = await revalidateCatalogFromStore()
+      if (fresh?.products?.length) {
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(fresh.products),
+          fileName: fresh.fileName || fn,
+        })
+        return
+      }
+    }
     if (!nextProducts?.length) {
       setStandaloneCatalog(null)
       return
@@ -1524,18 +1543,20 @@ export default function AdminHub({
     setGoodsNewBrand('')
     setGoodsNewWholesale('')
     setGoodsNewBarcodeDupMsg('')
+    setGoodsNewUnit('Cái')
+    setGoodsNewPrice('')
+    setGoodsNewCost('')
+    setGoodsNewStock('0')
     goodsCreateScanBufferRef.current = { buf: '', times: [] }
   }, [])
 
   const revalidateGoodsNewBarcode = useCallback(() => {
     const raw = goodsNewBarcodeRef.current?.value ?? ''
     const n = String(normalizeBarcodeValue(raw)).trim()
-    if (!n) {
-      setGoodsNewBarcodeDupMsg('')
-      return
-    }
-    setGoodsNewBarcodeDupMsg(catalogHasNormalizedBarcode(catalogList, n) ? 'Mã QR đã có sẵn' : '')
-  }, [catalogList])
+    const list = catalogListRef.current
+    const nextMsg = !n ? '' : catalogHasNormalizedBarcode(list, n) ? 'Mã QR đã có sẵn' : ''
+    setGoodsNewBarcodeDupMsg((prev) => (prev === nextMsg ? prev : nextMsg))
+  }, [])
 
   const openGoodsCreateModal = useCallback(() => {
     if (revenueReadOnly) {
@@ -1556,15 +1577,12 @@ export default function AdminHub({
     setGoodsNewMultiVariants(null)
     setGoodsNewBarcodeDupMsg('')
     setGoodsNewModalOpen(true)
-  }, [catalogList, revenueReadOnly])
+  }, [revenueReadOnly])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!goodsNewModalOpen) return
-    const id = window.requestAnimationFrame(() => {
-      revalidateGoodsNewBarcode()
-    })
-    return () => window.cancelAnimationFrame(id)
-  }, [goodsNewModalOpen, goodsCreateFieldsKey, catalogList, revalidateGoodsNewBarcode])
+    revalidateGoodsNewBarcode()
+  }, [goodsNewModalOpen, goodsCreateFieldsKey, revalidateGoodsNewBarcode])
 
   const openGoodsCreateUnitModal = useCallback(() => {
     if (revenueReadOnly) return
@@ -1675,8 +1693,8 @@ export default function AdminHub({
     )
 
     const primaryBc = String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')).trim()
-    if (primaryBc && catalogHasNormalizedBarcode(catalogList, primaryBc)) {
-      setGoodsNewBarcodeDupMsg('Mã QR đã có sẵn')
+    if (primaryBc && catalogHasNormalizedBarcode(catalogListRef.current, primaryBc)) {
+      setGoodsNewBarcodeDupMsg((p) => (p === 'Mã QR đã có sẵn' ? p : 'Mã QR đã có sẵn'))
       return
     }
 
@@ -1709,7 +1727,8 @@ export default function AdminHub({
         const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
         void persistStandaloneProducts(
           nextProducts,
-          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
+          rows
         )
       }
       closeGoodsCreateModal()
@@ -1780,7 +1799,8 @@ export default function AdminHub({
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
       void persistStandaloneProducts(
         nextProducts,
-        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
+        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
+        [row]
       )
     }
     closeGoodsCreateModal()
