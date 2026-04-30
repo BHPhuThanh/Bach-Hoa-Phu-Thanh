@@ -76,7 +76,9 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
       }
     }
     const price = Math.max(0, Number(raw.price) || 0)
-    const lineRevenue = price * qty
+    const rawQuyDoi = Number(raw.quyDoi ?? raw.conversion ?? 1)
+    const quyDoi = Number.isFinite(rawQuyDoi) && rawQuyDoi > 0 ? rawQuyDoi : 1
+    const lineRevenue = price * qty * quyDoi
     const lineCost = cost * qty
     const lineProfit = lineRevenue - lineCost
     const orderLineId =
@@ -91,13 +93,17 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
       price,
       cost,
       qty,
+      quyDoi,
       returnedQty,
       lineRevenue,
       lineCost,
       lineProfit,
     }
   })
-  const subtotal = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0)
+  const subtotal = items.reduce(
+    (s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0) * (Number(it.quyDoi) || 1),
+    0
+  )
   const disc = Math.min(subtotal, Math.max(0, Number(o.discount) || 0))
   const total = Math.max(0, subtotal - disc)
   const totalCost = items.reduce((s, it) => s + (Number(it.cost) || 0) * (Number(it.qty) || 0), 0)

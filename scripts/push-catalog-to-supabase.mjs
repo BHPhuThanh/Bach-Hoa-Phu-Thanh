@@ -14,7 +14,7 @@ import { readFileSync, existsSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { parseCsvTextToDisplayCatalog } from '../src/catalogCsv.js'
-import { parseKiotnewCsvToProductRows } from '../src/storeBootstrap.js'
+import { parseCatalogCsvToProductRows } from '../src/storeBootstrap.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
@@ -46,8 +46,7 @@ function resolveCsvPath() {
   const candidates = [
     arg && path.isAbsolute(arg) ? arg : arg ? path.join(process.cwd(), arg) : null,
     path.join(root, 'data.csv'),
-    path.join(root, 'public', 'kiotnew.csv'),
-    path.join(root, 'public', 'Kiotnew csv.csv'),
+    path.join(root, 'public', 'bhphuthanh.csv'),
   ].filter(Boolean)
   for (const c of candidates) {
     if (existsSync(c)) return c
@@ -114,7 +113,7 @@ if (error) {
   process.exit(1)
 }
 
-const flat = parseKiotnewCsvToProductRows(text)
+const flat = parseCatalogCsvToProductRows(text)
 if (!flat.error && flat.rows.length > 0) {
   const CHUNK = 400
   for (let i = 0; i < flat.rows.length; i += CHUNK) {

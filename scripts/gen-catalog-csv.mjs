@@ -98,7 +98,7 @@ function readSheetColumnLUnit(ws, sheetRow0Based) {
   }
 }
 
-/** Nhập CSV hoặc Excel (.xlsx / .xls) — cùng logic cột ĐVT với màn Bán hàng. */
+/** Nhập CSV hoặc Excel (.xlsx / .xls) — cùng logic cột ĐƠN VỊ TÍNH với màn Bán hàng. */
 export async function parseCatalogBlobFile(file) {
   const fileName = file?.name || ''
   const ext = (fileName.includes('.') ? fileName.split('.').pop() : '').toLowerCase()

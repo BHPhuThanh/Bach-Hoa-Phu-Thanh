@@ -651,7 +651,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                               <tr>
                                                 <th>STT</th>
                                                 <th>Tên sản phẩm</th>
-                                                <th>ĐVT</th>
+                                                <th>ĐƠN VỊ TÍNH</th>
                                                 <th className="ah-num">Số lượng</th>
                                                 <th className="ah-num">Giá bán lẻ</th>
                                                 <th className="ah-num">Thành tiền</th>

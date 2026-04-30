@@ -1,4 +1,22 @@
-import { memo } from 'react'
+import { memo, useEffect } from 'react'
+
+function GoodsCatalogDvtCell({ row }) {
+  useEffect(() => {
+    console.error('DỮ LIỆU CỘT J THẬT SỰ:', row.dvt)
+  }, [row.dvt, row.id])
+
+  const dvt = String(row?.dvt ?? '').replace(/\s+/g, ' ').trim()
+  if (!dvt) return '—'
+  const isNumeric = /^\d+(?:[.,]\d+)?$/.test(dvt)
+  if (isNumeric) {
+    return (
+      <span className="ah-goods-dvt-error" role="alert" title={`record.dvt = «${dvt}» — có vẻ là quy_doi (số)`}>
+        Sai dữ liệu: ô đơn vị không được là chỉ số ({dvt}). Kiểm tra file CSV hoặc tải lại danh mục.
+      </span>
+    )
+  }
+  return dvt
+}
 
 function goodsDataRowPropsEqual(prev, next) {
   return (
@@ -33,11 +51,24 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
       </td>
       <td className="ah-goods-code">{row.code || '—'}</td>
       <td className="ah-goods-col-name">{row.name}</td>
-      <td className="ah-goods-col-dvt">{row.unitLabel}</td>
+      <td className="ah-goods-col-dvt">
+        <GoodsCatalogDvtCell row={row} />
+      </td>
       <td className="ah-goods-col-brand">{row.brand ? row.brand : ''}</td>
       <td className="ah-num">{row.price.toLocaleString('vi-VN')} đ</td>
       <td className="ah-num">{row.cost.toLocaleString('vi-VN')} đ</td>
-      <td className="ah-num">{row.stock != null ? row.stock.toLocaleString('vi-VN') : '—'}</td>
+      <td className="ah-num ah-goods-ton-cell">
+        {(() => {
+          console.log('Dữ liệu tồn kho:', row.ton_kho)
+          const n =
+            row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
+              ? Number(row.ton_kho)
+              : row.stock != null && Number.isFinite(Number(row.stock))
+                ? Number(row.stock)
+                : null
+          return n != null ? n.toLocaleString('vi-VN') : '—'
+        })()}
+      </td>
       <td className="ah-goods-time ah-goods-col-time">{row.displayTime}</td>
     </tr>
   )
@@ -63,10 +94,14 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
 }) {
   const priceStr = (Number(row.price) || 0).toLocaleString('vi-VN')
   const costStr = (Number(row.cost) || 0).toLocaleString('vi-VN')
-  const stockStr =
-    row.stock != null && Number.isFinite(Number(row.stock))
-      ? Number(row.stock).toLocaleString('vi-VN')
-      : '—'
+  console.log('Dữ liệu tồn kho:', row.ton_kho)
+  const tonNum =
+    row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
+      ? Number(row.ton_kho)
+      : row.stock != null && Number.isFinite(Number(row.stock))
+        ? Number(row.stock)
+        : null
+  const stockStr = tonNum != null ? tonNum.toLocaleString('vi-VN') : '—'
   return (
     <div
       role="row"
@@ -88,7 +123,7 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
         {row.name}
       </div>
       <div className="ah-goods-vcell ah-goods-col-dvt" role="cell">
-        {row.unitLabel}
+        <GoodsCatalogDvtCell row={row} />
       </div>
       <div className="ah-goods-vcell ah-goods-col-brand" role="cell" title={row.brand || ''}>
         {row.brand ? row.brand : ''}

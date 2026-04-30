@@ -10,6 +10,10 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 import {
+  BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX,
+  BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
+} from './kiotProductSchema.js'
+import {
   POS_SESSION_DRAFT_VERSION,
   buildCatalogFingerprint,
   clearPosSessionDraft,
@@ -70,12 +74,14 @@ import {
   catalogQuyDoiFactorToBase,
   headerIsConversionColumn,
   headerIsLinkedMasterColumn,
+  headerIsUnitColumn,
   normalizeCatalogSearchCompactKey,
   normalizeCatalogUnitLabel,
   normalizeGroupRoot,
   parseConversionRatio,
   pickUnitColumnIndex,
   shouldForceProductCodeColumnA,
+  trimCatalogUnitLabel,
 } from './productUnits.js'
 import {
   CATALOG_SNAPSHOT_STORAGE_KEY,
@@ -95,7 +101,7 @@ import {
 } from './comboCatalog.js'
 
 /** File trong thư mục `public/` ở repo — sau build: phục vụ từ gốc site (Vite `BASE_URL`). Tự tải khi chưa có catalog lưu cục bộ. */
-const DEFAULT_PUBLIC_CATALOG_NAME = 'kiotnew.csv'
+const DEFAULT_PUBLIC_CATALOG_NAME = 'bhphuthanh.csv'
 function getDefaultPublicCatalogUrl() {
   const name = encodeURI(DEFAULT_PUBLIC_CATALOG_NAME)
   const base = import.meta.env.BASE_URL || '/'
@@ -179,7 +185,7 @@ function isExactTenHangHeader(raw) {
   return k === 'ten hang'
 }
 
-/** Cột không dùng làm tên (nhóm, ghi chú, mã, giá, ĐVT…). */
+/** Cột không dùng làm tên (nhóm, ghi chú, mã, giá, ĐƠN VỊ TÍNH…). */
 function headerIsExcludedFromName(normFull) {
   const h = String(normFull ?? '')
     .replace(/\s+/g, ' ')
@@ -289,7 +295,7 @@ function effectivePosCostUnit(variant, _wholesaleMode) {
 }
 
 /**
- * Danh sách ĐVT/biến thể cho POS: ưu tiên groupVariants; nếu có mảng `units` / `conversions`
+ * Danh sách ĐƠN VỊ TÍNH/biến thể cho POS: ưu tiên groupVariants; nếu có mảng `units` / `conversions`
  * (cùng state sản phẩm) thì dùng khi chưa gom đủ nhóm — khớp mục Hàng hóa.
  */
 function getProductVariantRowsForPos(product) {
@@ -369,7 +375,7 @@ function baseVariantForProduct(p) {
 }
 
 /**
- * Số lượng bán theo ĐVT hiện tại → số đơn vị cơ bản cần trừ khỏi tồn của biến thể cơ sở.
+ * Số lượng bán theo ĐƠN VỊ TÍNH hiện tại → số đơn vị cơ bản cần trừ khỏi tồn của biến thể cơ sở.
  * @returns {{ baseVariantId: string, basePieces: number }}
  */
 function basePiecesSoldForCartLine(products, line) {
@@ -393,7 +399,7 @@ function basePiecesSoldForCartLine(products, line) {
   return { baseVariantId: String(vid), basePieces: qty }
 }
 
-/** SL có thể bán theo ĐVT (từ tồn đơn vị cơ sở), hoặc tồn riêng biến thể nếu không có tồn cơ sở. */
+/** SL có thể bán theo ĐƠN VỊ TÍNH (từ tồn đơn vị cơ sở), hoặc tồn riêng biến thể nếu không có tồn cơ sở. */
 function salableQtyInVariantUnitsForPos(products, product, variant) {
   if (product && isComboCatalogProduct(product)) {
     return salableComboPackCount(products, getComboBom(product))
@@ -413,7 +419,7 @@ function salableQtyInVariantUnitsForPos(products, product, variant) {
   return null
 }
 
-/** Tồn kho hiển thị trên thẻ (đa ĐVT: lấy tồn đơn vị cơ sở; combo = số gói bán được theo BOM). */
+/** Tồn kho hiển thị trên thẻ (đa ĐƠN VỊ TÍNH: lấy tồn đơn vị cơ sở; combo = số gói bán được theo BOM). */
 function catalogStockLabel(products, p) {
   if (p && isComboCatalogProduct(p)) {
     return salableComboPackCount(products, getComboBom(p))
@@ -670,10 +676,20 @@ function detectColumns(headers, dataRows = [], delim = '', importOpts = {}) {
   }
   unitIdx = pickUnitColumnIndex(norm)
   if (importOpts.excelUnitFromColumnL === true) {
-    unitIdx = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
+    const L = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
+    if (
+      norm.length > L &&
+      headerIsUnitColumn(norm[L]) &&
+      !headerIsConversionColumn(norm[L])
+    ) {
+      unitIdx = L
+    }
   }
   if (importOpts.excelQuyDoiFromColumnN === true) {
-    convIdx = EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N
+    const N = EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N
+    if (norm.length > N && headerIsConversionColumn(norm[N])) {
+      convIdx = N
+    }
   }
 
   for (let i = 0; i < norm.length; i++) {
@@ -1031,8 +1047,21 @@ function rowsToProducts(headerCells, dataRows, delim = '', importBaseMs, importO
       .replace(/\s+/g, ' ')
       .trim()
     const linkedMasterCode = linkIdx >= 0 ? String(cells[linkIdx] ?? '').trim() : ''
-    const unitLabel = normalizeCatalogUnitLabel(unitIdx >= 0 ? cells[unitIdx] : '')
-    const conversion = parseConversionRatio(convIdx >= 0 ? cells[convIdx] : '')
+    const bhSemiFixed =
+      delim === ';' && cells.length > BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX
+    const unitCellRaw = bhSemiFixed
+      ? cells[BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX]
+      : unitIdx >= 0
+        ? cells[unitIdx]
+        : ''
+    const convRaw = bhSemiFixed
+      ? cells[BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX]
+      : convIdx >= 0
+        ? cells[convIdx]
+        : ''
+    const unitLabel = normalizeCatalogUnitLabel(unitCellRaw)
+    const dvt = trimCatalogUnitLabel(unitCellRaw)
+    const conversion = parseConversionRatio(convRaw)
     const weightRaw =
       weightIdx >= 0
         ? String(cells[weightIdx] ?? '')
@@ -1066,6 +1095,7 @@ function rowsToProducts(headerCells, dataRows, delim = '', importBaseMs, importO
       brand,
       linkedMasterCode,
       unitLabel,
+      dvt,
       conversion,
       weightRaw,
       stockNormMin,
@@ -1250,7 +1280,7 @@ function productHasMultiUnitForPos(p) {
   return vars.length > 1
 }
 
-/** Dòng giỏ có nhiều ĐVT (ưu tiên variantOptions trên dòng — vẫn đúng khi snapshot catalog lệch). */
+/** Dòng giỏ có nhiều ĐƠN VỊ TÍNH (ưu tiên variantOptions trên dòng — vẫn đúng khi snapshot catalog lệch). */
 function cartLineShowsMultiUnitToggle(products, line) {
   if ((line?.variantOptions?.length ?? 0) > 1) return true
   return productHasMultiUnitForPos(findProductForCartLine(products, line))
@@ -1266,7 +1296,7 @@ function formatConvQtyForHint(n) {
 }
 
 /**
- * Hàng ĐVT: đồng bộ với POS — `groupVariants` (≥2) trước; không thì `product.units`; còn lại getProductVariantRowsForPos.
+ * Hàng ĐƠN VỊ TÍNH: đồng bộ với POS — `groupVariants` (≥2) trước; không thì `product.units`; còn lại getProductVariantRowsForPos.
  */
 function getProductUnitOrVariantRows(product) {
   if (!product) return []
@@ -1333,7 +1363,47 @@ function resolveCartLineVariantRowOrFallback(product, line) {
 }
 
 /**
- * Inline Tab Bán: duoi ten (ma + ten DVT nho nhat); so = SL * conversionValue (cot N / Hang hoa) cua DVT dang ban.
+ * Biến thể catalog có cùng giá trị cột CSV `ma_hh_lien_quan` (field JSON `linkedMasterCode`).
+ */
+function collectVariantsSharingMaHhLienQuan(products, linkKey) {
+  const k = String(linkKey ?? '').trim()
+  if (!k) return []
+  const seen = new Set()
+  const out = []
+  for (const p of products || []) {
+    const vars = getProductVariantRowsForPos(p)
+    for (const v of vars) {
+      if (String(v?.linkedMasterCode ?? '').trim() !== k) continue
+      const id = String(v?.id ?? '')
+      if (id) {
+        if (seen.has(id)) continue
+        seen.add(id)
+      }
+      out.push(v)
+    }
+  }
+  return out
+}
+
+/** ≥ 2 SKU cùng `ma_hh_lien_quan` → hiện «Xem chi tiết …» mở modal nhóm quy đổi. */
+function cartLineHasMaHhLienConversionGroup(products, line) {
+  const p = findProductForCartLine(products, line)
+  const v = resolveCartLineVariantRowOrFallback(p, line)
+  const lk = String(v?.linkedMasterCode ?? '').trim()
+  if (!lk) return false
+  return collectVariantsSharingMaHhLienQuan(products, lk).length >= 2
+}
+
+function cartLineQuyDoiFactor(products, line) {
+  if (!line) return 1
+  const p = findProductForCartLine(products, line)
+  const v = resolveCartLineVariantRowOrFallback(p, line)
+  const n = effectiveConversionForVariant(v || line)
+  return Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : 1
+}
+
+/**
+ * Inline Tab Bán: dưới tên (mã + tên đơn vị nhỏ nhất); số = SL * conversionValue (cột N / Hàng hóa) của đơn vị đang bán.
  * Khong tra ve khi conversionValue ~ 1 (khong can quy doi).
  */
 function buildCartConversionExpansionModel(products, line, cartQtyDraftByLine) {
@@ -1365,6 +1435,25 @@ function buildCartConversionExpansionModel(products, line, cartQtyDraftByLine) {
       .replace(/\s+/g, ' ')
       .trim() || String(p.name ?? '').trim() || '—'
   return { baseCode, baseName, qtyDisplay: numStr }
+}
+
+/** Hiển thị cell modal nhóm `ma_hh_lien_quan` — field CSV `dvt` / `quy_doi` / `gia_ban`. */
+function posMaHhModalDvtCell(v) {
+  const t = String(v?.dvt ?? '').trim()
+  return t ? normalizeCatalogUnitLabel(t) : normalizeCatalogUnitLabel(v?.unitLabel)
+}
+
+function posMaHhModalQuyCell(v) {
+  const n = catalogQuyDoiFactorToBase(v)
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n))
+  return formatConvQtyForHint(n) || String(n)
+}
+
+function posMaHhModalGiaBanCell(v) {
+  const n = Number(v?.price)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toLocaleString('vi-VN')} đ`
 }
 
 /** Sản phẩm / biến thể có bật quản lý HSD (POS). */
@@ -1529,7 +1618,7 @@ const POS_SHORTCUTS_HELP_ROWS = [
     id: 'esc',
     key: 'Esc',
     desc:
-      'Đóng bảng Phím tắt / menu quét / chọn ĐVT; thoát ô nhập (blur), bỏ khung chọn dòng giỏ, xóa ô tìm và focus ô tìm để quét mã tiếp',
+      'Đóng bảng Phím tắt / menu quét / chọn ĐƠN VỊ TÍNH; thoát ô nhập (blur), bỏ khung chọn dòng giỏ, xóa ô tìm và focus ô tìm để quét mã tiếp',
   },
 ]
 
@@ -1586,7 +1675,7 @@ function createEmptySellOrder() {
 }
 
 /**
- * Khôi phục sellOrders từ JSON đã lưu; khớp variant theo id hoặc (mã + ĐVT).
+ * Khôi phục sellOrders từ JSON đã lưu; khớp variant theo id hoặc (mã + ĐƠN VỊ TÍNH).
  * Giá / variantOptions lấy lại từ catalog hiện tại theo chế độ sỉ.
  */
 function rehydrateSellOrdersFromSnapshot(products, rawOrders, wholesaleMode) {
@@ -1667,7 +1756,7 @@ function rehydrateSellOrdersFromSnapshot(products, rawOrders, wholesaleMode) {
   return { orders: hydrated }
 }
 
-/** Trừ tồn kho catalog theo số lượng bán (đa ĐVT: trừ theo đơn vị cơ sở); trừ thêm từng lô nếu có stockBatches. */
+/** Trừ tồn kho catalog theo số lượng bán (đa ĐƠN VỊ TÍNH: trừ theo đơn vị cơ sở); trừ thêm từng lô nếu có stockBatches. */
 function applySoldQtyToCatalog(products, cartLines) {
   if (!products?.length || !cartLines?.length) return products
   const deltaBaseByVid = new Map()
@@ -1779,7 +1868,7 @@ function parseDiscountApplied(orderDiscountStr, total) {
 
 const QUICK_CASH_AMOUNTS = [100_000, 200_000, 400_000, 500_000]
 
-/** Khớp mã / mã vạch chính xác với một dòng catalog (kể cả ĐVT). */
+/** Khớp mã / mã vạch chính xác với một dòng catalog (kể cả ĐƠN VỊ TÍNH). */
 function findCatalogRowByCodeOrScan(products, raw) {
   const trimmed = String(raw ?? '').trim()
   if (!trimmed) return null
@@ -1802,7 +1891,7 @@ function variantHasCsvBarcode(v) {
   return String(normalizeBarcodeValue(v.barcode ?? '')).length > 0
 }
 
-/** Hệ số quy đổi dùng khi chọn ĐVT: null coi như đơn vị cơ bản (1). */
+/** Hệ số quy đổi dùng khi chọn ĐƠN VỊ TÍNH: null coi như đơn vị cơ bản (1). */
 function effectiveConversionForBarcodePick(v) {
   return effectiveConversionForVariant(v)
 }
@@ -2002,7 +2091,7 @@ function variantMatchesBarcodeQuery(variant, q) {
   return String(normalizeBarcodeValue(variant.barcode ?? '')) === needle
 }
 
-/** Dòng gợi ý POS: `variantOptions` chỉ khi gộp nhiều ĐVT; chọn ĐVT qua state map theo product.id. */
+/** Dòng gợi ý POS: `variantOptions` chỉ khi gộp nhiều ĐƠN VỊ TÍNH; chọn ĐƠN VỊ TÍNH qua state map theo product.id. */
 function resolveHeaderSuggestVariant(row, pickMap) {
   const opts = row.variantOptions
   const fallback = row.variant
@@ -2012,7 +2101,7 @@ function resolveHeaderSuggestVariant(row, pickMap) {
   return opts.find((o) => String(o.id) === String(vid)) || fallback
 }
 
-/** Mỗi dòng gợi ý = một mặt hàng (dropdown ĐVT nếu đa đơn vị), đã sắp bán chạy. */
+/** Mỗi dòng gợi ý = một mặt hàng (dropdown ĐƠN VỊ TÍNH nếu đa đơn vị), đã sắp bán chạy. */
 function buildHeaderSuggestRows(
   products,
   posScanList,
@@ -2067,7 +2156,7 @@ function buildHeaderSuggestRows(
 
     const variantCount = vars.length || 1
     const isMultiUnit = variantCount > 1 || p.multiUnit === true
-    /** Đa ĐVT: luôn tách từng dòng gợi ý (không gộp dropdown) để chọn nhanh. */
+    /** Đa ĐƠN VỊ TÍNH: luôn tách từng dòng gợi ý (không gộp dropdown) để chọn nhanh. */
     const collapseMulti = !barcodeQ && !isMultiUnit && matching.length > 1
 
     if (collapseMulti) {
@@ -2245,7 +2334,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [posScanToast, setPosScanToast] = useState(null)
   const [headerSuggestOpen, setHeaderSuggestOpen] = useState(false)
   const [headerHighlightIndex, setHeaderHighlightIndex] = useState(0)
-  /** Khi gợi ý gộp nhiều ĐVT: product.id → variantId đang chọn trong dropdown. */
+  /** Khi gợi ý gộp nhiều ĐƠN VỊ TÍNH: product.id → variantId đang chọn trong dropdown. */
   const [headerSuggestUnitPickByProductId, setHeaderSuggestUnitPickByProductId] = useState({})
   const [scannerMenuOpen, setScannerMenuOpen] = useState(false)
   const [activeView, setActiveView] = useState(() =>
@@ -2269,13 +2358,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [batchPickLineId, setBatchPickLineId] = useState(null)
   const [batchDraftId, setBatchDraftId] = useState(null)
   const [batchSearch, setBatchSearch] = useState('')
+  /** Modal nhóm quy đổi theo «ma_hh_lien_quan» (CSV) — `groupProducts` = biến thể thu được từ danh mục. */
+  const [posMaHhLienConvModal, setPosMaHhLienConvModal] = useState(null)
   /**
    * Giỏ hàng — ẩn/hiện dòng quy đổi theo từng dòng (lineId → boolean).
-   * Thành phần A (link xanh) luôn hiện khi có đa ĐVT; bấm chỉ đảo `showConversion` cho dòng đó.
+   * Thành phần A (link xanh) luôn hiện khi có đa ĐƠN VỊ TÍNH; bấm chỉ đảo `showConversion` cho dòng đó.
    * Thành phần B (chữ nhỏ) chỉ render khi `showConversion === true` cho lineId tương ứng.
    */
   const [showConversionByLineId, setShowConversionByLineId] = useState({})
-  /** Dòng giỏ đang mở bảng ĐVT quy đổi nhanh */
+  /** Dòng giỏ đang mở bảng ĐƠN VỊ TÍNH quy đổi nhanh */
   const discountInputRef = useRef(null)
   const cashGivenInputRef = useRef(null)
   const cartQtyInputRefs = useRef(new Map())
@@ -2496,7 +2587,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
-  /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/kiotnew.csv` khi *không* cấu hình Supabase. */
+  /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/bhphuthanh.csv` khi *không* cấu hình Supabase. */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -2902,7 +2993,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return () => window.clearTimeout(t)
   }, [sellOrders, activeSellOrderId, sellWholesaleMode, products, fileName])
 
-  /** Khi catalog (Hàng hóa / Excel) đổi — cập nhật ĐVT / biến thể / giá trên dòng giỏ ngay (sau bước khôi phục nháp). */
+  /** Khi catalog (Hàng hóa / Excel) đổi — cập nhật ĐƠN VỊ TÍNH / biến thể / giá trên dòng giỏ ngay (sau bước khôi phục nháp). */
   useEffect(() => {
     if (activeView !== 'sell') return
     if (!catalogDataFingerprint) return
@@ -3168,7 +3259,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
 
     const shouldPauseGlobalScan = () => {
-      if (unitPickerProduct || scannerMenuOpen || batchPickLineId) return true
+      if (unitPickerProduct || scannerMenuOpen || batchPickLineId || posMaHhLienConvModal) return true
       const ae = document.activeElement
       if (ae && ae === headerSearchRef.current) return true
       if (ae && isEditableFieldElement(ae)) return true
@@ -3237,7 +3328,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       window.removeEventListener('keydown', onKeyDownCapture, true)
       flushBuffer()
     }
-  }, [activeView, products.length, unitPickerProduct, scannerMenuOpen, batchPickLineId])
+  }, [activeView, products.length, unitPickerProduct, scannerMenuOpen, batchPickLineId, posMaHhLienConvModal])
 
   const tryAddProductFromHeader = useCallback(() => {
     const raw = headerSearch.trim()
@@ -3605,6 +3696,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       }
       const qty = effectiveCartLineQty(l, cartQtyDraftByLine)
+      const quyDoi = cartLineQuyDoiFactor(products, l)
       const lineRevenue = price * qty
       const lineCost = cost * qty
       const lineProfit = lineRevenue - lineCost
@@ -3617,6 +3709,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         price,
         cost,
         qty,
+        quyDoi,
         returnedQty: 0,
         ...(orderLineId ? { orderLineId } : {}),
         ...(variantId ? { variantId } : {}),
@@ -3861,6 +3954,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         setBatchSearch('')
         return
       }
+      if (posMaHhLienConvModal) {
+        e.preventDefault()
+        e.stopPropagation()
+        setPosMaHhLienConvModal(null)
+        return
+      }
       if (unitPickerProduct) {
         e.preventDefault()
         e.stopPropagation()
@@ -3921,6 +4020,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     clearPosSearchForScan,
     focusHeaderSearchSelect,
     batchPickLineId,
+    posMaHhLienConvModal,
   ])
 
   useEffect(() => {
@@ -3931,6 +4031,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (customerAddOpen) return
       if (returnPickModalOpen) return
       if (batchPickLineId) return
+      if (posMaHhLienConvModal) return
       if (e.key === 'F1') {
         e.preventDefault()
         handleThanhToanRef.current()
@@ -4015,6 +4116,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     openDoanhThuInNewTab,
     returnPickModalOpen,
     batchPickLineId,
+    posMaHhLienConvModal,
   ])
 
   const isPosMode = activeView === 'sell' && products.length > 0
@@ -4859,7 +4961,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     <th className="pos-col--stt">STT</th>
                     <th className="pos-col--code">Mã hàng</th>
                     <th className="pos-col--name">Tên sản phẩm</th>
-                    <th className="pos-col--dvt">ĐVT</th>
+                    <th className="pos-col--dvt">ĐƠN VỊ TÍNH</th>
                     <th className="pos-col--qty">Số lượng</th>
                     <th className="pos-col--price">Giá bán</th>
                     <th className="pos-col--sum">Thành tiền</th>
@@ -4875,11 +4977,24 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                         ? batchCtx.batches.find((b) => b.batchId === l.selectedBatchId)
                         : null
                     const showConvToggle = cartLineShowsMultiUnitToggle(products, l)
-                    const convExpansion = showConvToggle
+                    const pCart = findProductForCartLine(products, l)
+                    const vCart = resolveCartLineVariantRowOrFallback(pCart, l)
+                    const maHhLinkKey = String(vCart?.linkedMasterCode ?? '').trim()
+                    const groupProducts = maHhLinkKey
+                      ? collectVariantsSharingMaHhLienQuan(products, maHhLinkKey)
+                      : []
+                    const showMaHhConvDetail = maHhLinkKey !== '' && groupProducts.length >= 2
+                    const showLegacyConvUi = showConvToggle && !showMaHhConvDetail
+                    const needConvHints = showMaHhConvDetail || showConvToggle
+                    const convExpansion = needConvHints
                       ? buildCartConversionExpansionModel(products, l, cartQtyDraftByLine)
                       : null
                     const showConversion = !!showConversionByLineId[l.lineId]
-                    const convDetailOpen = showConversion && !!convExpansion
+                    const convDetailOpen = showLegacyConvUi && showConversion && !!convExpansion
+                    const showQtyConvSub = !!(
+                      convExpansion &&
+                      (showMaHhConvDetail || (showLegacyConvUi && showConversion))
+                    )
                     return (
                     <tr
                       key={l.lineId}
@@ -4935,19 +5050,30 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       </td>
                       <td className="pos-col--name">
                         <div className="pos-name-text">{l.name}</div>
-                        {showConvToggle ? (
+                        {(showMaHhConvDetail || showLegacyConvUi) ? (
                           <div className="pos-cart-conv-block">
                             <button
                               type="button"
                               id={`pos-cart-conv-btn-${l.lineId}`}
                               className="pos-cart-conv-toggle pos-cart-conv-toggle--btn"
-                              aria-expanded={showConversion}
+                              aria-expanded={showLegacyConvUi ? showConversion : undefined}
                               aria-controls={
-                                convExpansion ? `pos-cart-conv-panel-${l.lineId}` : undefined
+                                showLegacyConvUi && convExpansion
+                                  ? `pos-cart-conv-panel-${l.lineId}`
+                                  : undefined
                               }
                               onClick={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
+                                if (showMaHhConvDetail) {
+                                  console.log('Nhóm liên quan:', groupProducts)
+                                  setPosMaHhLienConvModal({
+                                    linkKey: maHhLinkKey,
+                                    groupProducts,
+                                    lineHint: String(l.code ?? '').trim() || l.name,
+                                  })
+                                  return
+                                }
                                 setShowConversionByLineId((m) => ({
                                   ...m,
                                   [l.lineId]: !m[l.lineId],
@@ -4963,6 +5089,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                                 if (e.key === 'Enter' || e.key === ' ') {
                                   e.preventDefault()
                                   e.stopPropagation()
+                                  if (showMaHhConvDetail) {
+                                    console.log('Nhóm liên quan:', groupProducts)
+                                    setPosMaHhLienConvModal({
+                                      linkKey: maHhLinkKey,
+                                      groupProducts,
+                                      lineHint: String(l.code ?? '').trim() || l.name,
+                                    })
+                                    return
+                                  }
                                   setShowConversionByLineId((m) => ({
                                     ...m,
                                     [l.lineId]: !m[l.lineId],
@@ -4972,7 +5107,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                             >
                               Xem chi tiết sản phẩm quy đổi
                             </button>
-                            {showConversion && convExpansion ? (
+                            {showLegacyConvUi && showConversion && convExpansion ? (
                               <div
                                 id={`pos-cart-conv-panel-${l.lineId}`}
                                 className="pos-cart-conv-inline-exp"
@@ -5077,10 +5212,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                               +
                             </button>
                           </div>
-                          {showConversion && convExpansion ? (
+                          {showQtyConvSub ? (
                             <div
                               className="pos-cart-conv-qty-sub"
-                              title="Số lượng quy đổi theo đơn vị nhỏ nhất (Quy đổi / cột N)"
+                              title="Số lượng quy đổi theo đơn vị nhỏ nhất (quy_doi / cột N)"
                             >
                               {convExpansion.qtyDisplay}
                             </div>
@@ -5436,7 +5571,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                                         : 'Tồn —'}
                                     </span>
                                     {p.multiUnit ? (
-                                      <span className="pos-bestseller-dvt">ĐVT</span>
+                                      <span className="pos-bestseller-dvt">ĐƠN VỊ TÍNH</span>
                                     ) : null}
                                     <span className="pos-bestseller-name">
                                       {p.name || 'Không tên'}
@@ -5759,6 +5894,69 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         )
       })()}
 
+      {posMaHhLienConvModal && activeView === 'sell' && (
+        <div
+          className="dvt-pick-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pos-ma-hh-lq-title"
+          onClick={(e) => e.target === e.currentTarget && setPosMaHhLienConvModal(null)}
+        >
+          <div className="dvt-pick-modal pos-ma-hh-lq-modal">
+            <div className="dvt-pick-head">
+              <h2 id="pos-ma-hh-lq-title">Chi tiết nhóm quy đổi</h2>
+              <button
+                type="button"
+                className="dvt-pick-close"
+                aria-label="Đóng"
+                onClick={() => setPosMaHhLienConvModal(null)}
+              >
+                ×
+              </button>
+            </div>
+            <p className="pos-ma-hh-lq-sub">
+              <span className="pos-ma-hh-lq-k">ma_hh_lien_quan:</span>{' '}
+              <strong>{posMaHhLienConvModal.linkKey}</strong>
+              {posMaHhLienConvModal.lineHint ? (
+                <>
+                  {' '}
+                  · Giỏ: <span className="pos-ma-hh-lq-hint">{posMaHhLienConvModal.lineHint}</span>
+                </>
+              ) : null}
+            </p>
+            <div className="pos-ma-hh-lq-scroll">
+              <table className="pos-ma-hh-lq-table">
+                <thead>
+                  <tr>
+                    <th>Mã hàng</th>
+                    <th>dvt</th>
+                    <th>quy_doi</th>
+                    <th>gia_ban</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {posMaHhLienConvModal.groupProducts.map((v, vi) => (
+                    <tr key={String(v.id ?? `${v.code}-${vi}`)}>
+                      <td>{String(v.code ?? '').trim() || '—'}</td>
+                      <td>{posMaHhModalDvtCell(v)}</td>
+                      <td>{posMaHhModalQuyCell(v)}</td>
+                      <td>{posMaHhModalGiaBanCell(v)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              className="dvt-pick-cancel"
+              onClick={() => setPosMaHhLienConvModal(null)}
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
+
       {unitPickerProduct && activeView === 'sell' && (
         <div
           className="dvt-pick-backdrop"
@@ -5832,7 +6030,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           <p className="welcome-sub">
             Hỗ trợ file phân cách bằng <strong>dấu chấm phẩy (;)</strong> hoặc dấu phẩy (tự nhận
             theo dòng tiêu đề). Cột <strong>Giá vốn</strong>, <strong>Mã HH Liên Kết</strong>,{' '}
-            <strong>Đơn vị tính</strong>, <strong>Quy đổi</strong> (nếu có) để gom ĐVT và báo cáo.
+            <strong>Đơn vị tính</strong>, <strong>Quy đổi</strong> (nếu có) để gom nhóm và báo cáo.
           </p>
         </div>
       )}

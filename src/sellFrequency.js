@@ -17,7 +17,7 @@ export function aggregateCodeQtyFromOrders(orders) {
 }
 
 /**
- * Điểm bán chạy của một mặt hàng catalog (cộng dồn mọi biến thể ĐVT).
+ * Điểm bán chạy của một mặt hàng catalog (cộng dồn mọi biến thể ĐƠN VỊ TÍNH).
  */
 export function scoreCatalogProduct(p, codeQty) {
   const variants = p.groupVariants || [p]

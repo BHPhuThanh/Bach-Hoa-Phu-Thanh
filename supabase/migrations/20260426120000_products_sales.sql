@@ -1,7 +1,7 @@
 -- Chạy toàn bộ trong Supabase → SQL Editor (một lần cho project mới).
 --
 -- • catalog_snapshots — JSON danh mục cho app POS (id = 'catalog').
--- • products — mỗi dòng = một mã hàng từ export Kiot (cột khớp kiotnew.csv).
+-- • products — mỗi dòng = một mã hàng từ export Kiot (cột khớp bhphuthanh.csv).
 -- • sales — đơn bán / doanh thu (payload JSON).
 -- • bootstrap_store_schema() — gọi từ web (anon) để đảm bảo bảng + RLS tồn tại (SECURITY DEFINER).
 
@@ -48,20 +48,14 @@ CREATE TABLE IF NOT EXISTS public.products (
   gia_ban text,
   gia_von text,
   ton_kho text,
-  kh_dat text,
-  du_kien_het_hang text,
   ton_nho_nhat text,
   ton_lon_nhat text,
   dvt text,
   ma_dvt_co_ban text,
   quy_doi text,
-  thuoc_tinh text,
   ma_hh_lien_quan text,
   trong_luong text,
-  dang_kinh_doanh text,
-  duoc_ban_truc_tiep text,
-  gia_si text,
-  imported_at timestamptz NOT NULL DEFAULT now()
+  gia_si text
 );
 
 CREATE TABLE IF NOT EXISTS public.sales (
@@ -128,20 +122,14 @@ BEGIN
     gia_ban text,
     gia_von text,
     ton_kho text,
-    kh_dat text,
-    du_kien_het_hang text,
     ton_nho_nhat text,
     ton_lon_nhat text,
     dvt text,
     ma_dvt_co_ban text,
     quy_doi text,
-    thuoc_tinh text,
     ma_hh_lien_quan text,
     trong_luong text,
-    dang_kinh_doanh text,
-    duoc_ban_truc_tiep text,
-    gia_si text,
-    imported_at timestamptz NOT NULL DEFAULT now()
+    gia_si text
   );
 
   CREATE TABLE IF NOT EXISTS public.sales (

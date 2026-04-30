@@ -6,12 +6,21 @@ function fileStamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`
 }
 
-function escapeCsvField(value, delim) {
+function escapeCsvField(value, delim, opts = {}) {
+  const { forceQuote = false } = opts
   const str = String(value ?? '')
-  if (str.includes('"') || str.includes('\n') || str.includes('\r') || str.includes(delim)) {
+  if (forceQuote || str.includes('"') || str.includes('\n') || str.includes('\r') || str.includes(delim)) {
     return `"${str.replace(/"/g, '""')}"`
   }
   return str
+}
+
+function normalizeBarcodeCsvCell(raw) {
+  let s = String(raw ?? '').trim()
+  if (!s) return ''
+  // Không dùng công thức kiểu ="..." để tránh lỗi AppSheet/Glide.
+  s = s.replace(/^="(.+)"$/i, '$1').replace(/^='(.+)'$/i, '$1').replace(/^=(.+)$/, '$1').trim()
+  return s
 }
 
 /**
@@ -26,7 +35,7 @@ export function exportGoodsRowsToKiotCsv(rows) {
     'Mã vạch',
     'Tên hàng',
     'Thương hiệu',
-    'ĐVT',
+    'ĐƠN VỊ TÍNH',
     'Giá bán (đ)',
     'Giá vốn (đ)',
     'Tồn kho',
@@ -34,9 +43,10 @@ export function exportGoodsRowsToKiotCsv(rows) {
   ]
   const lines = [header.map((h) => escapeCsvField(h, delim)).join(delim)]
   for (const r of rows) {
+    const barcodeText = normalizeBarcodeCsvCell(r.barcode)
     const cells = [
       r.code,
-      r.barcode || '',
+      barcodeText,
       r.name,
       r.brand || '',
       r.unitLabel || 'Cái',
@@ -45,7 +55,11 @@ export function exportGoodsRowsToKiotCsv(rows) {
       r.stock != null ? r.stock : '',
       r.displayTime || '',
     ]
-    lines.push(cells.map((c) => escapeCsvField(c, delim)).join(delim))
+    lines.push(
+      cells
+        .map((c, idx) => escapeCsvField(c, delim, { forceQuote: idx === 1 }))
+        .join(delim)
+    )
   }
   const bom = '\uFEFF'
   const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -67,7 +81,7 @@ export function exportGoodsRowsToExcel(rows) {
     'Mã vạch',
     'Tên hàng',
     'Thương hiệu',
-    'ĐVT',
+    'ĐƠN VỊ TÍNH',
     'Giá bán (đ)',
     'Giá vốn (đ)',
     'Tồn kho',

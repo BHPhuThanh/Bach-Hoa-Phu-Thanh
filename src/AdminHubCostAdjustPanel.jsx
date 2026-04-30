@@ -6,7 +6,7 @@ function buildHangHoaProductUrl(maHang) {
   const m = String(maHang ?? '').trim()
   if (!m) return ''
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-  return `${window.location.origin}${base}/hang-hoa/${encodeURIComponent(m)}`
+  return `${window.location.origin}${base}/admin/goods?search=${encodeURIComponent(m)}`
 }
 
 function formatDateTimeVi(ms) {
@@ -153,6 +153,7 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
     e.preventDefault()
     const url = buildHangHoaProductUrl(maHang)
     if (!url) return
+    console.log('LINK REDIRECT ĐẾN:', url)
     window.open(url, '_blank', 'noopener,noreferrer')
   }, [])
 
@@ -442,7 +443,7 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                                       <tr>
                                         <th>Mã SP</th>
                                         <th>Tên SP</th>
-                                        <th>ĐVT</th>
+                                        <th>ĐƠN VỊ TÍNH</th>
                                         <th>Giá vốn cũ</th>
                                         <th>Giá vốn mới</th>
                                         <th>Chênh lệch</th>

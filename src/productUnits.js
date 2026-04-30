@@ -36,7 +36,7 @@ export function normalizeCatalogSearchCompactKey(s) {
   return normalizeCatalogSearchString(s ?? '').replace(/\s/g, '')
 }
 
-/** Từ đầu tiên của tên (sau chuẩn hóa khoảng trắng) — gõ "7up" + ĐVT "thùng" → "7upthung". */
+/** Từ đầu tiên của tên (sau chuẩn hóa khoảng trắng) — gõ "7up" + ĐƠN VỊ TÍNH "thùng" → "7upthung". */
 export function firstCatalogNameTokenCompact(nameRaw, fallbackName = '') {
   const raw = String(nameRaw ?? '').trim() || String(fallbackName ?? '').trim()
   const s = normalizeCatalogSearchString(raw)
@@ -46,7 +46,7 @@ export function firstCatalogNameTokenCompact(nameRaw, fallbackName = '') {
 }
 
 /**
- * Một dòng catalog: Mã hàng (A) + Tên (C) + ĐVT (L) — thường, bỏ dấu, bỏ khoảng; nối thêm vài đoạn phụ để .includes() linh hoạt.
+ * Một dòng catalog: Mã hàng (A) + Tên (C) + ĐƠN VỊ TÍNH (L) — thường, bỏ dấu, bỏ khoảng; nối thêm vài đoạn phụ để .includes() linh hoạt.
  * @param {unknown} linkedMasterCode — cột liên kết / mã gốc nhóm (khớp cả chai + thùng khi gõ mã cha).
  */
 export function buildVariantPosSearchHaystack(
@@ -83,7 +83,7 @@ export function buildVariantPosSearchHaystack(
 }
 
 /**
- * Gộp haystack từng biến thể (mã + tên + ĐVT) — filter = product.nameSearch.includes(queryCompact).
+ * Gộp haystack từng biến thể (mã + tên + ĐƠN VỊ TÍNH) — filter = product.nameSearch.includes(queryCompact).
  */
 export function computeProductNameSearch(p) {
   const variants =
@@ -147,21 +147,21 @@ export function refreshCatalogSearchTexts(products) {
 }
 
 /**
- * Cột L trong Excel (chỉ mục 0-based: A=0 … L=11) — ĐVT khi nhập .xlsx/.xls theo đúng vị trí cột.
+ * Cột L trong Excel (chỉ mục 0-based: A=0 … L=11) — ĐƠN VỊ TÍNH khi nhập .xlsx/.xls theo đúng vị trí cột.
  */
 export const EXCEL_CATALOG_UNIT_COLUMN_INDEX_L = 11
 
-/** Cột N (0-based = 13) trong mẫu Excel KiotViet — « Quy đổi » (số đơn vị nhỏ nhất trong 1 ĐVT dòng). */
+/** Cột N (0-based = 13) trong mẫu Excel KiotViet — « Quy đổi » (số đơn vị nhỏ nhất trong 1 ĐƠN VỊ TÍNH dòng). */
 export const EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N = 13
 
 /** Cột T (0-based = 19) — Giá sỉ / buôn trong mẫu Excel KiotViet (CSV `;` dùng cùng chỉ mục). */
 export const EXCEL_CATALOG_WHOLESALE_PRICE_COLUMN_INDEX_T = 19
 
-/** Ô ĐVT trống (sau trim) → mặc định; không thay thế khi đã có chữ từ file (Hộp, Lốc…). */
+/** Ô ĐƠN VỊ TÍNH trống (sau trim) → mặc định; không thay thế khi đã có chữ từ file (Hộp, Lốc…). */
 export const DEFAULT_CATALOG_UNIT_LABEL = 'Cái'
 
 /**
- * Trim nhãn ĐVT từ ô (không gán mặc định) — dùng khi cần phân biệt trống / có dữ liệu.
+ * Trim nhãn ĐƠN VỊ TÍNH từ ô (không gán mặc định) — dùng khi cần phân biệt trống / có dữ liệu.
  * @param {unknown} raw
  */
 export function trimCatalogUnitLabel(raw) {
@@ -172,7 +172,7 @@ export function trimCatalogUnitLabel(raw) {
 }
 
 /**
- * Chuẩn hóa nhãn ĐVT hiển thị / lưu: chỉ gán {@link DEFAULT_CATALOG_UNIT_LABEL} khi sau trim không còn ký tự (hoặc placeholder "—").
+ * Chuẩn hóa nhãn ĐƠN VỊ TÍNH hiển thị / lưu: chỉ gán {@link DEFAULT_CATALOG_UNIT_LABEL} khi sau trim không còn ký tự (hoặc placeholder "—").
  * @param {unknown} raw
  */
 export function normalizeCatalogUnitLabel(raw) {
@@ -181,7 +181,7 @@ export function normalizeCatalogUnitLabel(raw) {
   return s
 }
 
-/** Chuẩn key so khớp tiêu đề cột ĐVT (đã qua stripAccents + chữ thường). */
+/** Chuẩn key so khớp tiêu đề cột ĐƠN VỊ TÍNH (đã qua stripAccents + chữ thường). */
 function unitColumnKeyFromNorm(normHeader) {
   return String(normHeader ?? '')
     .replace(/^\uFEFF/, '')
@@ -191,13 +191,13 @@ function unitColumnKeyFromNorm(normHeader) {
     .trim()
 }
 
-/** Tiêu đề "ĐVT" sau stripAccents thành "đvt" (đ), không phải ASCII "dvt". */
+/** Tiêu đề "ĐƠN VỊ TÍNH" sau stripAccents thành "đvt" (đ), không phải ASCII "dvt". */
 function isDvtHeaderKey(k) {
   const x = String(k ?? '').trim()
   return x === 'dvt' || x === 'đvt'
 }
 
-/** Cột A (index 0) là "Mã hàng" — ép codeIdx = 0 để mã khớp ĐVT cùng dòng. */
+/** Cột A (index 0) là "Mã hàng" — ép codeIdx = 0 để mã khớp ĐƠN VỊ TÍNH cùng dòng. */
 export function shouldForceProductCodeColumnA(normHeaders) {
   if (!normHeaders?.length) return false
   const k = unitColumnKeyFromNorm(normHeaders[0])
@@ -212,7 +212,7 @@ export function shouldForceProductCodeColumnA(normHeaders) {
 }
 
 /**
- * Chọn cột ĐVT / Đơn vị tính — ưu tiên cột L (index 11) nếu tiêu đề là ĐVT; khớp đvt/dvt.
+ * Chọn cột đơn vị tính — ưu tiên cột L (index 11) nếu tiêu đề là ĐƠN VỊ TÍNH (hoặc tương đương); khớp đvt/dvt.
  * @param {string[]} normHeaders — mảng đã qua normalizeHeaderCell (stripAccents, lower).
  */
 export function pickUnitColumnIndex(normHeaders) {
@@ -267,6 +267,7 @@ export function headerIsUnitColumn(normHeader) {
 
 export function headerIsConversionColumn(normHeader) {
   const h = String(normHeader ?? '')
+    .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[[\]]/g, ' ')
     .trim()
@@ -371,8 +372,12 @@ export function buildDisplayCatalog(rows) {
       name: rep.name,
     })
 
+    const firstDvt = String(sorted[0]?.dvt ?? rep.dvt ?? '').trim()
+
     display.push({
       ...rep,
+      /** Đơn vị cố định từ cột «dvt» trong file — nhất quán với `groupVariants[].dvt`. */
+      dvt: firstDvt || String(rep.unitLabel ?? '').trim(),
       nameSearch,
       groupRoot: root,
       groupVariants,

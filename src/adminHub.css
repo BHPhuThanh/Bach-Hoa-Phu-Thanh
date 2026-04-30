@@ -768,6 +768,40 @@
   color: #cbd5e1;
 }
 
+.ah-revenue-th-detail {
+  width: 7.5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ah-revenue-cell-detail {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ah-revenue-order-detail-link {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: none;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.ah-revenue-order-detail-link:hover {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(37, 99, 235, 0.55);
+  text-decoration: underline;
+}
+
+.ah-revenue-order-detail-dash {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
 .ah-revenue-cell-code {
   font-weight: 600;
   color: #7dd3fc;
@@ -899,7 +933,7 @@
   min-height: 0;
   /*
    * Cột dữ liệu chính theo tỷ lệ 40% : 15% : 20% : 25% (Tên : Tồn : Giá vốn : Thời gian)
-   * → fr 4 : 1.5 : 2 : 2.5; thêm cột checkbox cố định + Mã / ĐVT / Giá bán bằng fr nhỏ.
+   * → fr 4 : 1.5 : 2 : 2.5; thêm cột checkbox cố định + Mã / ĐƠN VỊ TÍNH / Giá bán bằng fr nhỏ.
    */
   --ah-goods-catalog-cols: 2.75rem minmax(3.25rem, 0.72fr) minmax(0, 3.35fr) minmax(3.25rem, 0.68fr) minmax(4.25rem, 0.88fr) minmax(3.75rem, 0.82fr) minmax(0, 2fr) minmax(0, 1.5fr) minmax(5.5rem, 2.5fr);
 }
@@ -985,6 +1019,18 @@
 .ah-goods-catalog-head .ah-goods-col-dvt {
   font-weight: 700;
   color: #94a3b8;
+}
+
+.ah-goods-dvt-error {
+  display: block;
+  color: #f87171;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .ah-goods-catalog-th--filter {
@@ -3315,6 +3361,74 @@
   box-sizing: border-box;
 }
 
+.ah-inbound-ncc-combo-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.ah-inbound-ncc-combo-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ah-inbound-ncc-combo-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: #121820;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.ah-inbound-ncc-combo-dropdown.is-open .ah-inbound-ncc-combo-list-inner {
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.ah-inbound-ncc-combo-hint {
+  padding: 0.55rem 0.65rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+
+.ah-inbound-ncc-combo-list-inner {
+  box-sizing: border-box;
+}
+
+.ah-inbound-ncc-vrow {
+  box-sizing: border-box;
+}
+
+.ah-inbound-ncc-vrow-btn {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 0.84rem;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ah-inbound-ncc-vrow-btn:hover {
+  background: rgba(11, 132, 255, 0.14);
+}
+
+.ah-inbound-ncc-vrow-txt {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ah-inbound-ncc-add {
   display: inline-flex;
   align-items: center;
@@ -3802,7 +3916,7 @@
   overflow-x: hidden;
 }
 
-/* Phiếu nhập mới: cột xóa đầu + colgroup dàn đều; ĐVT→Thành tiền thoáng, căn giữa */
+/* Phiếu nhập mới: cột xóa đầu + colgroup dàn đều; ĐƠN VỊ TÍNH→Thành tiền thoáng, căn giữa */
 .ah-inbound-draft-lines-table {
   width: 100%;
   max-width: 100%;
@@ -3828,7 +3942,10 @@
   width: 9%;
 }
 .ah-inbound-draft-lines-table col.ah-inbound-draft-col--name {
-  width: 20%;
+  width: 18%;
+}
+.ah-inbound-draft-lines-table col.ah-inbound-draft-col--ncc {
+  width: 12%;
 }
 .ah-inbound-draft-lines-table col.ah-inbound-draft-col--dvt {
   width: 11%;
@@ -3878,6 +3995,16 @@
   text-overflow: ellipsis;
 }
 
+.ah-inbound-draft-td-ncc {
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  text-align: center;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ah-inbound-draft-th-name,
 .ah-inbound-draft-td-name {
   text-align: left;
@@ -3887,7 +4014,7 @@
   hyphens: auto;
 }
 
-/* ĐVT → Thành tiền: căn giữa + padding ngang lớn (thoáng) */
+/* ĐƠN VỊ TÍNH → Thành tiền: căn giữa + padding ngang lớn (thoáng) */
 .ah-inbound-draft-lines-table th.ah-inbound-ln-mid,
 .ah-inbound-draft-lines-table td.ah-inbound-ln-mid {
   text-align: center;
@@ -4161,6 +4288,14 @@
 .ah-iv-diff-code {
   font-weight: 700;
   color: #0084ff;
+}
+
+.ah-iv-diff-code-link {
+  text-decoration: none;
+}
+
+.ah-iv-diff-code-link:hover {
+  text-decoration: underline;
 }
 
 .ah-iv-diff-prices {
@@ -4641,7 +4776,7 @@
 .ah-unit-modal-overlay {
   position: fixed;
   inset: 0;
-  /* Cao hơn modal «Tạo hàng hóa» (12150) để thiết lập ĐVT luôn thao tác được */
+  /* Cao hơn modal «Tạo hàng hóa» (12150) để thiết lập ĐƠN VỊ TÍNH luôn thao tác được */
   z-index: 13000;
   display: flex;
   align-items: flex-start;
@@ -4889,7 +5024,7 @@
   backdrop-filter: blur(4px);
 }
 
-/* Khi mở thiết lập ĐVT lồng trên — làm mờ form tạo hàng, tránh cảm giác «hai lớp» chen nhau */
+/* Khi mở thiết lập ĐƠN VỊ TÍNH lồng trên — làm mờ form tạo hàng, tránh cảm giác «hai lớp» chen nhau */
 .ah-goods-create-overlay--dim .ah-goods-create-dialog {
   opacity: 0.36;
   pointer-events: none;

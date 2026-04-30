@@ -1,3 +1,4 @@
+import { buildAdminOrdersDetailAbsUrl } from './adminHubDeepLink.js'
 import { orderTotalProfit } from './reportUtils.js'
 
 function safeMoney(n) {
@@ -18,6 +19,24 @@ function formatVndProfitReturn(n) {
   if (x < 0) return `-${body}`
   if (x === 0) return '0 đ'
   return body
+}
+
+function RevenueOrderDetailLink({ orderId }) {
+  const oid = String(orderId ?? '').trim()
+  const href = oid ? buildAdminOrdersDetailAbsUrl(oid) : ''
+  if (!href) return <span className="ah-revenue-order-detail-dash">—</span>
+  return (
+    <a
+      href={href}
+      className="ah-revenue-order-detail-link"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Xem chi tiết đơn trong tab mới"
+      onClick={(e) => e.stopPropagation()}
+    >
+      Xem chi tiết
+    </a>
+  )
 }
 
 function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }) {
@@ -59,6 +78,9 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
             </td>
             <td className="ah-num">{formatVndSafe(o.total)}</td>
             <td className="ah-num ah-revenue-profit">{formatVndSafe(profit)}</td>
+            <td className="ah-revenue-cell-detail" onClick={(e) => e.stopPropagation()}>
+              <RevenueOrderDetailLink orderId={o.id} />
+            </td>
           </tr>
         )
       }
@@ -99,6 +121,9 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
           </td>
           <td className="ah-num ah-revenue-total--return">{formatVndSafe(r.displayTotal)}</td>
           <td className="ah-num ah-revenue-profit ah-revenue-profit--return">{formatVndProfitReturn(r.displayProfit)}</td>
+          <td className="ah-revenue-cell-detail" onClick={(e) => e.stopPropagation()}>
+            <RevenueOrderDetailLink orderId={r.sourceOrderId} />
+          </td>
         </tr>
       )
     })
@@ -106,7 +131,7 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
     console.error('[AdminHubRevenuePanel] rows', e)
     return (
       <tr>
-        <td colSpan={4} className="dash-muted ah-revenue-empty">
+        <td colSpan={5} className="dash-muted ah-revenue-empty">
           Không hiển thị được danh sách đơn (dữ liệu lỗi). Các chỉ số phía trên vẫn có thể dùng được.
         </td>
       </tr>
@@ -280,6 +305,7 @@ export default function AdminHubRevenuePanel({
                   <th>Thời gian</th>
                   <th className="ah-num">Tổng tiền</th>
                   <th className="ah-num">Lợi nhuận</th>
+                  <th className="ah-revenue-th-detail">Chi tiết</th>
                 </tr>
               </thead>
               <tbody>

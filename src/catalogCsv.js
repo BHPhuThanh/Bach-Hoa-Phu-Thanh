@@ -1,5 +1,9 @@
 import * as XLSX from 'xlsx'
 import {
+  BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX,
+  BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
+} from './kiotProductSchema.js'
+import {
   EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N,
   EXCEL_CATALOG_UNIT_COLUMN_INDEX_L,
   EXCEL_CATALOG_WHOLESALE_PRICE_COLUMN_INDEX_T,
@@ -7,6 +11,7 @@ import {
   catalogQuyDoiFactorToBase,
   headerIsConversionColumn,
   headerIsLinkedMasterColumn,
+  headerIsUnitColumn,
   normalizeCatalogUnitLabel,
   normalizeGroupRoot,
   parseConversionRatio,
@@ -113,7 +118,11 @@ function isBulkUnitCatalogRow(r) {
  */
 function readQuyDoiRawForCatalogCells(cells, importOpts, convIdx) {
   const N = EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N
-  if (importOpts.excelQuyDoiFromColumnN === true && cells.length > N) {
+  if (
+    importOpts.excelQuyDoiFromColumnN === true &&
+    cells.length > N &&
+    convIdx === N
+  ) {
     const n = cells[N]
     if (n != null && String(n).trim() !== '') return String(n).trim()
   }
@@ -149,7 +158,7 @@ function maybeLogCatalogQuyDoiColumnN(ctx) {
 }
 
 /**
- * ĐVT lớn (L) mà Quy đổi ≤1: cảnh báo; nếu cùng nhóm có dòng khác với hệ số >1 thì gán max cho ĐVT lớn (KiotViet).
+ * ĐƠN VỊ TÍNH lớn (L) mà Quy đổi ≤1: cảnh báo; nếu cùng nhóm có dòng khác với hệ số >1 thì gán max cho ĐƠN VỊ TÍNH lớn (KiotViet).
  */
 function inferAndWarnBulkQuyDoi(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return rows
@@ -167,7 +176,7 @@ function inferAndWarnBulkQuyDoi(rows) {
       for (const r of g) {
         if (isBulkUnitCatalogRow(r) && catalogQuyDoiFactorToBase(r) <= 1) {
           console.warn(
-            '[catalog Quy đổi] ĐVT lớn (Thùng/Lốc/Bịch) nhưng cột N trống hoặc 1 — nhập số (vd. 48) vào cột N. Nhóm:',
+            '[catalog Quy đổi] ĐƠN VỊ TÍNH lớn (Thùng/Lốc/Bịch) nhưng cột N trống hoặc 1 — nhập số (vd. 48) vào cột N. Nhóm:',
             gk,
             'mã:',
             r.code,
@@ -184,7 +193,7 @@ function inferAndWarnBulkQuyDoi(rows) {
       r.conversionValue = maxC
       if (CATALOG_IMPORT_DEV) {
         console.info(
-          '[catalog Quy đổi] Bổ sung hệ số từ max nhóm cho ĐVT lớn:',
+          '[catalog Quy đổi] Bổ sung hệ số từ max nhóm cho ĐƠN VỊ TÍNH lớn:',
           r.code,
           '→',
           maxC,
@@ -211,7 +220,7 @@ function isExactTenHangHeader(raw) {
   return k === 'ten hang'
 }
 
-/** Cột không dùng làm tên (nhóm, ghi chú, mã, giá, ĐVT…). */
+/** Cột không dùng làm tên (nhóm, ghi chú, mã, giá, ĐƠN VỊ TÍNH…). */
 function headerIsExcludedFromName(normFull) {
   const h = String(normFull ?? '')
     .replace(/\s+/g, ' ')
@@ -409,12 +418,14 @@ function playScannerBeep() {
   }
 }
 
-/** Cột tồn kho (KiotViet: Tồn kho; SL tồn…). */
+/** Cột tồn kho (KiotViet: Tồn kho; CSV `ton_kho`; SL tồn…). */
 function headerIsStockColumn(normHeader) {
   const h = String(normHeader ?? '')
     .replace(/\s+/g, ' ')
     .replace(/[[\]]/g, ' ')
     .trim()
+  /* tiêu đề snake_case `ton_kho` sau normalizeHeaderCell vẫn còn `_` */
+  if (h.includes('ton_kho') || h.replace(/_/g, '').includes('tonkho')) return true
   if (h.includes('ton kho') || h.includes('tonkho')) return true
   if (h === 'ton' || /^ton\s/.test(h)) return true
   if (h.includes('so luong ton') || h.includes('sl ton') || h.includes('slton')) return true
@@ -443,6 +454,8 @@ function headerIsBrandColumn(normHeader) {
     .replace(/\s+/g, ' ')
     .replace(/[[\]]/g, ' ')
     .trim()
+  /* CSV snake_case ví dụ `thuong_hieu` sau stripAccent vẫn còn dấu gạch dưới */
+  if (h.includes('thuong_hieu') || h.replace(/_/g, '').includes('thuonghieu')) return true
   if (h.includes('thuong hieu') || h.includes('thuonghieu')) return true
   if (h.includes('nhan hieu') || h.includes('nhanhieu')) return true
   if (h.includes('hang san xuat') || h.includes('hangsx')) return true
@@ -501,7 +514,7 @@ function headerIsStockNormRangeColumn(normHeader) {
 }
 
 /**
- * Cột "Mã ĐVT cơ bản" / mã gốc nhóm ĐVT — dùng gom nhiều dòng Excel thành một mặt hàng (không trùng cột Liên kết Kiot).
+ * Cột "Mã ĐƠN VỊ TÍNH cơ bản" / mã gốc nhóm ĐƠN VỊ TÍNH — dùng gom nhiều dòng Excel thành một mặt hàng (không trùng cột Liên kết Kiot).
  */
 function headerIsSmartBaseGroupColumn(normHeader) {
   const h = String(normHeader ?? '')
@@ -572,14 +585,29 @@ function detectColumns(headers, dataRows = [], delim = '', importOpts = {}) {
     if (baseGroupIdx < 0 && headerIsSmartBaseGroupColumn(norm[i])) baseGroupIdx = i
   }
   unitIdx = pickUnitColumnIndex(norm)
+  /** CSV `;` + layout Excel Kiot: chỉ ép cột L là đơn vị khi tiêu đề cột L thực sự là cột đơn vị — file `bhphuthanh.csv` đặt `quy_doi` ở index 11. */
   if (importOpts.excelUnitFromColumnL === true) {
-    unitIdx = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
+    const L = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
+    if (
+      norm.length > L &&
+      headerIsUnitColumn(norm[L]) &&
+      !headerIsConversionColumn(norm[L])
+    ) {
+      unitIdx = L
+    }
   }
+  /** Chỉ ép cột N khi tiêu đề cột N là Quy đổi (snake_case `quy_doi` nhận qua headerIsConversionColumn). */
   if (importOpts.excelQuyDoiFromColumnN === true) {
-    convIdx = EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N
+    const N = EXCEL_CATALOG_QUY_DOI_COLUMN_INDEX_N
+    if (norm.length > N && headerIsConversionColumn(norm[N])) {
+      convIdx = N
+    }
   }
   if (importOpts.excelWholesaleFromColumnT === true) {
-    wholesalePriceIdx = EXCEL_CATALOG_WHOLESALE_PRICE_COLUMN_INDEX_T
+    const T = EXCEL_CATALOG_WHOLESALE_PRICE_COLUMN_INDEX_T
+    if (norm.length > T) {
+      wholesalePriceIdx = T
+    }
   }
 
   for (let i = 0; i < norm.length; i++) {
@@ -983,15 +1011,31 @@ function rowsToProducts(headerCells, dataRows, delim = '', importBaseMs, importO
       .trim()
     const linkedMasterCode = linkIdx >= 0 ? String(cells[linkIdx] ?? '').trim() : ''
     const baseGroupCode = baseGroupIdx >= 0 ? String(cells[baseGroupIdx] ?? '').trim() : ''
-    const L = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
-    const unitCell =
-      importOpts.excelUnitFromColumnL === true && cells.length > L
+    const bhSemiFixed =
+      delim === ';' && cells.length > BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX
+    let unitCell
+    let convRawStr
+    if (bhSemiFixed) {
+      unitCell = cells[BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX]
+      convRawStr = String(cells[BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX] ?? '').trim()
+    } else {
+      const L = EXCEL_CATALOG_UNIT_COLUMN_INDEX_L
+      const normHdrL =
+        cells.length > L ? normalizeHeaderCell(String(headerCells[L] ?? '')) : ''
+      const useExplicitExcelUnitColumnL =
+        importOpts.excelUnitFromColumnL === true &&
+        cells.length > L &&
+        headerIsUnitColumn(normHdrL) &&
+        !headerIsConversionColumn(normHdrL)
+      unitCell = useExplicitExcelUnitColumnL
         ? cells[L]
         : unitIdx >= 0
           ? cells[unitIdx]
           : ''
+      convRawStr = readQuyDoiRawForCatalogCells(cells, importOpts, convIdx)
+    }
     const unitLabel = normalizeCatalogUnitLabel(unitCell)
-    const convRawStr = readQuyDoiRawForCatalogCells(cells, importOpts, convIdx)
+    const dvt = trimCatalogUnitLabel(unitCell)
     const conversion = parseConversionRatio(convRawStr)
     maybeLogCatalogQuyDoiColumnN({
       importOpts,
@@ -1037,6 +1081,7 @@ function rowsToProducts(headerCells, dataRows, delim = '', importBaseMs, importO
       linkedMasterCode,
       baseGroupCode,
       unitLabel,
+      dvt,
       conversion,
       ...(conversion != null ? { conversionValue: conversion } : {}),
       weightRaw,
@@ -1056,7 +1101,7 @@ function convSortKeyRow(row) {
 }
 
 /**
- * Gom các dòng phẳng cùng tên hàng hoặc cùng "Mã ĐVT cơ bản" thành một nhóm (một gốc — nhiều ĐVT).
+ * Gom các dòng phẳng cùng tên hàng hoặc cùng "Mã ĐƠN VỊ TÍNH cơ bản" thành một nhóm (một gốc — nhiều ĐƠN VỊ TÍNH).
  * Giữ nguyên nhóm đã có cột Liên kết Kiot (linkedMasterCode).
  */
 export function mergeFlatCatalogRowsBySmartUomGroups(flat) {
@@ -1243,7 +1288,7 @@ function readSheetColumnNQuyDoi(ws, sheetRow0Based) {
 }
 
 /**
- * Đọc Excel từ ArrayBuffer (cột L ĐVT + cột N Quy đổi) — dùng trên main thread hoặc Web Worker.
+ * Đọc Excel từ ArrayBuffer (cột L ĐƠN VỊ TÍNH + cột N Quy đổi) — dùng trên main thread hoặc Web Worker.
  * @param {ArrayBuffer} arrayBuffer
  * @param {string} [fileName]
  */
@@ -1295,7 +1340,7 @@ export function parseExcelCatalogArrayBuffer(arrayBuffer, fileName = '') {
   return { products, rowCount: dataRows.length, error: null, fileName }
 }
 
-/** Nhập CSV hoặc Excel (.xlsx / .xls) trên main thread — cùng logic cột ĐVT với màn Bán hàng. */
+/** Nhập CSV hoặc Excel (.xlsx / .xls) trên main thread — cùng logic cột ĐƠN VỊ TÍNH với màn Bán hàng. */
 export async function parseCatalogBlobOnMainThread(file) {
   const fileName = file?.name || ''
   const ext = (fileName.includes('.') ? fileName.split('.').pop() : '').toLowerCase()

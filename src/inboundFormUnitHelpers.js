@@ -1,5 +1,5 @@
 /**
- * Quy đổi ĐVT phiếu nhập — tách khỏi AdminHub để tab Doanh thu / hub không phụ thuộc module này khi tải.
+ * Quy đổi ĐƠN VỊ TÍNH phiếu nhập — tách khỏi AdminHub để tab Doanh thu / hub không phụ thuộc module này khi tải.
  */
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
@@ -38,7 +38,7 @@ export function pickInboundBaseVariant(product, clickedVariant) {
   return clickedVariant
 }
 
-/** Chỉ các ĐVT thực sự có trong danh mục (KiotViet) cho mặt hàng của dòng — không gợi ý Gói/Hộp giả. */
+/** Chỉ các ĐƠN VỊ TÍNH thực sự có trong danh mục (KiotViet) cho mặt hàng của dòng — không gợi ý Gói/Hộp giả. */
 export function buildInboundDvtSelectOptions(catalogList, line) {
   const cur = normalizeCatalogUnitLabel(line.unitLabel)
   const ctx = findVariantContext(catalogList, line.variantId)
@@ -60,7 +60,7 @@ export function buildInboundDvtSelectOptions(catalogList, line) {
 }
 
 /**
- * Đổi ĐVT dòng phiếu nhập (chỉ ảnh hưởng phiếu nhập, không dùng cho Doanh thu).
+ * Đổi ĐƠN VỊ TÍNH dòng phiếu nhập (chỉ ảnh hưởng phiếu nhập, không dùng cho Doanh thu).
  */
 export function applyInboundLineUnitChange(catalogList, line, newLabelRaw) {
   const want = normalizeCatalogUnitLabel(newLabelRaw)

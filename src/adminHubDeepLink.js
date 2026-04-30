@@ -62,6 +62,13 @@ function pathnameAdminOrdersPath(pathname) {
   return /\/admin\/orders$/.test(p)
 }
 
+/** @returns {string | null} id đơn POS từ `/admin/orders/:orderId`. */
+function pathnameAdminOrdersOrderId(pathname) {
+  const p = String(pathname || '').replace(/\/$/, '')
+  const m = p.match(/\/admin\/orders\/([^/]+)$/)
+  return m?.[1] ? decodeURIComponent(m[1]) : null
+}
+
 /** @returns {string | null} id đơn POS */
 function pathnameAdminReturnOrderId(pathname) {
   const p = String(pathname || '').replace(/\/$/, '')
@@ -74,6 +81,7 @@ function pathnameStripToHubAppRoot(pathname) {
     pathnameOrderSlug(pathname) ||
       pathnameHubOpenSlug(pathname) ||
       pathnameAdminOrdersPath(pathname) ||
+      pathnameAdminOrdersOrderId(pathname) ||
       pathnameAdminReturnOrderId(pathname)
   )
 }
@@ -109,14 +117,36 @@ export function buildOrderDocPageHref(link) {
   }
 }
 
+/**
+ * URL tuyệt đối đến chi tiết đơn POS theo chuẩn `/admin/orders?id=<orderId>`.
+ * @param {string} orderId
+ */
+export function buildAdminOrdersDetailAbsUrl(orderId) {
+  const id = String(orderId ?? '').trim()
+  if (typeof window === 'undefined' || !id) return ''
+  try {
+    const origin = window.location.origin
+    const base = hubAppBasePathname()
+    return `${origin}${base}admin/orders?id=${encodeURIComponent(id)}`
+  } catch {
+    return ''
+  }
+}
+
 export function parseAdminHubDeepLinkFromWindow() {
   if (typeof window === 'undefined') return null
   const u = new URL(window.location.href)
+  const adminOrderIdPath = pathnameAdminOrdersOrderId(u.pathname)
+  if (adminOrderIdPath) {
+    return { posOrderId: adminOrderIdPath, inboundOrderId: null, posReturnLedgerId: null }
+  }
   const adminRetId = pathnameAdminReturnOrderId(u.pathname)
   if (adminRetId) {
     return { posOrderId: adminRetId, inboundOrderId: null, posReturnLedgerId: null }
   }
   if (pathnameAdminOrdersPath(u.pathname)) {
+    const id = u.searchParams.get('id')?.trim()
+    if (id) return { posOrderId: id, inboundOrderId: null, posReturnLedgerId: null }
     return { posOrderId: null, inboundOrderId: null, posReturnLedgerId: null, hubOpen: 'orders' }
   }
 
@@ -231,20 +261,35 @@ export function stripHangHoaGoodsDeepLinkFromWindow() {
 }
 
 /**
- * URL tuyệt đối mở tab mới: `/hang-hoa/<mã hàng hoặc variantId>` (path segment, hỗ trợ deep link SPA).
+ * URL tuyệt đối mở tab mới tới trang quản lý Hàng hóa theo chuẩn:
+ * `/admin/goods?search=<ma_hang>`.
  * @param {string} variantId
- * @param {string} [productCode] — ưu tiên đưa vào URL nếu an toàn (chữ số, gạch…)
+ * @param {string} [productCode] — mã hàng snake_case (`ma_hang`), ưu tiên dùng cho `search`.
  */
 export function buildOpenHangHoaGoodsAbsUrl(variantId, productCode) {
-  const vid = String(variantId ?? '').trim()
-  if (typeof window === 'undefined' || !vid) return ''
-  const code = String(productCode ?? '').trim()
-  const segment =
-    code && /^[A-Za-z0-9._-]+$/.test(code) ? encodeURIComponent(code) : encodeURIComponent(vid)
+  const code = String(productCode ?? '').trim() || String(variantId ?? '').trim()
+  if (typeof window === 'undefined' || !code) return ''
   try {
     const origin = window.location.origin
     const base = hubAppBasePathname()
-    return `${origin}${base}${HANG_HOA_SLUG}/${segment}`
+    return `${origin}${base}admin/goods?search=${encodeURIComponent(code)}`
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * URL tuyệt đối mở tab mới trang Hàng hóa với query tìm kiếm theo mã hàng.
+ * Ví dụ: `${origin}${BASE_URL}hang-hoa?search=SP001`.
+ * @param {string} productCode
+ */
+export function buildHangHoaGoodsSearchAbsUrl(productCode) {
+  const code = String(productCode ?? '').trim()
+  if (typeof window === 'undefined' || !code) return ''
+  try {
+    const origin = window.location.origin
+    const base = hubAppBasePathname()
+    return `${origin}${base}admin/goods?search=${encodeURIComponent(code)}`
   } catch {
     return ''
   }

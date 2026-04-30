@@ -20,6 +20,7 @@ function pathSegments(pathname) {
 export function hubMainTabFromPathname(pathname) {
   const segs = pathSegments(pathname)
   if (segs.length === 0) return null
+  if (segs[0] === 'admin' && (segs[1] === 'goods' || segs[1] === 'inventory')) return 'goods'
   if (segs[0] === 'hang-hoa' && segs.length >= 2) return null
   const slug = segs[segs.length - 1]
   const map = {
@@ -65,6 +66,7 @@ export function pathForMainNavTab(tabId) {
 export function pathnameOpensHubStandaloneDashboard(pathname) {
   const segs = pathSegments(pathname)
   if (segs.length === 0) return false
+  if (segs[0] === 'admin' && (segs[1] === 'goods' || segs[1] === 'inventory')) return true
   const hub = new Set([
     'nhap-hang',
     'kiem-hang',

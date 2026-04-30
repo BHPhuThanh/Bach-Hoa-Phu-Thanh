@@ -1,9 +1,26 @@
 import { parseCsvTextToDisplayCatalog } from './catalogCsv.js'
 import { persistCatalogSnapshotAndProducts } from './catalogRepository.js'
-import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
+import {
+  BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX,
+  BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
+  BHPHUTHANH_SEMICOLON_CSV_TON_KHO_INDEX,
+  CATALOG_PRODUCT_DB_COLUMNS,
+} from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
-export { KIOTNEW_PRODUCT_DB_COLUMNS }
+/** Chuỗi ô tồn CSV → chuỗi số hợp lệ cho `ton_kho` (parseFloat). */
+function normalizeTonKhoCellRaw(raw) {
+  const s = String(raw ?? '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s/g, '')
+    .trim()
+  if (!s) return ''
+  const n = parseFloat(s.replace(/\./g, '').replace(',', '.'))
+  if (!Number.isFinite(n)) return s
+  return Number.isInteger(n) ? String(Math.trunc(n)) : String(n)
+}
+
+export { CATALOG_PRODUCT_DB_COLUMNS }
 
 function stripAccents(s) {
   return String(s)
@@ -50,12 +67,15 @@ function splitLines(text) {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
 }
 
+function normalizeBarcodeReadCell(raw) {
+  return String(raw ?? '').trim()
+}
+
 /** Chuẩn hoá tiêu đề cột CSV → tên cột bảng products */
 function headerCellToDbKey(h) {
-  const k = stripAccents(String(h ?? '').replace(/^\uFEFF/, '').replace(/\u00A0/g, ' ').trim()).replace(
-    /\s+/g,
-    ' '
-  )
+  const k = stripAccents(String(h ?? '').replace(/^\uFEFF/, '').replace(/\u00A0/g, ' ').trim())
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
   const map = {
     'ma hang': 'ma_hang',
     'ma vach': 'ma_vach',
@@ -64,29 +84,24 @@ function headerCellToDbKey(h) {
     'gia ban': 'gia_ban',
     'gia von': 'gia_von',
     'ton kho': 'ton_kho',
-    'kh dat': 'kh_dat',
-    'du kien het hang': 'du_kien_het_hang',
     'ton nho nhat': 'ton_nho_nhat',
     'ton lon nhat': 'ton_lon_nhat',
     dvt: 'dvt',
     'ma dvt co ban': 'ma_dvt_co_ban',
     'quy doi': 'quy_doi',
-    'thuoc tinh': 'thuoc_tinh',
     'ma hh lien quan': 'ma_hh_lien_quan',
     'trong luong': 'trong_luong',
-    'dang kinh doanh': 'dang_kinh_doanh',
-    'duoc ban truc tiep': 'duoc_ban_truc_tiep',
     'gia si': 'gia_si',
   }
   return map[k] || null
 }
 
 /**
- * Đọc nội dung CSV Kiot → mảng object khớp cột bảng `products`.
+ * Đọc CSV danh mục (bhphuthanh.csv…) → mảng object khớp cột bảng `products`.
  * @param {string} text
  * @returns {{ rows: object[], headerKeys: string[], error: string | null }}
  */
-export function parseKiotnewCsvToProductRows(text) {
+export function parseCatalogCsvToProductRows(text) {
   const lines = splitLines(text).filter((l) => l.trim() !== '')
   if (lines.length < 2) {
     return { rows: [], headerKeys: [], error: 'File CSV không đủ dòng tiêu đề + dữ liệu.' }
@@ -99,7 +114,6 @@ export function parseKiotnewCsvToProductRows(text) {
   }
   const usedKeys = new Set()
   const rows = []
-  const nowIso = new Date().toISOString()
   for (let r = 1; r < lines.length; r++) {
     const cells = parseDelimitedLine(lines[r], delim)
     const row = {}
@@ -107,14 +121,25 @@ export function parseKiotnewCsvToProductRows(text) {
       const dbk = colIndexToDbKey[c]
       if (!dbk) continue
       const raw = cells[c]
-      row[dbk] = raw == null ? '' : String(raw).trim()
+      if (dbk === 'ma_vach') {
+        row[dbk] = normalizeBarcodeReadCell(raw)
+      } else {
+        row[dbk] = raw == null ? '' : String(raw).trim()
+      }
+    }
+    if (delim === ';' && cells.length > BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX) {
+      row.dvt = String(cells[BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX] ?? '').trim()
+      row.quy_doi = String(cells[BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX] ?? '').trim()
+    }
+    /* Cột G (index 6) `ton_kho` — đồng bộ layout bhphuthanh.csv dấu `;` */
+    if (delim === ';' && cells.length > BHPHUTHANH_SEMICOLON_CSV_TON_KHO_INDEX) {
+      row.ton_kho = normalizeTonKhoCellRaw(cells[BHPHUTHANH_SEMICOLON_CSV_TON_KHO_INDEX])
     }
     const ma = String(row.ma_hang ?? '').trim()
     if (!ma) continue
-    for (const k of KIOTNEW_PRODUCT_DB_COLUMNS) {
+    for (const k of CATALOG_PRODUCT_DB_COLUMNS) {
       if (row[k] === undefined) row[k] = ''
     }
-    row.imported_at = nowIso
     if (usedKeys.has(ma)) continue
     usedKeys.add(ma)
     rows.push(row)
@@ -122,7 +147,7 @@ export function parseKiotnewCsvToProductRows(text) {
   if (rows.length === 0) {
     return { rows: [], headerKeys: [], error: 'Không có dòng nào có Mã hàng.' }
   }
-  return { rows, headerKeys: [...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'], error: null }
+  return { rows, headerKeys: [...CATALOG_PRODUCT_DB_COLUMNS], error: null }
 }
 
 function chunkArray(arr, size) {
@@ -132,10 +157,10 @@ function chunkArray(arr, size) {
 }
 
 /**
- * URL file CSV mặc định trên cùng origin (public/kiotnew.csv).
+ * URL file CSV mặc định trên cùng origin (public/bhphuthanh.csv).
  */
-export function getDefaultKiotnewCsvUrl() {
-  const name = encodeURI('kiotnew.csv')
+export function getBhphuthanhCsvUrl() {
+  const name = encodeURI('bhphuthanh.csv')
   const base = import.meta.env.BASE_URL || '/'
   const path = (base.endsWith('/') ? base : `${base}/`) + name
   if (typeof window === 'undefined' || !window.location?.origin) return path
@@ -167,21 +192,21 @@ export async function runStoreDataBootstrap(opts = {}) {
         : ''
     throw new Error((rpcErr.message || 'RPC bootstrap_store_schema lỗi') + hint)
   }
-  onPhase?.('fetch', 'kiotnew.csv')
-  const url = getDefaultKiotnewCsvUrl()
+  onPhase?.('fetch', 'bhphuthanh.csv')
+  const url = getBhphuthanhCsvUrl()
   const res = await fetch(url, { cache: 'no-store', signal })
   if (!res.ok) throw new Error(`Không tải được ${url} (${res.status})`)
   const text = await res.text()
 
   onPhase?.('parse', 'CSV → hàng products + catalog')
-  const { rows, error: rowErr } = parseKiotnewCsvToProductRows(text)
+  const { rows, error: rowErr } = parseCatalogCsvToProductRows(text)
   if (rowErr) throw new Error(rowErr)
-  const parsed = parseCsvTextToDisplayCatalog(text, 'kiotnew.csv')
+  const parsed = parseCsvTextToDisplayCatalog(text, 'bhphuthanh.csv')
   if (parsed.error) throw new Error(parsed.error)
   if (!parsed.products?.length) throw new Error('Parse danh mục POS rỗng.')
 
   onPhase?.('upload', 'catalog_snapshots + products (một lần)')
-  await persistCatalogSnapshotAndProducts(parsed.products, 'kiotnew.csv')
+  await persistCatalogSnapshotAndProducts(parsed.products, 'bhphuthanh.csv')
 
   onPhase?.('done', String(rows.length))
   return { productRowCount: rows.length, displayGroupCount: parsed.products.length }

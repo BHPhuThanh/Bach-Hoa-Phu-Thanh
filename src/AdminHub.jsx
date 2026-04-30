@@ -42,6 +42,9 @@ import {
 import { getComboBom, isComboCatalogProduct } from './comboCatalog.js'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
+import InboundThuongHieuAutocomplete, {
+  collectUniqueThuongHieuFromCatalog,
+} from './InboundThuongHieuAutocomplete.jsx'
 import {
   buildVariantPosSearchHaystack,
   normalizeCatalogSearchCompactKey,
@@ -171,6 +174,7 @@ function flattenCatalogToGoodsRows(products) {
       if (v.stockQty != null && Number.isFinite(Number(v.stockQty))) {
         stock = Number(v.stockQty)
       }
+      const ton_kho = stock
       const createdAtMs = Number(v.createdAtMs)
       const okTime = Number.isFinite(createdAtMs) && createdAtMs > 0
       const displayTime = okTime ? new Date(createdAtMs).toLocaleString('vi-VN') : '—'
@@ -193,6 +197,7 @@ function flattenCatalogToGoodsRows(products) {
         price,
         cost,
         stock,
+        ton_kho,
         createdAtMs: okTime ? createdAtMs : 0,
         displayTime,
       })
@@ -525,6 +530,7 @@ function normalizeInboundLine(x) {
     code: String(x.code ?? '').trim(),
     name: String(x.name ?? '').trim(),
     unitLabel: String(x.unitLabel ?? '').trim(),
+    thuong_hieu: String(x.thuong_hieu ?? x.brand ?? '').trim(),
     qty,
     returnedQty,
     unitPrice: Math.max(0, Number(x.unitPrice) || 0),
@@ -575,6 +581,7 @@ function inboundLineTotal(line) {
 
 /** Dòng có SL>0 mà đơn giá nhập khác giá vốn hiện tại trong danh mục (cùng variantId, dòng sau ghi đè). */
 function computeInboundCostDiffs(catalogList, inboundFormLines) {
+  const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
   const byVid = new Map()
   for (const raw of inboundFormLines || []) {
@@ -582,15 +589,26 @@ function computeInboundCostDiffs(catalogList, inboundFormLines) {
     if (ln.qty <= 0 || !ln.variantId) continue
     const v = flat.find((x) => x.id === ln.variantId)
     if (!v) continue
-    const oldCost = Math.round(Number(v.cost) || 0)
-    const newPrice = Math.round(Number(ln.unitPrice) || 0)
-    if (oldCost === newPrice) continue
+    const oldCost = Math.max(0, Number(v.cost) || 0)
+    const inboundPrice = Math.max(0, Number(ln.unitPrice) || 0)
+    const inboundQuantity = Math.max(0, Number(ln.qty) || 0)
+    if (inboundQuantity <= 0) continue
+    const currentTonKho = Math.max(0, Number(v.stockQty) || 0)
+    const denominator = currentTonKho + inboundQuantity
+    if (denominator <= 0) continue
+    const weightedCostRaw = ((oldCost * currentTonKho) + (inboundPrice * inboundQuantity)) / denominator
+    const newCost = round4(weightedCostRaw)
+    if (round4(oldCost) === newCost) continue
     byVid.set(ln.variantId, {
       variantId: ln.variantId,
+      ma_hang: String(ln.ma_hang ?? v.ma_hang ?? (v.code || ln.code || '')).trim() || '—',
       code: String(v.code || ln.code || '').trim() || '—',
       name: String(ln.name || v.name || '').trim() || '—',
-      oldCost,
-      newPrice,
+      oldCost: round4(oldCost),
+      inboundPrice: round4(inboundPrice),
+      inboundQuantity,
+      currentTonKho,
+      newCost,
     })
   }
   return [...byVid.values()]
@@ -604,17 +622,36 @@ function formatInboundTonLabel(stockQty) {
   return `Tồn: ${body}`
 }
 
+/** Thương hiệu — CSV `thuong_hieu` (cột D) được map vào `brand` trên biến thể. */
+function brandThuongHieuFromProductVariant(product, variant) {
+  const v = pickInboundBaseVariant(product, variant)
+  return String(v.brand ?? product?.brand ?? '').trim()
+}
+
+/** Dòng cũ có thể thiếu `thuong_hieu` — hiển thị fallback theo danh mục. */
+function inboundLineThuongHieuResolved(line, catalogList) {
+  const n = normalizeInboundLine(line)
+  if (n.thuong_hieu) return n.thuong_hieu
+  const vid = String(n.variantId || '').trim()
+  if (!vid || !catalogList?.length) return ''
+  const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+  const v = flat.find((x) => String(x.id) === vid)
+  return String(v?.brand ?? '').trim()
+}
+
 /** Một dòng phiếu nhập mới (SL mặc định 1 — đồng bộ với `addInboundFormLine`). */
 function createInboundFormLineFromProductVariant(product, variant) {
   const v = pickInboundBaseVariant(product, variant)
   const unit = normalizeCatalogUnitLabel(v.unitLabel)
   const price = Number(v.cost) > 0 ? Number(v.cost) : Number(v.price) || 0
+  const thuong_hieu = brandThuongHieuFromProductVariant(product, variant)
   return {
     lineId: `il-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     variantId: String(v.id),
     code: String(v.code || '').trim(),
     name: String(product.name || v.name || '').trim(),
     unitLabel: unit,
+    thuong_hieu,
     qty: 1,
     returnedQty: 0,
     unitPrice: Math.round(price),
@@ -1236,6 +1273,7 @@ export default function AdminHub({
   )
 
   const [goodsBrandKey, setGoodsBrandKey] = useState('')
+  const [goodsBrandOpen, setGoodsBrandOpen] = useState(false)
   const goodsDraftSeedKeyRef = useRef('')
   const [goodsCreateOpen, setGoodsCreateOpen] = useState(false)
   const goodsCreateWrapRef = useRef(null)
@@ -2199,6 +2237,53 @@ export default function AdminHub({
     }
   }, [hangHoaGoodsOpenRequest, catalogList, onHangHoaGoodsOpenConsumed, syncHubUrlToMainTab])
 
+  const goodsSearchQueryHandledRef = useRef('')
+  useEffect(() => {
+    try {
+      const searchFromUrl = new URLSearchParams(location.search).get('search')
+      const ma_hang = String(searchFromUrl ?? '').trim()
+      if (!ma_hang) {
+        goodsSearchQueryHandledRef.current = ''
+        return
+      }
+      const routeKey = `${location.pathname}?${ma_hang}`
+      if (goodsSearchQueryHandledRef.current === routeKey) return
+      goodsSearchQueryHandledRef.current = routeKey
+      startTransition(() => {
+        setActiveTab(TAB_GOODS)
+        setGoodsQ(ma_hang)
+        setGoodsBrandKey('')
+        setGoodsBrandOpen(false)
+        setGoodsSelected({})
+      })
+      if (!Array.isArray(catalogList) || catalogList.length === 0) return
+      const codeNeedle = ma_hang.toLowerCase()
+      const matchedVariantIds = []
+      for (const p of catalogList) {
+        const variants = Array.isArray(p?.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+        for (const v of variants) {
+          const maHangValue = String(v?.ma_hang ?? v?.code ?? '').trim().toLowerCase()
+          if (!maHangValue || maHangValue !== codeNeedle) continue
+          const vid = String(v?.id ?? '').trim()
+          if (!vid) continue
+          matchedVariantIds.push(vid)
+        }
+      }
+      if (matchedVariantIds.length === 1) {
+        const matchedVid = matchedVariantIds[0]
+        startTransition(() => {
+          setHangHoaDeepLinkListScope('all')
+          setHangHoaDeepLinkVid(null)
+          setGoodsExpandedId(matchedVid)
+          setGoodsDetailSelectedVid(matchedVid)
+          setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+        })
+      }
+    } catch (error) {
+      console.error('[AdminHub] Failed to handle goods search query', error)
+    }
+  }, [location.pathname, location.search, catalogList])
+
   useEffect(() => {
     if (openProductVariantIds.length === 0) return
     setSoloGoodsDraftByVariantId((prevDrafts) => {
@@ -2879,7 +2964,6 @@ export default function AdminHub({
   const inboundFormProductDebounced = useDebounced(inboundFormProductQ, 140)
   const [inboundFormSupplierQ, setInboundFormSupplierQ] = useState('')
   const [inboundFormSupplierName, setInboundFormSupplierName] = useState('')
-  const [inboundSupplierSuggestOpen, setInboundSupplierSuggestOpen] = useState(false)
   const [inboundFormCode, setInboundFormCode] = useState('')
   const [inboundFormNote, setInboundFormNote] = useState('')
   const [inboundFormDiscMode, setInboundFormDiscMode] = useState('amount')
@@ -2918,39 +3002,11 @@ export default function AdminHub({
     openPosReturnDetailLedgerIdsRef.current = openPosReturnDetailLedgerIds
   }, [openPosReturnDetailLedgerIds])
 
-  /** Thương hiệu (cột D / KiotViet) — dùng làm gợi ý nhanh cho ô Nhà cung cấp phiếu nhập. */
-  const catalogBrandNames = useMemo(() => {
-    const s = new Set()
-    for (const p of catalogList || []) {
-      for (const v of p.groupVariants || [p]) {
-        const t = String(v.brand ?? p.brand ?? '').trim()
-        if (t) s.add(t)
-      }
-    }
-    return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
-  }, [catalogList])
-
-  /** Gợi ý NCC: tối đa 10 thương hiệu (cột D); không trộn NCC đã lưu để khớp menu nhỏ. */
-  const inboundNccSuggest = useMemo(() => {
-    const INBOUND_NCC_BRAND_CAP = 10
-    const q = inboundFormSupplierQ.trim().toLowerCase()
-    const brandRow = (n) => ({
-      key: `br-${n}`,
-      name: n,
-      subtitle: 'Thương hiệu (cột D · file danh mục)',
-    })
-    if (!q) {
-      if (!inboundSupplierSuggestOpen) return []
-      return catalogBrandNames.slice(0, INBOUND_NCC_BRAND_CAP).map((n) => brandRow(n))
-    }
-    const out = []
-    for (const n of catalogBrandNames) {
-      if (!n.toLowerCase().includes(q)) continue
-      out.push(brandRow(n))
-      if (out.length >= INBOUND_NCC_BRAND_CAP) break
-    }
-    return out
-  }, [catalogBrandNames, inboundFormSupplierQ, inboundSupplierSuggestOpen])
+  /** Giá trị duy nhất từ `thuong_hieu` / `brand` trong toàn bộ kho hàng (CSV cột D). */
+  const catalogThuongHieuUnique = useMemo(
+    () => collectUniqueThuongHieuFromCatalog(catalogList),
+    [catalogList]
+  )
 
   const inboundProductSuggest = useMemo(() => {
     const raw = inboundFormProductDebounced.trim()
@@ -3013,8 +3069,13 @@ export default function AdminHub({
   }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab])
 
   const addInboundFormLine = useCallback((product, variant) => {
+    const hint = brandThuongHieuFromProductVariant(product, variant)
     setInboundFormLines((prev) => [...prev, createInboundFormLineFromProductVariant(product, variant)])
     setInboundFormProductQ('')
+    if (hint) {
+      setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : hint))
+      setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : hint))
+    }
   }, [])
 
   const toggleInboundQuickPickSel = useCallback((vid) => {
@@ -3031,14 +3092,23 @@ export default function AdminHub({
     setInboundFormLines((cur) => {
       const have = new Set(cur.map((l) => String(l.variantId)))
       const toAdd = []
+      let brandHint = ''
       for (const r of flattenCatalogToGoodsSearchRows(catalogList)) {
         const vid = String(r._variant.id)
         if (!inboundQuickPickSelected.has(vid)) continue
         if (have.has(vid)) continue
         have.add(vid)
-        toAdd.push(createInboundFormLineFromProductVariant(r._product, r._variant))
+        const line = createInboundFormLineFromProductVariant(r._product, r._variant)
+        if (!brandHint) brandHint = String(line.thuong_hieu || '').trim()
+        toAdd.push(line)
       }
       if (toAdd.length === 0) return cur
+      if (brandHint) {
+        queueMicrotask(() => {
+          setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : brandHint))
+          setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : brandHint))
+        })
+      }
       return [...cur, ...toAdd]
     })
     setInboundQuickPickOpen(false)
@@ -3244,7 +3314,8 @@ export default function AdminHub({
       if (!diffs?.length) return
       const byId = new Map()
       for (const d of diffs) {
-        byId.set(d.variantId, Math.max(0, Math.round(Number(d.newPrice) || 0)))
+        const roundedCost = Math.round(Math.max(0, Number(d.newCost) || 0) * 10000) / 10000
+        byId.set(d.variantId, roundedCost)
       }
       if (onUpdateCatalogVariant) {
         for (const [variantId, cost] of byId) {
@@ -6358,13 +6429,20 @@ export default function AdminHub({
                                   {ln.variantId ? (
                                     <a
                                       className="ah-inbound-detail-name-link"
-                                      href={buildOpenHangHoaGoodsAbsUrl(ln.variantId, ln.code) || '#'}
+                                      href={
+                                        buildOpenHangHoaGoodsAbsUrl(
+                                          ln.variantId,
+                                          String(ln.ma_hang ?? ln.code ?? '').trim()
+                                        ) || '#'
+                                      }
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       title="Mở sản phẩm trên tab Hàng hóa"
                                       onClick={(e) => {
-                                        const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, ln.code)
+                                        const ma_hang = String(ln.ma_hang ?? ln.code ?? '').trim()
+                                        const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, ma_hang)
                                         if (!u) e.preventDefault()
+                                        else console.log('LINK REDIRECT ĐẾN:', u)
                                       }}
                                     >
                                       {ln.name || '—'}
@@ -6598,8 +6676,29 @@ export default function AdminHub({
                           return (
                             <tr key={it.orderLineId || idx}>
                               <td className="ah-inbound-ln-stt">{idx + 1}</td>
-                              <td>{it.code || '—'}</td>
-                              <td>{it.name || '—'}</td>
+                                <td>{it.code || '—'}</td>
+                                <td>
+                                  {(() => {
+                                    const ma_hang = String(it.ma_hang ?? it.code ?? '').trim()
+                                    const url = buildOpenHangHoaGoodsAbsUrl(it.variantId, ma_hang)
+                                    if (!url) return it.name || '—'
+                                    return (
+                                      <a
+                                        className="ah-inbound-detail-name-link"
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title="Mở sản phẩm trên tab Hàng hóa"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          console.log('LINK REDIRECT ĐẾN:', url)
+                                        }}
+                                      >
+                                        {it.name || '—'}
+                                      </a>
+                                    )
+                                  })()}
+                                </td>
                               <td>{it.unitLabel || '—'}</td>
                               <td className="ah-num">
                                 {posDetailIsEditing ? (
@@ -6935,6 +7034,7 @@ export default function AdminHub({
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--stt" />
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--code" />
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--name" />
+                      <col className="ah-inbound-draft-col ah-inbound-draft-col--ncc" />
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--dvt" />
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--qty" />
                       <col className="ah-inbound-draft-col ah-inbound-draft-col--price" />
@@ -6947,6 +7047,9 @@ export default function AdminHub({
                         <th className="ah-inbound-ln-stt ah-inbound-draft-th-stt">STT</th>
                         <th className="ah-inbound-draft-th-code">Mã hàng</th>
                         <th className="ah-inbound-draft-th-name">Tên hàng</th>
+                        <th className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-th-ncc">
+                          Nhà cung cấp
+                        </th>
                         <th className="ah-inbound-ln-mid ah-inbound-ln-spread">ĐVT</th>
                         <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Số lượng</th>
                         <th className="ah-inbound-ln-mid ah-inbound-ln-spread">Đơn giá</th>
@@ -6957,7 +7060,7 @@ export default function AdminHub({
                     <tbody>
                       {inboundFormLines.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="admin-hub-muted">
+                          <td colSpan={10} className="admin-hub-muted">
                             Chưa có dòng hàng — tìm và chọn sản phẩm ở ô phía trên.
                           </td>
                         </tr>
@@ -6981,6 +7084,12 @@ export default function AdminHub({
                             <td className="ah-inbound-ln-stt ah-inbound-draft-td-stt">{idx + 1}</td>
                             <td className="ah-inbound-ln-code ah-inbound-draft-td-code">{ln.code || '—'}</td>
                             <td className="ah-inbound-draft-td-name">{ln.name || '—'}</td>
+                            <td
+                              className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-td-ncc"
+                              title="thuong_hieu (file danh mục / trường brand)"
+                            >
+                              {inboundLineThuongHieuResolved(ln, catalogList) || '—'}
+                            </td>
                             <td className="ah-inbound-ln-mid ah-inbound-ln-dvt-cell ah-inbound-ln-spread">
                               <select
                                 className={`ah-inbound-dvt-select${inboundDvtLocked ? ' ah-inbound-dvt-select--locked' : ''}`}
@@ -7077,45 +7186,17 @@ export default function AdminHub({
                   Nhà cung cấp <span className="ah-inbound-req">*</span>
                 </label>
                 <div className="ah-inbound-ncc-row ah-inbound-ncc-row--draft">
-                  <div className="ah-inbound-ncc-input-wrap">
-                    <input
-                      className="ah-inbound-form-input"
-                      type="text"
-                      autoComplete="off"
-                      spellCheck={false}
+                  <div className="ah-inbound-ncc-input-wrap ah-inbound-ncc-input-wrap--combo">
+                    <InboundThuongHieuAutocomplete
+                      id="ah-inbound-draft-ncc"
                       value={inboundFormSupplierQ}
-                      onFocus={() => setInboundSupplierSuggestOpen(true)}
-                      onBlur={() => {
-                        window.setTimeout(() => setInboundSupplierSuggestOpen(false), 160)
-                      }}
-                      onChange={(e) => {
-                        const v = e.target.value
+                      onValueChange={(v) => {
                         setInboundFormSupplierQ(v)
                         setInboundFormSupplierName(v)
                       }}
-                      placeholder="Thương hiệu / NCC (3 Miền, Knorr, Nestlé…)"
-                      aria-required
+                      options={catalogThuongHieuUnique}
+                      placeholder="Chọn hoặc gõ Thương hiệu — NCC phiếu (= thuong_hieu)"
                     />
-                    {inboundNccSuggest.length > 0 && (
-                      <ul className="ah-inbound-ncc-suggest ah-inbound-ncc-suggest--draft">
-                        {inboundNccSuggest.map((row) => (
-                          <li key={row.key}>
-                            <button
-                              type="button"
-                              className="ah-inbound-ncc-sug-btn"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => {
-                                setInboundFormSupplierName(row.name)
-                                setInboundFormSupplierQ(row.name)
-                              }}
-                            >
-                              <strong>{row.name}</strong>
-                              <span className="ah-inbound-ncc-sug-sub">{row.subtitle}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
                   </div>
                   <button
                     type="button"
@@ -7130,8 +7211,9 @@ export default function AdminHub({
                   </button>
                 </div>
                 <p className="ah-inbound-ncc-hint">
-                  Menu gợi ý tối đa <strong>10</strong> thương hiệu (cột D). Gõ thêm để thu hẹp; nếu chưa
-                  có trong danh sách, nhập tay hoặc dùng <strong>+ Thêm NCC</strong> để lưu SĐT / địa chỉ.
+                  Danh sách lấy từ <strong>thuong_hieu</strong> (CSV cột D). Tối đa <strong>50</strong> dòng lọc được
+                  (cuộn trong menu). Có thể gõ tùy ý; chọn một mục để đồng bộ tên NCC phiếu nhập với thương hiệu trong
+                  kho — hoặc <strong>+ Thêm NCC</strong> để lưu SĐT / địa chỉ.
                 </p>
 
                 <label className="ah-inbound-form-lbl" htmlFor="ah-inbound-order-code">
@@ -7437,12 +7519,19 @@ export default function AdminHub({
               <ul className="ah-iv-diff-list">
                 {inboundCostDiffModal.diffs.map((d) => (
                   <li key={d.variantId} className="ah-iv-diff-item">
-                    <span className="ah-iv-diff-code">{d.code}</span>
+                    <a
+                      className="ah-iv-diff-code ah-iv-diff-code-link"
+                      href={`/admin/goods?search=${encodeURIComponent(String(d.ma_hang ?? d.code ?? '').trim())}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {String(d.ma_hang ?? d.code ?? '').trim() || '—'}
+                    </a>
                     <span className="ah-iv-diff-name"> — {d.name}</span>
                     <div className="ah-iv-diff-prices">
-                      <span>Giá vốn cũ: {d.oldCost.toLocaleString('vi-VN')} đ</span>
+                      <span>Giá vốn cũ: {Number(d.oldCost || 0).toLocaleString('vi-VN')} đ</span>
                       <span> → </span>
-                      <span className="ah-iv-diff-new">Giá nhập: {d.newPrice.toLocaleString('vi-VN')} đ</span>
+                      <span className="ah-iv-diff-new">Giá vốn mới: {Number(d.newCost || 0).toLocaleString('vi-VN')} đ</span>
                     </div>
                   </li>
                 ))}

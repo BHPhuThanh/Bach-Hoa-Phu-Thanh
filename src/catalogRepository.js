@@ -22,7 +22,7 @@ import {
   parseConversionRatio,
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
-import { KIOTNEW_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
+import { CATALOG_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
@@ -43,7 +43,6 @@ const PRODUCT_AMOUNT_STRING_COLUMNS = new Set([
   'gia_ban',
   'gia_von',
   'ton_kho',
-  'kh_dat',
   'ton_nho_nhat',
   'ton_lon_nhat',
   'quy_doi',
@@ -128,13 +127,11 @@ function formatSupabaseWriteError(err) {
  * @param {object} v
  */
 function displayVariantToProductsRow(v) {
-  const nowIso = new Date().toISOString()
   const conv =
     v?.conversion != null && Number.isFinite(Number(v.conversion)) && Number(v.conversion) > 0
       ? String(v.conversion)
       : ''
   const maHang = dbTextCell(v?.code)
-  const khRaw = v?.kh_dat ?? v?.khDat ?? v?.reservedQty ?? ''
   return {
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
@@ -143,20 +140,14 @@ function displayVariantToProductsRow(v) {
     gia_ban: v?.price,
     gia_von: v?.cost,
     ton_kho: v?.stockQty,
-    kh_dat: khRaw,
-    du_kien_het_hang: '',
     ton_nho_nhat: v?.stockNormMin,
     ton_lon_nhat: v?.stockNormMax,
     dvt: dbTextCell(v?.unitLabel),
     ma_dvt_co_ban: '',
     quy_doi: conv,
-    thuoc_tinh: '',
     ma_hh_lien_quan: dbTextCell(v?.linkedMasterCode),
     trong_luong: v?.weightRaw,
-    dang_kinh_doanh: '',
-    duoc_ban_truc_tiep: '',
     gia_si: v?.wholesalePrice,
-    imported_at: nowIso,
   }
 }
 
@@ -272,7 +263,7 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
       `[saveProductsToSupabase] Gộp trùng ma_hang: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
     )
   }
-  const allow = new Set([...KIOTNEW_PRODUCT_DB_COLUMNS, 'imported_at'])
+  const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
   const rows = deduped.map((row) => finalizeProductRowForSupabase(row, allow))
   if (rows.length === 0) return { written: 0, skippedUpsert: 0 }
   const total = rows.length
@@ -340,7 +331,7 @@ function readLegacyLocalStorageCatalogSnapshot() {
     if (!j || j.v !== CATALOG_SNAPSHOT_VERSION || !Array.isArray(j.products) || j.products.length === 0) {
       return null
     }
-    const products = j.products
+    const products = normalizeDisplayCatalogNumericFields(j.products)
     const fileName = String(j.fileName || '')
     return {
       products,
@@ -356,13 +347,45 @@ function snapshotFromPayload(j) {
   if (!j || j.v !== CATALOG_SNAPSHOT_VERSION || !Array.isArray(j.products) || j.products.length === 0) {
     return null
   }
-  const products = j.products
+  const products = normalizeDisplayCatalogNumericFields(j.products)
   const fileName = String(j.fileName || '')
   return {
     products,
     fileName,
     csvRowCount: countVariantRowsInProducts(products),
   }
+}
+
+function normalizeDisplayVariantNumbers(v) {
+  if (!v || typeof v !== 'object') return v
+  return {
+    ...v,
+    price: parsePrice(v.price),
+    wholesalePrice: parsePrice(v.wholesalePrice),
+    cost: parsePrice(v.cost),
+    stockQty: parseStockQty(v.stockQty),
+    stockNormMin: v.stockNormMin == null || v.stockNormMin === '' ? null : parseStockQty(v.stockNormMin),
+    stockNormMax: v.stockNormMax == null || v.stockNormMax === '' ? null : parseStockQty(v.stockNormMax),
+    conversion:
+      v.conversion == null || v.conversion === '' ? null : parseConversionRatio(String(v.conversion)),
+    conversionValue:
+      v.conversionValue == null || v.conversionValue === ''
+        ? null
+        : parseConversionRatio(String(v.conversionValue)),
+  }
+}
+
+function normalizeDisplayCatalogNumericFields(products) {
+  if (!Array.isArray(products) || products.length === 0) return []
+  return products.map((p) => {
+    if (Array.isArray(p.groupVariants) && p.groupVariants.length > 0) {
+      return {
+        ...normalizeDisplayVariantNumbers(p),
+        groupVariants: p.groupVariants.map(normalizeDisplayVariantNumbers),
+      }
+    }
+    return normalizeDisplayVariantNumbers(p)
+  })
 }
 
 /**
@@ -413,15 +436,13 @@ async function fetchAllProductRows(sb) {
 }
 
 /**
- * Một dòng bảng `products` → dòng phẳng giống sau `rowsToProducts` (catalogCsv), để gom nhóm ĐVT.
+ * Một dòng bảng `products` → dòng phẳng giống sau `rowsToProducts` (catalogCsv), để gom nhóm ĐƠN VỊ TÍNH.
  * @param {Record<string, unknown>} row
  * @param {number} rowIndex
  */
 function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const code = String(row.ma_hang ?? '').trim()
   if (!code) return null
-  const importedMs = row.imported_at ? Date.parse(String(row.imported_at)) : NaN
-  const baseMs = Number.isFinite(importedMs) ? importedMs : Date.now()
   const barcode = String(normalizeBarcodeValue(row.ma_vach ?? ''))
   const nameRaw = String(row.ten_hang ?? '').trim()
   const name = nameRaw || code
@@ -456,7 +477,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
       .trim(),
     stockNormMin,
     stockNormMax,
-    createdAtMs: baseMs + rowIndex,
+    createdAtMs: Date.now() + rowIndex,
     raw: row,
   }
 }
@@ -479,7 +500,9 @@ async function fetchDisplayCatalogFromSupabaseProductsTable() {
   const flat = rows.map((r, i) => supabaseProductRowToFlatCatalogRow(r, i)).filter(Boolean)
   if (!flat.length) return null
   const merged = mergeFlatCatalogRowsBySmartUomGroups(flat)
-  const display = prepareCatalogForPosSearch(buildDisplayCatalog(merged))
+  const display = normalizeDisplayCatalogNumericFields(
+    prepareCatalogForPosSearch(buildDisplayCatalog(merged))
+  )
   return {
     products: display,
     fileName: 'supabase-products',
@@ -540,7 +563,7 @@ export async function fetchCatalogSnapshotFromPersistentStore() {
       const res = await fetch(`${base}/products`, { credentials: 'include' })
       if (!res.ok) throw new Error(String(res.status))
       const j = await res.json()
-      const products = Array.isArray(j.products) ? j.products : []
+      const products = normalizeDisplayCatalogNumericFields(Array.isArray(j.products) ? j.products : [])
       const fileName = String(j.fileName || j.sourceFileName || '')
       if (products.length === 0) return null
       return {

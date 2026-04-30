@@ -4985,7 +4985,58 @@
   color: #cbd5e1;
 }
 
-/* Nút nổi: khởi tạo schema + đẩy kiotnew.csv lên Supabase */
+.pos-ma-hh-lq-modal {
+  max-width: min(36rem, calc(100vw - 2rem));
+}
+
+.pos-ma-hh-lq-sub {
+  margin: 0 1rem 0.65rem;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+
+.pos-ma-hh-lq-k {
+  color: #64748b;
+}
+
+.pos-ma-hh-lq-hint {
+  color: #bae6fd;
+}
+
+.pos-ma-hh-lq-scroll {
+  overflow: auto;
+  max-height: min(50vh, 22rem);
+  margin: 0 0.35rem;
+  padding: 0 0.65rem;
+}
+
+.pos-ma-hh-lq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.pos-ma-hh-lq-table th,
+.pos-ma-hh-lq-table td {
+  padding: 0.42rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #2d3542;
+}
+
+.pos-ma-hh-lq-table th {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.pos-ma-hh-lq-table td:last-child {
+  white-space: nowrap;
+}
+
+.app--pos .pos-ma-hh-lq-table td {
+  color: #e2e8f0;
+}
+
+/* Nút nổi: khởi tạo schema + đẩy bhphuthanh.csv lên Supabase */
 .store-bootstrap-fab-wrap {
   position: fixed;
   bottom: 1.1rem;

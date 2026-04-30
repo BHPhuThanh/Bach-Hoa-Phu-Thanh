@@ -75,7 +75,7 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
-/** Tách tên hàng / ĐVT (đơn mới có `unitLabel`; đơn cũ có thể gộp "Tên - ĐVT" trong `name`). */
+/** Tách tên hàng / ĐƠN VỊ TÍNH (đơn mới có `unitLabel`; đơn cũ có thể gộp "Tên - ĐƠN VỊ TÍNH" trong `name`). */
 function receiptProductNameAndUnit(line) {
   const rawName = String(line.name ?? '').trimEnd()
   const explicit = String(line.unitLabel ?? '').trim()
@@ -377,7 +377,7 @@ export function buildK80ReceiptHtml(cart, total, opts = {}) {
       <thead>
         <tr>
           <th>Đơn giá</th>
-          <th>ĐVT</th>
+          <th>ĐƠN VỊ TÍNH</th>
           <th>SL</th>
           <th>Thành tiền</th>
         </tr>
