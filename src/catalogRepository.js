@@ -22,13 +22,14 @@ import {
   parseConversionRatio,
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
-import { CATALOG_PRODUCT_DB_COLUMNS } from './kiotProductSchema.js'
+import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
 /** Tab khác ghi catalog → localStorage chỉ nhận bump nhỏ (snapshot nằm trong IndexedDB). */
 export const CATALOG_SYNC_BUMP_KEY = 'csv-preview-catalog-sync-bump-v1'
 export const CATALOG_SNAPSHOT_VERSION = 1
+const DEFAULT_CATALOG_FILE_NAME = 'bhphuthanh.csv'
 
 /** Bảng flat Kiot (mã hàng PK) — đồng bộ kèm snapshot khi lưu danh mục từ web. */
 const PRODUCTS_TABLE = 'products'
@@ -59,6 +60,11 @@ let saveCatalogSnapshotLastOkKey = ''
 export const CATALOG_SNAPSHOT_TABLE = 'catalog_snapshots'
 /** Một dòng trong bảng snapshot chứa toàn bộ JSON danh mục. */
 export const CATALOG_SUPABASE_ROW_ID = 'catalog'
+
+function normalizeCatalogFileName(fileName) {
+  const s = String(fileName || '').trim()
+  return s || DEFAULT_CATALOG_FILE_NAME
+}
 
 /** Bật khi có endpoint (ví dụ VITE_CATALOG_API_URL). */
 export function isCatalogRemoteEnabled() {
@@ -554,17 +560,18 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
   const sb = getSupabaseClient()
   if (!sb) return
   const now = new Date().toISOString()
+  const normalizedFileName = normalizeCatalogFileName(fileName)
   const snapshot =
     !products?.length
       ? {
           v: CATALOG_SNAPSHOT_VERSION,
-          fileName: String(fileName || ''),
+          fileName: normalizedFileName,
           savedAt: now,
           products: [],
         }
       : {
           v: CATALOG_SNAPSHOT_VERSION,
-          fileName: String(fileName || ''),
+          fileName: normalizedFileName,
           savedAt: now,
           products,
         }
@@ -668,13 +675,14 @@ export async function revalidateCatalogFromStore() {
  * Ghi snapshot: IndexedDB (+ API nếu bật). Không ghi JSON lớn vào localStorage.
  */
 export async function saveCatalogSnapshot(products, fileName) {
-  const dedupeKey = catalogSnapshotDedupeKey(products, fileName)
+  const normalizedFileName = normalizeCatalogFileName(fileName)
+  const dedupeKey = catalogSnapshotDedupeKey(products, normalizedFileName)
   if (dedupeKey === saveCatalogSnapshotLastOkKey) return
   if (saveCatalogSnapshotInFlight) return
   saveCatalogSnapshotInFlight = true
   try {
     if (isSupabaseConfigured()) {
-      await saveCatalogSnapshotToSupabase(products, fileName)
+      await saveCatalogSnapshotToSupabase(products, normalizedFileName)
       try {
         localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
       } catch {
@@ -697,7 +705,7 @@ export async function saveCatalogSnapshot(products, fileName) {
     }
     const payload = {
       v: CATALOG_SNAPSHOT_VERSION,
-      fileName: String(fileName || ''),
+      fileName: normalizedFileName,
       savedAt: new Date().toISOString(),
       products,
     }
