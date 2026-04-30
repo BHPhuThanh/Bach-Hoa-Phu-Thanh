@@ -135,7 +135,7 @@ export function parseCatalogCsvToProductRows(text) {
     if (delim === ';' && cells.length > BHPHUTHANH_SEMICOLON_CSV_TON_KHO_INDEX) {
       row.ton_kho = normalizeTonKhoCellRaw(cells[BHPHUTHANH_SEMICOLON_CSV_TON_KHO_INDEX])
     }
-    const ma = String(row[PRODUCT_COL.MA_HANG] ?? '').trim()
+    const ma = String(row.ma_hang ?? '').trim()
     if (!ma) continue
     for (const k of CATALOG_PRODUCT_DB_COLUMNS) {
       if (row[k] === undefined) row[k] = ''

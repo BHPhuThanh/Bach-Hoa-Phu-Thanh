@@ -227,7 +227,7 @@ async function upsertProductChunkResilient(sb, part) {
     const row = part[0]
     console.warn('[saveProductsToSupabase] Bỏ qua 1 dòng lỗi', {
       [PRODUCT_PK_COLUMN]: row?.[PRODUCT_PK_COLUMN],
-      [PRODUCT_COL.TEN_HANG]: row?.[PRODUCT_COL.TEN_HANG],
+      ten_hang: row?.ten_hang,
       supabase: formatSupabaseWriteError(error),
     })
     return { written: 0, skipped: 1 }
@@ -488,10 +488,10 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const barcode = String(normalizeBarcodeValue(row.ma_vach ?? ''))
   const nameRaw = String(row.ten_hang ?? '').trim()
   const name = nameRaw || code
-  const convRawStr = String(row[PRODUCT_COL.QUY_DOI] ?? '').trim()
+  const convRawStr = String(row.quy_doi ?? '').trim()
   const conversion = parseConversionRatio(convRawStr)
-  const stockNormMinRaw = String(row[PRODUCT_COL.TON_NHO_NHAT] ?? '').trim()
-  const stockNormMaxRaw = String(row[PRODUCT_COL.TON_LON_NHAT] ?? '').trim()
+  const stockNormMinRaw = String(row.ton_nho_nhat ?? '').trim()
+  const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
   const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
   return {
@@ -500,20 +500,20 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
     barcode,
     name,
     nameRaw,
-    price: parsePrice(row[PRODUCT_COL.GIA_BAN]),
-    wholesalePrice: parsePrice(row[PRODUCT_COL.GIA_SI]),
-    cost: parsePrice(row[PRODUCT_COL.GIA_VON]),
-    stockQty: parseStockQty(row[PRODUCT_COL.TON_KHO]),
+    price: parsePrice(row.gia_ban),
+    wholesalePrice: parsePrice(row.gia_si),
+    cost: parsePrice(row.gia_von),
+    stockQty: parseStockQty(row.ton_kho),
     supplier: '',
-    brand: String(row[PRODUCT_COL.THUONG_HIEU] ?? '')
+    brand: String(row.thuong_hieu ?? '')
       .replace(/\s+/g, ' ')
       .trim(),
-    linkedMasterCode: String(row[PRODUCT_COL.MA_HH_LIEN_QUAN] ?? '').trim(),
+    linkedMasterCode: String(row.ma_hh_lien_quan ?? '').trim(),
     baseGroupCode: '',
-    unitLabel: normalizeCatalogUnitLabel(String(row[PRODUCT_COL.DVT] ?? '')),
+    unitLabel: normalizeCatalogUnitLabel(String(row.dvt ?? '')),
     conversion,
     ...(conversion != null ? { conversionValue: conversion } : {}),
-    weightRaw: String(row[PRODUCT_COL.TRONG_LUONG] ?? '')
+    weightRaw: String(row.trong_luong ?? '')
       .replace(/\u00A0/g, ' ')
       .replace(/\s+/g, ' ')
       .trim(),

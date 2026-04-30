@@ -16,8 +16,10 @@ let clientSingleton = null
 
 /** URL + anon key đã nhúng trong bundle (sau khi Vite build). */
 export function getSupabaseCredentialsFromBuild() {
-  const url = String(BUILT_VITE_SUPABASE_URL).trim()
-  const key = String(BUILT_VITE_SUPABASE_ANON_KEY).trim()
+  const envUrl = String(import.meta.env?.VITE_SUPABASE_URL || '').trim()
+  const envKey = String(import.meta.env?.VITE_SUPABASE_ANON_KEY || '').trim()
+  const url = envUrl || String(BUILT_VITE_SUPABASE_URL).trim()
+  const key = envKey || String(BUILT_VITE_SUPABASE_ANON_KEY).trim()
   return { url, key }
 }
 
@@ -38,6 +40,10 @@ export function getSupabaseClient() {
   if (clientSingleton) return clientSingleton
   clientSingleton = createClient(url, key, {
     global: {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
       /** Tránh HTTP cache (F5 / refetch sau ghi vẫn thấy bản cũ). */
       fetch: (input, init = {}) =>
         fetch(input, {
