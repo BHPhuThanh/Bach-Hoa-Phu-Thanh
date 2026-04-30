@@ -252,7 +252,7 @@ async function upsertProductChunkResilient(sb, part) {
  * @returns {Promise<{ written: number, skippedUpsert: number }>}
  */
 /** Khớp tên cột Supabase (Unicode) — không gửi `imported_at` nếu bảng không có cột đó. */
-const PRODUCT_ROW_KEYS_FOR_DB = new Set(KIOTNEW_PRODUCT_DB_COLUMNS)
+const PRODUCT_ROW_KEYS_FOR_DB = new Set(CATALOG_PRODUCT_DB_COLUMNS)
 
 /**
  * Upsert các dòng đã map {@link displayVariantToProductsRow} (chunk + dedupe theo Mã hàng).
