@@ -94,7 +94,6 @@ import {
   describeCatalogPersistError,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
-import { runStoreDataBootstrap } from './storeBootstrap.js'
 import {
   getComboBom,
   isComboCatalogProduct,
@@ -2415,9 +2414,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   useEffect(() => {
     initialCatalogLoadPendingRef.current = initialCatalogLoadPending
   }, [initialCatalogLoadPending])
-  const [storeBootstrapBusy, setStoreBootstrapBusy] = useState(false)
-  const [storeBootstrapHint, setStoreBootstrapHint] = useState('')
-  const storeBootstrapAbortRef = useRef(null)
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
@@ -2658,7 +2654,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [applyServerCatalogAfterPersist])
 
-  /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần: `npm run push-catalog` hoặc nút «KHỞI TẠO DỮ LIỆU CỬA HÀNG». */
+  /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -2681,7 +2677,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           setInitialCatalogLoadPending(false)
           setError((prev) =>
             prev ||
-            'Danh mục trên Supabase đang trống. Đẩy dữ liệu từ file CSV trong repo một lần (máy dev): `npm run push-catalog` với SUPABASE_URL + khóa ghi được — hoặc bấm «KHỞI TẠO DỮ LIỆU CỬA HÀNG» để đẩy public/bhphuthanh.csv lên Supabase.'
+            'Danh mục trên Supabase đang trống. Đẩy dữ liệu từ file CSV trong repo một lần (máy dev): `npm run push-catalog` với SUPABASE_URL và khóa ghi — ví dụ đẩy `public/bhphuthanh.csv` lên Supabase.'
           )
         } else {
           setInitialCatalogLoadPending(false)
@@ -4164,37 +4160,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setEInvoiceModalOpen(false)
   }, [eInvoiceModalDraft])
 
-  const handleStoreBootstrapClick = useCallback(async () => {
-    if (!isSupabaseConfigured() || storeBootstrapBusy) return
-    setStoreBootstrapBusy(true)
-    setStoreBootstrapHint('Đang khởi tạo…')
-    try {
-      const ac = new AbortController()
-      storeBootstrapAbortRef.current = ac
-      await runStoreDataBootstrap({
-        signal: ac.signal,
-        onPhase: (phase, detail) => {
-          setStoreBootstrapHint(detail ? `${phase}: ${detail}` : phase)
-        },
-      })
-      const snap = await fetchProducts()
-      if (snap?.products?.length) {
-        setProducts(prepareCatalogForPosSearch(snap.products))
-        setFileName(snap.fileName)
-        setCsvRowCount(snap.csvRowCount)
-        setSalesRefresh((x) => x + 1)
-      }
-      setStoreBootstrapHint('Hoàn tất. Dữ liệu đã lên Supabase (products + catalog_snapshots + sales sẵn sàng).')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setStoreBootstrapHint(msg)
-      alert(msg)
-    } finally {
-      setStoreBootstrapBusy(false)
-      storeBootstrapAbortRef.current = null
-    }
-  }, [storeBootstrapBusy])
-
   const renderHeaderIconRail = (variant) => {
     const railClass =
       variant === 'kv'
@@ -4439,23 +4404,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       {posScanToast ? (
         <div className="pos-scan-toast" role="status" aria-live="polite">
           {posScanToast}
-        </div>
-      ) : null}
-      {isSupabaseConfigured() ? (
-        <div className="store-bootstrap-fab-wrap">
-          <button
-            type="button"
-            className="store-bootstrap-fab"
-            disabled={storeBootstrapBusy}
-            onClick={handleStoreBootstrapClick}
-          >
-            {storeBootstrapBusy ? 'Đang xử lý…' : 'KHỞI TẠO DỮ LIỆU CỬA HÀNG'}
-          </button>
-          {storeBootstrapHint ? (
-            <div className="store-bootstrap-fab-hint" role="status">
-              {storeBootstrapHint}
-            </div>
-          ) : null}
         </div>
       ) : null}
       <iframe
