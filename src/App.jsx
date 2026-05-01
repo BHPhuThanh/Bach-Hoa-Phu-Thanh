@@ -101,18 +101,6 @@ import {
   salableComboPackCount,
 } from './comboCatalog.js'
 
-/** File trong thư mục `public/` ở repo — sau build: phục vụ từ gốc site (Vite `BASE_URL`). Tự tải khi chưa có catalog lưu cục bộ. */
-const DEFAULT_PUBLIC_CATALOG_NAME = 'bhphuthanh.csv'
-function getDefaultPublicCatalogUrl() {
-  const name = encodeURI(DEFAULT_PUBLIC_CATALOG_NAME)
-  const base = import.meta.env.BASE_URL || '/'
-  const path = (base.endsWith('/') ? base : `${base}/`) + name
-  if (typeof window === 'undefined' || !window.location?.origin) {
-    return path
-  }
-  return new URL(path, window.location.origin).href
-}
-
 /**
  * Tách một dòng CSV/delimited, hỗ trợ dấu ngoặc kép và ký tự phân cách tùy chọn (, hoặc ;).
  */
@@ -2615,7 +2603,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [applyServerCatalogAfterPersist])
 
-  /** Khởi động: Supabase / IndexedDB / localStorage. Chỉ tải `public/bhphuthanh.csv` khi *không* cấu hình Supabase. */
+  /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần: `npm run push-catalog` hoặc nút «KHỞI TẠO DỮ LIỆU CỬA HÀNG». */
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -2636,61 +2624,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           })
         } else if (isSupabaseConfigured()) {
           setInitialCatalogLoadPending(false)
-          /* Không đọc file tĩnh: danh mục lấy từ Supabase (snapshot hoặc bảng products) hoặc để trống tới khi «KHỞI TẠO…» / «Nhập CSV». */
+          setError((prev) =>
+            prev ||
+            'Danh mục trên Supabase đang trống. Đẩy dữ liệu từ file CSV trong repo một lần (máy dev): `npm run push-catalog` với SUPABASE_URL + khóa ghi được — hoặc bấm «KHỞI TẠO DỮ LIỆU CỬA HÀNG» để đẩy public/bhphuthanh.csv lên Supabase.'
+          )
         } else {
-          setInitialCatalogLoadPending(true)
-          const url = getDefaultPublicCatalogUrl()
-          try {
-            const res = await fetch(url, { cache: 'default' })
-            if (!res.ok) throw new Error(String(res.status))
-            const buf = await res.arrayBuffer()
-            if (cancelled) return
-            const file = new File(
-              [buf],
-              DEFAULT_PUBLIC_CATALOG_NAME,
-              res.headers.get('content-type')?.includes('text/csv')
-                ? { type: 'text/csv' }
-                : { type: 'text/plain' }
-            )
-            const resParse = await parseCatalogBlobFile(file)
-            if (resParse.error) {
-              const detail = resParse.error && resParse.error.length < 500 ? ` (${resParse.error})` : ''
-              setError(
-                `Không đọc được dữ liệu mặc định. Vui lòng dùng «Nhập CSV» để chọn file thủ công.${detail}`
-              )
-            } else {
-              const prepared = prepareCatalogForPosSearch(resParse.products)
-              const fn = resParse.fileName || DEFAULT_PUBLIC_CATALOG_NAME
-              startTransition(() => {
-                setFileName(fn)
-                setCsvRowCount(resParse.rowCount)
-                setProducts(prepared)
-                setSellOrders((orders) =>
-                  orders.map((o) => ({
-                    ...o,
-                    cart: (o.cart || []).map((line) =>
-                      remapCartLineFromCatalog(line, prepared, false)
-                    ),
-                  }))
-                )
-                setSalesRefresh((x) => x + 1)
-              })
-              queueMicrotask(() => {
-                if (!catalogStoreHydratedRef.current) return
-                void persistCatalogSnapshotAndProducts(prepared, fn)
-              })
-            }
-          } catch (e) {
-            if (!cancelled) {
-              const msg = e instanceof Error ? e.message : String(e)
-              console.warn('[catalog] default public CSV', url, msg)
-              setError(
-                'Không tải được file dữ liệu mặc định. Vui lòng nhấn «Nhập CSV» để nạp thủ công (UTF-8).'
-              )
-            }
-          } finally {
-            if (!cancelled) setInitialCatalogLoadPending(false)
-          }
+          setInitialCatalogLoadPending(false)
+          setError((prev) =>
+            prev ||
+            'Chưa cấu hình Supabase (VITE_SUPABASE_URL và VITE_SUPABASE_ANON_KEY). Ứng dụng không còn tự tải file CSV mặc định; hãy cấu hình env và tải lại — hoặc dùng «Nhập CSV» để nạp thủ công (offline).'
+          )
         }
       } finally {
         if (!cancelled) setCatalogStoreHydrated(true)

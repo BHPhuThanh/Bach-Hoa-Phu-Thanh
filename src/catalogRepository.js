@@ -587,8 +587,9 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
 }
 
 /**
- * Lấy snapshot từ kho lưu bền (IndexedDB → migrate legacy localStorage).
- * Sau này thay phần đọc IndexedDB bằng fetch('/api/catalog') rồi vẫn trả cùng hình dạng object.
+ * Nguồn danh mục.
+ * — Khi cấu hình Supabase: chỉ đọc từ bảng `products` hoặc `catalog_snapshots` (không đọc file CSV trong app, không fallback IndexedDB).
+ * — Không có Supabase: có thể dùng API tùy chọn hoặc IndexedDB/local (dev / nhập tay).
  *
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */

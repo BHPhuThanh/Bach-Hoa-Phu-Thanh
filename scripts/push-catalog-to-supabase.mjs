@@ -1,5 +1,7 @@
 /**
- * Đẩy CSV: snapshot POS → bảng `catalog_snapshots`; đồng thời (nếu parse được) các dòng phẳng → `products`.
+ * Đồng bộ một lần từ CSV (mặc định `public/bhphuthanh.csv`) lên Supabase:
+ * `catalog_snapshots` (id = catalog) + bảng `products` (upsert theo `ma_hang`).
+ * Sau khi chạy, app production chỉ đọc từ Supabase (không tự fetch file CSV trên web).
  *
  * Biến môi trường (PowerShell ví dụ):
  *   $env:SUPABASE_URL="https://xxx.supabase.co"

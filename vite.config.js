@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 /** SPA: GET /.../doanh-thu → index.html (dev + preview) */
@@ -75,22 +75,8 @@ function applyDoanhThuFallback(req, next) {
   next()
 }
 
-export default defineConfig(({ mode }) => {
-  /**
-   * Nhúng URL + anon key trực tiếp qua `define` (sau loadEnv).
-   * Trên Vercel, biến có trong môi trường lúc `vite build`; tránh phụ thuộc hoàn toàn
-   * vào thay thế `import.meta.env.*` nếu cấu hình CI lệch.
-   */
-  const env = loadEnv(mode, process.cwd(), '')
-  const supabaseUrl = env.VITE_SUPABASE_URL || ''
-  const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || ''
-
-  return {
+export default defineConfig(() => ({
   /** SPA: route lạ (vd. /hang-hoa/SP001) → index.html — Vite không có `historyApiFallback` (Webpack). */
-  define: {
-    __CSV_PREVIEW_VITE_SUPABASE_URL__: JSON.stringify(supabaseUrl),
-    __CSV_PREVIEW_VITE_SUPABASE_ANON_KEY__: JSON.stringify(supabaseAnonKey),
-  },
   appType: 'spa',
   server: {
     /**
@@ -107,5 +93,4 @@ export default defineConfig(({ mode }) => {
     historyApiFallback: true,
   },
   plugins: [react(), historyFallbackDoanhThu()],
-  }
-})
+}))

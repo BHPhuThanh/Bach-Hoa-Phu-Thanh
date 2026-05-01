@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "push-catalog": "node scripts/push-catalog-to-supabase.mjs"
+    "push-catalog": "node scripts/push-catalog-to-supabase.mjs",
+    "sync-catalog": "node scripts/push-catalog-to-supabase.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
