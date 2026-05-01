@@ -33,6 +33,8 @@ const DEFAULT_CATALOG_FILE_NAME = 'bhphuthanh.csv'
 
 /** Bảng flat Kiot (mã hàng PK) — đồng bộ kèm snapshot khi lưu danh mục từ web. */
 const PRODUCTS_TABLE = 'products'
+/** Cột thời gian tạo trên Postgres (sau migration `products_created_at`). */
+const PRODUCTS_CREATED_AT_COLUMN = 'created_at'
 /** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
 const PRODUCTS_UPSERT_CHUNK = 200
 
@@ -534,20 +536,52 @@ async function fetchCatalogSnapshotFromSupabase() {
 }
 
 /**
- * Đọc toàn bộ `public.products` (phân trang PostgREST).
+ * Có cột `created_at` trong schema PostgREST → sắp mới nhất trước; không → sắp theo khóa chính `ma_hang` giảm dần.
+ */
+async function resolveSupabaseProductsOrderColumn(sb) {
+  const pk = PRODUCT_PK_COLUMN
+  const probe = await sb
+    .from(PRODUCTS_TABLE)
+    .select(pk)
+    .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
+    .order(pk, { ascending: false })
+    .limit(1)
+  if (!probe.error) return PRODUCTS_CREATED_AT_COLUMN
+  const fb = await sb.from(PRODUCTS_TABLE).select(pk).order(pk, { ascending: false }).limit(1)
+  if (!fb.error) return pk
+  throw probe.error || fb.error || new Error('Không đọc được «products» (kiểm tra schema / RLS).')
+}
+
+/** `created_at` ISO từ PostgREST → ms cho UI POS (lưới Hàng hóa…); fallback không đổi hành vi cũ. */
+function createdAtMsFromSupabaseProductRow(row, rowIndexFallback) {
+  const raw = row?.[PRODUCTS_CREATED_AT_COLUMN]
+  if (raw != null && raw !== '') {
+    const ms = Date.parse(String(raw))
+    if (Number.isFinite(ms)) return ms
+  }
+  return Date.now() + rowIndexFallback
+}
+
+/**
+ * Đọc toàn bộ `public.products` (phân trang PostgREST) — **mặc định mới nhất trước** (created_at DESC nếu có).
  * @param {import('@supabase/supabase-js').SupabaseClient} sb
  */
 async function fetchAllProductRows(sb) {
+  const sortBy = await resolveSupabaseProductsOrderColumn(sb)
   const pageSize = 1000
   let from = 0
   const all = []
   for (;;) {
     const to = from + pageSize - 1
-    const { data, error } = await sb
-      .from(PRODUCTS_TABLE)
-      .select('*')
-      .order(PRODUCT_PK_COLUMN, { ascending: true })
-      .range(from, to)
+    let req = sb.from(PRODUCTS_TABLE).select('*')
+    if (sortBy === PRODUCTS_CREATED_AT_COLUMN) {
+      req = req
+        .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
+        .order(PRODUCT_PK_COLUMN, { ascending: false })
+    } else {
+      req = req.order(PRODUCT_PK_COLUMN, { ascending: false })
+    }
+    const { data, error } = await req.range(from, to)
     if (error) throw error
     const chunk = data || []
     all.push(...chunk)
@@ -599,7 +633,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
       .trim(),
     stockNormMin,
     stockNormMax,
-    createdAtMs: Date.now() + rowIndex,
+    createdAtMs: createdAtMsFromSupabaseProductRow(row, rowIndex),
     raw: row,
   }
 }

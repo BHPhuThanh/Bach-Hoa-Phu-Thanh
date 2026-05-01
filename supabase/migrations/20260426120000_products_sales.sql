@@ -55,8 +55,16 @@ CREATE TABLE IF NOT EXISTS public.products (
   quy_doi text,
   ma_hh_lien_quan text,
   trong_luong text,
-  gia_si text
+  gia_si text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS products_created_at_desc_idx ON public.products (created_at DESC);
+
+COMMENT ON COLUMN public.products.created_at IS 'Thời điểm ghi nhận dòng (sắp xếp mới nhất trước).';
 
 CREATE TABLE IF NOT EXISTS public.sales (
   id text PRIMARY KEY,
@@ -129,8 +137,14 @@ BEGIN
     quy_doi text,
     ma_hh_lien_quan text,
     trong_luong text,
-    gia_si text
+    gia_si text,
+    created_at timestamptz NOT NULL DEFAULT now()
   );
+
+  ALTER TABLE public.products
+    ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+  CREATE INDEX IF NOT EXISTS products_created_at_desc_idx ON public.products (created_at DESC);
 
   CREATE TABLE IF NOT EXISTS public.sales (
     id text PRIMARY KEY,
