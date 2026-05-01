@@ -91,6 +91,7 @@ import {
   persistCatalogSnapshotAndProducts,
   readCatalogSnapshotSync,
   revalidateCatalogFromStore,
+  describeCatalogPersistError,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import { runStoreDataBootstrap } from './storeBootstrap.js'
@@ -2404,6 +2405,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const initialCatalogLoadPendingRef = useRef(initialCatalogLoadPending)
   const catalogFileNameRef = useRef(fileName)
   catalogFileNameRef.current = fileName
+
+  /** Snapshot danh mục cho nhập hàng bulk (persist await, tránh stale closure trong async). */
+  const bulkCatalogProductsRef = useRef(products)
+  bulkCatalogProductsRef.current = products
   useEffect(() => {
     catalogStoreHydratedRef.current = catalogStoreHydrated
   }, [catalogStoreHydrated])
@@ -2604,30 +2609,54 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [applyServerCatalogAfterPersist])
 
-  /** Nhập hàng — gộp nhiều biến thể (tồn + vốn + giá bán) một lần persist để tránh chồng lệnh upsert Supabase. */
-  const handleBulkPatchCatalogVariants = useCallback(
-    (patches) => {
-      if (!Array.isArray(patches) || patches.length === 0) return
-      setProducts((prev) => {
-        let next = prev
-        for (const entry of patches) {
-          const variantId = entry?.variantId
-          const patch = entry?.patch
-          if (variantId == null || !patch || typeof patch !== 'object') continue
-          next = applyProductDataToCatalog(next, { type: 'patch_variant', variantId, patch })
-        }
-        queueMicrotask(() => {
-          if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-          void (async () => {
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-            if (r.ok) await applyServerCatalogAfterPersist()
-          })()
-        })
-        return next
+  /**
+   * Nhập hàng — gộp nhiều biến thể (tồn + vốn + giá bán) chỉ cập nhật React state sau khi persist thành công.
+   * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
+   */
+  const handleBulkPatchCatalogVariants = useCallback(async (patches) => {
+    const valid = (patches || []).filter(
+      (e) => e && e.variantId != null && e.patch && typeof e.patch === 'object'
+    )
+    const updatedCount = valid.length
+    if (updatedCount === 0) return { ok: true, updatedCount: 0 }
+
+    if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
+      return {
+        ok: false,
+        updatedCount: 0,
+        error: 'Danh mục chưa tải xong hoặc chưa sẵn sàng để ghi.',
+      }
+    }
+
+    let next = bulkCatalogProductsRef.current
+    for (const entry of valid) {
+      next = applyProductDataToCatalog(next, {
+        type: 'patch_variant',
+        variantId: entry.variantId,
+        patch: entry.patch,
       })
-    },
-    [applyServerCatalogAfterPersist]
-  )
+    }
+
+    try {
+      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+      if (!r.ok) {
+        return {
+          ok: false,
+          updatedCount: 0,
+          error: describeCatalogPersistError(r.error),
+        }
+      }
+      setProducts(next)
+      await applyServerCatalogAfterPersist()
+      return { ok: true, updatedCount }
+    } catch (e) {
+      return {
+        ok: false,
+        updatedCount: 0,
+        error: e instanceof Error ? e.message : String(e),
+      }
+    }
+  }, [applyServerCatalogAfterPersist])
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần: `npm run push-catalog` hoặc nút «KHỞI TẠO DỮ LIỆU CỬA HÀNG». */
   useEffect(() => {

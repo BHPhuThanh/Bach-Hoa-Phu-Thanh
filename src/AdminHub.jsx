@@ -116,6 +116,7 @@ import {
   readCatalogSnapshotSync,
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
+  describeCatalogPersistError,
 } from './catalogRepository.js'
 import {
   collectInboundMaHangCodes,
@@ -1431,23 +1432,28 @@ export default function AdminHub({
       fn,
       upsertOnlyVariants?.length ? { upsertOnlyVariants } : undefined
     )
+    if (!persistResult.ok) {
+      return {
+        ok: false,
+        error: describeCatalogPersistError(persistResult.error),
+      }
+    }
     if (isSupabaseConfigured()) {
-      if (persistResult.ok) {
-        const fresh = await revalidateCatalogFromStore()
-        if (fresh?.products?.length) {
-          setStandaloneCatalog({
-            products: refreshCatalogSearchTexts(fresh.products),
-            fileName: fresh.fileName || fn,
-          })
-          return
-        }
+      const fresh = await revalidateCatalogFromStore()
+      if (fresh?.products?.length) {
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(fresh.products),
+          fileName: fresh.fileName || fn,
+        })
+        return { ok: true }
       }
     }
     if (!nextProducts?.length) {
       setStandaloneCatalog(null)
-      return
+      return { ok: true }
     }
     setStandaloneCatalog({ products: nextProducts, fileName: fn })
+    return { ok: true }
   }, [])
 
   const handleComboSaveDisplay = useCallback(
@@ -2948,6 +2954,8 @@ export default function AdminHub({
   const inboundCompletePendingRef = useRef(null)
   /** Modal xác nhận ghi đè giá vốn khi Hoàn thành. */
   const [inboundCostDiffModal, setInboundCostDiffModal] = useState(null)
+  /** Đang ghi danh mục sau nhập hàng (Supabase / standalone) — chặn đóng tab cho đến khi xong. */
+  const [inboundCatalogBulkSaving, setInboundCatalogBulkSaving] = useState(false)
   /** Modal kết quả sau khi cập nhật giá nhập. */
   const [inboundCostResultModal, setInboundCostResultModal] = useState(null)
   const [inboundCostResultDetailsOpen, setInboundCostResultDetailsOpen] = useState(true)
@@ -3304,42 +3312,74 @@ export default function AdminHub({
     [applyInboundStockDeltas]
   )
 
-  /** Gộp một lần: tồn + giá vốn bình quân + giá bán — tránh hai lần persist đè nhau khi có Supabase. */
+  /**
+   * Gộp một lần: tồn + giá vốn bình quân + giá bán — chờ persist xong.
+   * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
+   */
   const applyInboundFulfillmentPatches = useCallback(
-    (patches) => {
-      if (!patches?.length) return
+    async (patches) => {
+      const valid = (patches || []).filter(
+        (p) => p && p.variantId != null && p.patch && typeof p.patch === 'object'
+      )
+      const n = valid.length
+      if (n === 0) return { ok: true, updatedCount: 0 }
       if (typeof onBulkPatchCatalogVariants === 'function') {
-        onBulkPatchCatalogVariants(patches)
-        return
+        const r = await onBulkPatchCatalogVariants(valid)
+        if (r?.ok) return { ok: true, updatedCount: r.updatedCount ?? n }
+        return { ok: false, updatedCount: 0, error: r?.error || 'Không ghi được danh mục.' }
       }
-      if (!standaloneCatalog?.products?.length) return
+      if (!standaloneCatalog?.products?.length) {
+        return { ok: false, updatedCount: 0, error: 'Chưa có danh mục standalone để ghi.' }
+      }
       const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
-      const byVid = new Map(patches.map((p) => [p.variantId, p.patch]))
+      const byVid = new Map(valid.map((p) => [p.variantId, p.patch]))
       const nextFlat = flat.map((v) =>
         byVid.has(v.id) ? { ...v, ...byVid.get(v.id) } : v
       )
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      const persistRes = await persistStandaloneProducts(
+        nextProducts,
+        standaloneCatalog.fileName || ''
+      )
+      if (persistRes?.ok) return { ok: true, updatedCount: n }
+      return {
+        ok: false,
+        updatedCount: 0,
+        error: persistRes?.error || 'Không ghi được danh mục.',
+      }
     },
     [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
+  /** @returns {Promise<boolean>} true nếu đã ghi danh mục thành công */
   const finalizeInboundCompleted = useCallback(
-    (fulfillmentPatches) => {
+    async (fulfillmentPatches) => {
       const row = buildInboundOrderPayload('completed')
-      setInboundOrders((prev) => [row, ...prev])
-      applyInboundFulfillmentPatches(fulfillmentPatches || [])
-      closeInboundForm()
+      setInboundCatalogBulkSaving(true)
+      try {
+        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [])
+        if (!res?.ok) {
+          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
+          return false
+        }
+        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
+        setInboundOrders((prev) => [row, ...prev])
+        closeInboundForm()
+        return true
+      } finally {
+        setInboundCatalogBulkSaving(false)
+      }
     },
     [buildInboundOrderPayload, applyInboundFulfillmentPatches, closeInboundForm]
   )
 
+  /** @returns {Promise<boolean>} */
   const finalizeInboundEditCompleted = useCallback(
-    (fulfillmentPatches) => {
+    async (fulfillmentPatches) => {
       const editId = inboundFormEditOrderId
-      if (!editId) return
+      if (!editId) return false
       const prevRow = inboundOrders.find((o) => o.id === editId)
-      if (!prevRow) return
+      if (!prevRow) return false
       const payload = buildInboundOrderPayload('completed')
       const merged = normalizeInboundRow({
         ...payload,
@@ -3348,10 +3388,21 @@ export default function AdminHub({
         createdAtMs: prevRow.createdAtMs,
         status: computeInboundStatusAfterLines(payload.lines),
       })
-      applyInboundFulfillmentPatches(fulfillmentPatches || [])
-      setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
-      setInboundFormEditOrderId(null)
-      closeInboundForm()
+      setInboundCatalogBulkSaving(true)
+      try {
+        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [])
+        if (!res?.ok) {
+          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
+          return false
+        }
+        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
+        setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
+        setInboundFormEditOrderId(null)
+        closeInboundForm()
+        return true
+      } finally {
+        setInboundCatalogBulkSaving(false)
+      }
     },
     [
       inboundFormEditOrderId,
@@ -3413,8 +3464,8 @@ export default function AdminHub({
         setInboundCostDiffModal({ diffs })
         return
       }
-      if (inboundFormEditOrderId) finalizeInboundEditCompleted(patches)
-      else finalizeInboundCompleted(patches)
+      if (inboundFormEditOrderId) await finalizeInboundEditCompleted(patches)
+      else await finalizeInboundCompleted(patches)
     })()
   }, [
     inboundFormSupplierName,
@@ -3427,11 +3478,12 @@ export default function AdminHub({
   ])
 
   const cancelInboundCostDiffModal = useCallback(() => {
+    if (inboundCatalogBulkSaving) return
     inboundCompletePendingRef.current = null
     setInboundCostDiffModal(null)
-  }, [])
+  }, [inboundCatalogBulkSaving])
 
-  const confirmInboundCostSave = useCallback(() => {
+  const confirmInboundCostSave = useCallback(async () => {
     const pending = inboundCompletePendingRef.current
     if (!pending?.patches?.length) {
       cancelInboundCostDiffModal()
@@ -3442,36 +3494,54 @@ export default function AdminHub({
     const mode = pending.mode || 'create'
     const mergedRow = pending.mergedRow
     const oldRow = pending.oldRow
-    inboundCompletePendingRef.current = null
-    setInboundCostDiffModal(null)
+
+    const showResultAfterSuccess = () => {
+      inboundCompletePendingRef.current = null
+      setInboundCostDiffModal(null)
+      setInboundCostResultDetailsOpen(true)
+      const originTab =
+        mode === 'detail_edit' && mergedRow?.id ? toInboundDetailTabId(mergedRow.id) : TAB_INBOUND
+      inboundCostResultOriginTabRef.current = originTab
+      setInboundCostResultModal({
+        updated: diffs.map((d) => ({
+          variantId: d.variantId,
+          code: d.code,
+          name: d.name,
+        })),
+        failCount: 0,
+        originTab: originTab,
+      })
+    }
+
     if (mode === 'detail_edit' && mergedRow && oldRow) {
       const oid = mergedRow.id
-      applyInboundFulfillmentPatches(patches)
-      setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
-      setInboundDetailLineDrafts((prev) => {
-        if (!prev[oid]) return prev
-        const n = { ...prev }
-        delete n[oid]
-        return n
-      })
-    } else if (mode === 'edit') {
-      finalizeInboundEditCompleted(patches)
-    } else {
-      finalizeInboundCompleted(patches)
+      setInboundCatalogBulkSaving(true)
+      try {
+        const res = await applyInboundFulfillmentPatches(patches)
+        if (!res?.ok) {
+          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
+          return
+        }
+        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
+        setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
+        setInboundDetailLineDrafts((prev) => {
+          if (!prev[oid]) return prev
+          const n = { ...prev }
+          delete n[oid]
+          return n
+        })
+        showResultAfterSuccess()
+      } finally {
+        setInboundCatalogBulkSaving(false)
+      }
+      return
     }
-    setInboundCostResultDetailsOpen(true)
-    const originTab =
-      mode === 'detail_edit' && mergedRow?.id ? toInboundDetailTabId(mergedRow.id) : TAB_INBOUND
-    inboundCostResultOriginTabRef.current = originTab
-    setInboundCostResultModal({
-      updated: diffs.map((d) => ({
-        variantId: d.variantId,
-        code: d.code,
-        name: d.name,
-      })),
-      failCount: 0,
-      originTab: originTab,
-    })
+
+    const ok =
+      mode === 'edit'
+        ? await finalizeInboundEditCompleted(patches)
+        : await finalizeInboundCompleted(patches)
+    if (ok) showResultAfterSuccess()
   }, [
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
@@ -3543,7 +3613,7 @@ export default function AdminHub({
       }
       if (inboundCostDiffModal) {
         e.preventDefault()
-        cancelInboundCostDiffModal()
+        if (!inboundCatalogBulkSaving) cancelInboundCostDiffModal()
         return
       }
       if (inboundCostResultModal) {
@@ -3552,6 +3622,10 @@ export default function AdminHub({
         return
       }
       if (inboundReturnModal || inboundCancelModal) {
+        e.preventDefault()
+        return
+      }
+      if (inboundCatalogBulkSaving) {
         e.preventDefault()
         return
       }
@@ -3570,6 +3644,7 @@ export default function AdminHub({
     inboundCancelModal,
     cancelInboundCostDiffModal,
     closeInboundForm,
+    inboundCatalogBulkSaving,
   ])
 
   useEffect(() => {
@@ -3577,7 +3652,14 @@ export default function AdminHub({
     const onKey = (e) => {
       if (e.key !== 'F3') return
       if (inboundQuickPickOpen) return
-      if (supplierModalOpen || inboundCostDiffModal || inboundCostResultModal || inboundReturnModal || inboundCancelModal)
+      if (
+        supplierModalOpen ||
+        inboundCostDiffModal ||
+        inboundCatalogBulkSaving ||
+        inboundCostResultModal ||
+        inboundReturnModal ||
+        inboundCancelModal
+      )
         return
       e.preventDefault()
       inboundProductSearchRef.current?.focus?.()
@@ -3590,6 +3672,7 @@ export default function AdminHub({
     inboundQuickPickOpen,
     supplierModalOpen,
     inboundCostDiffModal,
+    inboundCatalogBulkSaving,
     inboundCostResultModal,
     inboundReturnModal,
     inboundCancelModal,
@@ -3880,14 +3963,24 @@ export default function AdminHub({
         setInboundCostDiffModal({ diffs })
         return
       }
-      applyInboundFulfillmentPatches(patches)
-      setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
-      setInboundDetailLineDrafts((prev) => {
-        if (!prev[oid]) return prev
-        const n = { ...prev }
-        delete n[oid]
-        return n
-      })
+      setInboundCatalogBulkSaving(true)
+      try {
+        const res = await applyInboundFulfillmentPatches(patches)
+        if (!res?.ok) {
+          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
+          return
+        }
+        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
+        setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
+        setInboundDetailLineDrafts((prev) => {
+          if (!prev[oid]) return prev
+          const n = { ...prev }
+          delete n[oid]
+          return n
+        })
+      } finally {
+        setInboundCatalogBulkSaving(false)
+      }
     })()
   }, [
     activeTab,
@@ -7501,11 +7594,24 @@ export default function AdminHub({
         </div>
       )}
 
+      {inboundCatalogBulkSaving && (
+        <div
+          className="ah-inbound-catalog-saving-overlay"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <span className="ah-inbound-catalog-saving-spinner" aria-hidden />
+          <span className="ah-inbound-catalog-saving-msg">Đang lưu danh mục…</span>
+        </div>
+      )}
+
       {inboundCostDiffModal && (
         <div
           className="ah-iv-modal-backdrop"
           role="presentation"
           onClick={(e) => {
+            if (inboundCatalogBulkSaving) return
             if (e.target === e.currentTarget) cancelInboundCostDiffModal()
           }}
         >
@@ -7548,10 +7654,20 @@ export default function AdminHub({
               </ul>
             </div>
             <footer className="ah-iv-modal__foot">
-              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={cancelInboundCostDiffModal}>
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--ghost"
+                disabled={inboundCatalogBulkSaving}
+                onClick={cancelInboundCostDiffModal}
+              >
                 Hủy
               </button>
-              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={confirmInboundCostSave}>
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--primary"
+                disabled={inboundCatalogBulkSaving}
+                onClick={() => void confirmInboundCostSave()}
+              >
                 Cập nhật
               </button>
             </footer>
