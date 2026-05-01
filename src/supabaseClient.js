@@ -1,43 +1,14 @@
 import { createClient } from '@supabase/supabase-js'
 
-let clientSingleton = null
+// Lấy trực tiếp từ Vite, không qua trung gian
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export function getSupabaseCredentialsFromBuild() {
-  const url = String(import.meta.env?.VITE_SUPABASE_URL ?? '').trim()
-  const key = String(import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '').trim()
-  return { url, key }
-}
+// In ra để sếp tự kiểm tra (Sếp nhìn Console thấy chữ này là OK)
+console.log("APP ĐANG DÙNG URL:", supabaseUrl);
+console.log("APP ĐANG DÙNG KEY (5 ký tự đầu):", supabaseAnonKey?.substring(0, 5));
 
-/**
- * @returns {boolean}
- */
-export function isSupabaseConfigured() {
-  const { url, key } = getSupabaseCredentialsFromBuild()
-  return url.length > 0 && key.length > 0
-}
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-/**
- * @returns {import('@supabase/supabase-js').SupabaseClient | null}
- */
-export function getSupabaseClient() {
-  const { url, key } = getSupabaseCredentialsFromBuild()
-  if (!url || !key) return null
-  if (clientSingleton) return clientSingleton
-
-  console.log('[Supabase] init credentials', {
-    url,
-    anonKeyPreview: `${key.slice(0, 5)}…`,
-  })
-
-  clientSingleton = createClient(url, key, {
-    global: {
-      /** Tránh HTTP cache (F5 / refetch sau ghi vẫn thấy bản cũ). */
-      fetch: (input, init = {}) =>
-        fetch(input, {
-          ...init,
-          cache: 'no-store',
-        }),
-    },
-  })
-  return clientSingleton
-}
+export const getSupabaseClient = () => supabase
+export const isSupabaseConfigured = () => !!supabaseUrl && !!supabaseAnonKey
