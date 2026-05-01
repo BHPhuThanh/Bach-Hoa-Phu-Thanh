@@ -1,11 +1,9 @@
-import { memo, useEffect } from 'react'
+import { memo } from 'react'
 
 function GoodsCatalogDvtCell({ row }) {
-  useEffect(() => {
-    console.error('DỮ LIỆU CỘT J THẬT SỰ:', row.dvt)
-  }, [row.dvt, row.id])
-
-  const dvt = String(row?.dvt ?? '').replace(/\s+/g, ' ').trim()
+  const dvt = String(row?.dvt ?? row?.unitLabel ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!dvt) return '—'
   const isNumeric = /^\d+(?:[.,]\d+)?$/.test(dvt)
   if (isNumeric) {
@@ -94,7 +92,6 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
 }) {
   const priceStr = (Number(row.price) || 0).toLocaleString('vi-VN')
   const costStr = (Number(row.cost) || 0).toLocaleString('vi-VN')
-  console.log('Dữ liệu tồn kho:', row.ton_kho)
   const tonNum =
     row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
       ? Number(row.ton_kho)

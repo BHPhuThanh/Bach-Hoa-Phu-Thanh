@@ -181,6 +181,7 @@ function flattenCatalogToGoodsRows(products) {
       const okTime = Number.isFinite(createdAtMs) && createdAtMs > 0
       const displayTime = okTime ? new Date(createdAtMs).toLocaleString('vi-VN') : '—'
       const unitLabel = normalizeCatalogUnitLabel(v.unitLabel)
+      const dvt = unitLabel
       const barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
       rows.push({
         id,
@@ -194,6 +195,7 @@ function flattenCatalogToGoodsRows(products) {
           v.linkedMasterCode ?? p.linkedMasterCode
         ),
         unitLabel,
+        dvt,
         barcode,
         brand,
         price,

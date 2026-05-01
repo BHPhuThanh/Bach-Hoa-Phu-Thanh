@@ -138,6 +138,7 @@ function displayVariantToProductsRow(v) {
       ? String(v.conversion)
       : ''
   const maHang = dbTextCell(v?.code)
+  const dvtRaw = dbTextCell(v?.unitLabel)
   return {
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
@@ -148,7 +149,7 @@ function displayVariantToProductsRow(v) {
     ton_kho: v?.stockQty,
     ton_nho_nhat: v?.stockNormMin,
     ton_lon_nhat: v?.stockNormMax,
-    dvt: dbTextCell(v?.unitLabel),
+    dvt: dvtRaw || 'Cái',
     ma_dvt_co_ban: '',
     quy_doi: conv,
     ma_hh_lien_quan: dbTextCell(v?.linkedMasterCode),
