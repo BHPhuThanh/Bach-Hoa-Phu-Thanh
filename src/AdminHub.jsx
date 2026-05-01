@@ -117,6 +117,7 @@ import {
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
+  insertInboundHistoryEntry,
 } from './catalogRepository.js'
 import {
   collectInboundMaHangCodes,
@@ -3312,8 +3313,19 @@ export default function AdminHub({
     [applyInboundStockDeltas]
   )
 
+  /** Ghi Supabase `inbound_history` sau khi đã cập nhật products; lỗi chỉ log — không rollback tồn. */
+  const recordInboundCompletionHistory = useCallback(async (orderRow) => {
+    const r = await insertInboundHistoryEntry(orderRow)
+    if (!r.ok && !r.skipped && r.error) {
+      console.warn(
+        '[inbound_history] Không ghi được lịch sử phiếu nhập (danh mục đã lưu):',
+        r.error?.message || r.error
+      )
+    }
+  }, [])
+
   /**
-   * Gộp một lần: tồn + giá vốn bình quân + giá bán — chờ persist xong.
+   * Gộp một lần: tồn + giá vốn bình quân — không đổi giá bán; chờ persist xong.
    * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
    */
   const applyInboundFulfillmentPatches = useCallback(
@@ -3362,6 +3374,7 @@ export default function AdminHub({
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return false
         }
+        await recordInboundCompletionHistory(row)
         window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((prev) => [row, ...prev])
         closeInboundForm()
@@ -3370,7 +3383,7 @@ export default function AdminHub({
         setInboundCatalogBulkSaving(false)
       }
     },
-    [buildInboundOrderPayload, applyInboundFulfillmentPatches, closeInboundForm]
+    [buildInboundOrderPayload, applyInboundFulfillmentPatches, closeInboundForm, recordInboundCompletionHistory]
   )
 
   /** @returns {Promise<boolean>} */
@@ -3395,6 +3408,7 @@ export default function AdminHub({
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return false
         }
+        await recordInboundCompletionHistory(merged)
         window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
         setInboundFormEditOrderId(null)
@@ -3410,6 +3424,7 @@ export default function AdminHub({
       buildInboundOrderPayload,
       applyInboundFulfillmentPatches,
       closeInboundForm,
+      recordInboundCompletionHistory,
     ]
   )
 
@@ -3522,6 +3537,7 @@ export default function AdminHub({
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return
         }
+        await recordInboundCompletionHistory(mergedRow)
         window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
         setInboundDetailLineDrafts((prev) => {
@@ -3547,6 +3563,7 @@ export default function AdminHub({
     finalizeInboundEditCompleted,
     cancelInboundCostDiffModal,
     applyInboundFulfillmentPatches,
+    recordInboundCompletionHistory,
   ])
 
   const dismissInboundCostResultModal = useCallback(() => {
@@ -3970,6 +3987,7 @@ export default function AdminHub({
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return
         }
+        await recordInboundCompletionHistory(merged)
         window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
         setInboundDetailLineDrafts((prev) => {
@@ -3988,6 +4006,7 @@ export default function AdminHub({
     inboundOrders,
     catalogList,
     applyInboundFulfillmentPatches,
+    recordInboundCompletionHistory,
   ])
 
   const persistPosOrderAndReload = useCallback(async (nextOrder) => {

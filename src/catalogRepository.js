@@ -33,6 +33,8 @@ const DEFAULT_CATALOG_FILE_NAME = 'bhphuthanh.csv'
 
 /** Bảng flat Kiot (mã hàng PK) — đồng bộ kèm snapshot khi lưu danh mục từ web. */
 const PRODUCTS_TABLE = 'products'
+/** Một dòng / lần «Hoàn thành nhập hàng» (theo dõi lịch sử). */
+const INBOUND_HISTORY_TABLE = 'inbound_history'
 /** Cột thời gian tạo trên Postgres (sau migration `products_created_at`). */
 const PRODUCTS_CREATED_AT_COLUMN = 'created_at'
 /** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
@@ -391,6 +393,46 @@ export async function saveProductsToSupabase(products) {
  * @param {Array<object>} flatDisplayVariants — dòng phẳng POS (giống phần tử trong groupVariants).
  * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}
  */
+function snapshotInboundOrderForHistory(order) {
+  if (!order || typeof order !== 'object') return {}
+  const lines = Array.isArray(order.lines) ? order.lines : []
+  return {
+    id: String(order.id ?? ''),
+    code: String(order.code ?? ''),
+    createdAtMs: order.createdAtMs != null ? Number(order.createdAtMs) : null,
+    supplier: String(order.supplier ?? ''),
+    status: String(order.status ?? ''),
+    totalValue: order.totalValue != null ? order.totalValue : null,
+    goodsSubtotal: order.goodsSubtotal != null ? order.goodsSubtotal : null,
+    note: String(order.note ?? ''),
+    orderDiscountMode: order.orderDiscountMode ?? null,
+    orderDiscountValue: order.orderDiscountValue != null ? order.orderDiscountValue : null,
+    lines: lines.map((ln) => ({ ...ln })),
+  }
+}
+
+/**
+ * Ghi một dòng lịch sử nhập hàng lên Supabase (sau khi đã cập nhật `products` thành công).
+ * Không ném lỗi — caller xử lý `ok`; thất bại không rollback tồn kho đã ghi.
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown }>}
+ */
+export async function insertInboundHistoryEntry(order) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  }
+  const payload = snapshotInboundOrderForHistory(order)
+  const order_code = String(order?.code ?? '').trim() || '_'
+  try {
+    const { error } = await sb.from(INBOUND_HISTORY_TABLE).insert({ order_code, payload })
+    if (error) return { ok: false, error }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error }
+  }
+}
+
 export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const sb = getSupabaseClient()

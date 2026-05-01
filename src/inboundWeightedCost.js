@@ -1,5 +1,5 @@
 /**
- * Bình quân gia quyền khi nhập hàng + cập nhật giá bán theo tỷ lệ cũ (giá bán / giá vốn).
+ * Bình quân gia quyền khi nhập hàng + cộng dồn tồn — không đổi giá bán (gia_ban).
  * Dùng tồn/giá vốn từ Supabase khi có; hỗ trợ phiếu mới và chỉnh sửa (so với dòng cũ).
  */
 
@@ -45,19 +45,6 @@ export function inboundLineNetPurchaseTotal(line) {
 
 const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
 
-/**
- * Giữ biên độ giá bán so với giá vốn cũ: newPrice = round(newCost × (oldPrice / oldCost)).
- */
-export function computeRetailPriceFromInboundCostChange(oldRetail, oldCost, newCost) {
-  const p0 = Math.max(0, Number(oldRetail) || 0)
-  const c0 = Math.max(0, Number(oldCost) || 0)
-  const c1 = Math.max(0, Number(newCost) || 0)
-  if (c1 <= 0) return Math.round(p0)
-  if (c0 <= 0) return Math.round(Math.max(p0, c1))
-  const ratio = p0 / c0
-  return Math.round(c1 * ratio)
-}
-
 function aggregateInboundPurchaseByVariantId(lines) {
   const m = new Map()
   for (const raw of lines || []) {
@@ -88,7 +75,7 @@ export function parseServerTonAndCost(row) {
  * @param {Array<object>} inboundFormLines — dòng phiếu (merged / form)
  * @param {Map<string, { ma_hang: string, gia_von?: unknown, ton_kho?: unknown }>} serverByMaHang
  * @param {Array<object>|null|undefined} priorOrderLines — dòng phiếu trước khi sửa (nếu có)
- * @returns {{ diffs: Array<object>, patches: Array<{ variantId: string, patch: { stockQty: number, cost: number, price: number } }> }}
+ * @returns {{ diffs: Array<object>, patches: Array<{ variantId: string, patch: { stockQty: number, cost: number } }> }}
  */
 export function collectInboundMaHangCodes(catalogList, lines) {
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
@@ -153,15 +140,11 @@ export function computeInboundFulfillmentPlan(
       newGiaVon = round4((oldGiaVon * baseTon + moneyDelta) / newTonKho)
     }
 
-    const oldRetail = Math.max(0, Number(v.price) || 0)
-    const newPrice = computeRetailPriceFromInboundCostChange(oldRetail, oldGiaVon, newGiaVon)
-
     patches.push({
       variantId,
       patch: {
         stockQty: newTonKho,
         cost: newGiaVon,
-        price: newPrice,
       },
     })
 

@@ -2610,7 +2610,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [applyServerCatalogAfterPersist])
 
   /**
-   * Nhập hàng — gộp nhiều biến thể (tồn + vốn + giá bán) chỉ cập nhật React state sau khi persist thành công.
+   * Nhập hàng — gộp nhiều biến thể (tồn + vốn); giá bán không đổi. Chỉ cập nhật React state sau khi persist thành công.
    * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
    */
   const handleBulkPatchCatalogVariants = useCallback(async (patches) => {
