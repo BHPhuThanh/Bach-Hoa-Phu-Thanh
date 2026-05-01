@@ -296,7 +296,8 @@ export default function StockCheckCreatePage() {
     }
     setSaving(true)
     try {
-      await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+      const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+      if (!persistResult.ok) return
       const prev = loadStockCheckVouchers()
       const voucher = createHoanThanhStockCheckVoucher(prev, {
         createdBy: creatorLabel(),

@@ -300,7 +300,8 @@ export default function CostAdjustCreatePage() {
     }
     setSaving(true)
     try {
-      await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+      const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+      if (!persistResult.ok) return
       const prev = await loadCostAdjustVouchersFromStore()
       const voucher = createHoanThanhCostAdjustVoucher(prev, {
         createdBy: creatorLabel(),

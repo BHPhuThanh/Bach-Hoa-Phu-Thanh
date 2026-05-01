@@ -1,5 +1,5 @@
 import { parseCsvTextToDisplayCatalog } from './catalogCsv.js'
-import { persistCatalogSnapshotAndProducts } from './catalogRepository.js'
+import { describeCatalogPersistError, persistCatalogSnapshotAndProducts } from './catalogRepository.js'
 import {
   BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX,
   BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
@@ -206,7 +206,10 @@ export async function runStoreDataBootstrap(opts = {}) {
   if (!parsed.products?.length) throw new Error('Parse danh mục POS rỗng.')
 
   onPhase?.('upload', 'catalog_snapshots + products (một lần)')
-  await persistCatalogSnapshotAndProducts(parsed.products, 'bhphuthanh.csv')
+  const persistBootstrap = await persistCatalogSnapshotAndProducts(parsed.products, 'bhphuthanh.csv')
+  if (!persistBootstrap.ok) {
+    throw new Error(describeCatalogPersistError(persistBootstrap.error))
+  }
 
   onPhase?.('done', String(rows.length))
   return { productRowCount: rows.length, displayGroupCount: parsed.products.length }

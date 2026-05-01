@@ -128,6 +128,33 @@ function formatSupabaseWriteError(err) {
   }
 }
 
+/** Thông báo ngắn cho `alert` (PostgREST, Error, chuỗi, hoặc unknown). */
+export function describeCatalogPersistError(err) {
+  if (err == null) return 'Lỗi không xác định khi đồng bộ Supabase.'
+  if (typeof err === 'string') return err
+  if (err instanceof Error) return err.message || String(err)
+  if (typeof err === 'object' && err.message != null) {
+    const x = formatSupabaseWriteError(err)
+    const parts = [x.message, x.details, x.hint, x.code && `(${x.code})`].filter(Boolean)
+    return parts.length ? parts.join(' — ') : JSON.stringify(err)
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
+function notifySupabasePersistFailure(error) {
+  console.error('LỖI SUPABASE THẬT SỰ:', error)
+  const msg = describeCatalogPersistError(error)
+  try {
+    if (typeof globalThis.alert === 'function') globalThis.alert(msg)
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * Một biến thể POS → dòng logic trước khi {@link finalizeProductRowForSupabase} ép toàn bộ thành chuỗi gửi API.
  * @param {object} v
@@ -313,53 +340,105 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
  * Upsert toàn bộ biến thể catalog POS → `public.products` (`onConflict`: {@link PRODUCT_PK_COLUMN}).
  * Chỉ gọi từ hành động người dùng (Lưu, nhập file, khởi tạo…) — không gắn useEffect.
  * @param {Array} products — display catalog (nhóm + groupVariants)
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}
  */
 export async function saveProductsToSupabase(products) {
-  if (!isSupabaseConfigured()) return
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const sb = getSupabaseClient()
   if (!sb) {
-    console.warn('[saveProductsToSupabase] Không tạo được Supabase client.')
-    return
+    const err = new Error(
+      '[saveProductsToSupabase] Không tạo được Supabase client (thiếu env hoặc cấu hình).'
+    )
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err }
   }
   const flat = flattenDisplayCatalogToVariants(products || [])
   const rawRows = flat.map(displayVariantToProductsRow)
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   const toSend = dedupeRowsByProductCode(withCode)
-  console.log(
-    `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (${PRODUCT_PK_COLUMN} hợp lệ, đã gộp trùng), ` +
-      `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; payload toàn chuỗi; đợt lỗi sẽ thử từng dòng.`
-  )
-  const { written, skippedUpsert } = await upsertProductRowsFromDisplayCatalog(sb, products || [])
-  console.log('[saveProductsToSupabase] Hoàn tất.', { written, skippedUpsert })
+  try {
+    if (flat.length > 0 && toSend.length === 0) {
+      const err = new Error(
+        'Không có dòng nào có «Mã hàng» hợp lệ để gửi lên Supabase (`products.ma_hang`).'
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err }
+    }
+    console.log(
+      `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (${PRODUCT_PK_COLUMN} hợp lệ, đã gộp trùng), ` +
+        `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; payload toàn chuỗi; đợt lỗi sẽ thử từng dòng.`
+    )
+    const { written, skippedUpsert } = await upsertProductRowsFromDisplayCatalog(sb, products || [])
+    if (toSend.length > 0 && written === 0) {
+      const err = new Error(
+        `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${toSend.length} bị bỏ qua). Kiểm tra RLS, quyền ghi API, và log phía Supabase.`
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err, written, skippedUpsert }
+    }
+    console.log('[saveProductsToSupabase] Hoàn tất.', { written, skippedUpsert })
+    return { ok: true, written, skippedUpsert }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
+  }
 }
 
 /**
  * Chỉ upsert các biến thể vừa thêm/sửa — không gửi lại cả danh mục (thousands rows).
  * @param {Array<object>} flatDisplayVariants — dòng phẳng POS (giống phần tử trong groupVariants).
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}
  */
 export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
-  if (!isSupabaseConfigured()) return
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const sb = getSupabaseClient()
-  if (!sb || !flatDisplayVariants?.length) return
+  if (!sb || !flatDisplayVariants?.length) return { ok: true }
   const rawRows = flatDisplayVariants.map(displayVariantToProductsRow)
-  console.log(
-    `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
+  const eligible = dedupeRowsByProductCode(
+    rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   )
-  await upsertRawProductRows(sb, rawRows)
+  try {
+    if (eligible.length === 0) {
+      const err = new Error(
+        'Upsert chỉ các biến thể được chọn: không có «Mã hàng» hợp lệ trong nhóm upsert.'
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err }
+    }
+    console.log(
+      `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
+    )
+    const { written, skippedUpsert } = await upsertRawProductRows(sb, rawRows)
+    if (written === 0) {
+      const err = new Error(
+        `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${eligible.length} bị bỏ qua). Kiểm tra RLS, quyền ghi API, và log phía Supabase.`
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err, written, skippedUpsert }
+    }
+    return { ok: true, written, skippedUpsert }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
+  }
 }
 
 /**
  * Ghi snapshot (Supabase/IDB) rồi đồng bộ bảng `products`.
+ * Khi có Supabase: `ok` chỉ là `true` nếu bước upsert `products` thành công — tránh đọc lại từ server rồi đè UI bằng dữ liệu cũ (snapshot có thể mới nhưng `products` đọc ưu tiên không khớp).
  * @param {object} [options]
  * @param {Array<object>} [options.upsertOnlyVariants] — nếu có: chỉ upsert các biến thể này lên `products`, vẫn ghi snapshot đầy đủ `products`.
+ * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean }>}
  */
 export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
   await saveCatalogSnapshot(products, fileName)
+  if (!isSupabaseConfigured()) return { ok: true }
   if (options?.upsertOnlyVariants?.length) {
-    await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
-    return
+    const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
+    return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
   }
-  await saveProductsToSupabase(products)
+  const r = await saveProductsToSupabase(products)
+  return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
 }
 
 /**
@@ -813,7 +892,7 @@ export function applyProductDataToCatalog(products, productData) {
  * @param {Array} currentProducts
  * @param {string} fileName
  * @param {object} productData — xem {@link applyProductDataToCatalog}
- * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number }>}
+ * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number, persistOk: boolean, persistError?: unknown }>}
  */
 export async function updateProduct(currentProducts, fileName, productData) {
   const fn =
@@ -821,10 +900,12 @@ export async function updateProduct(currentProducts, fileName, productData) {
       ? String(productData.fileName ?? '')
       : String(fileName || '')
   const next = applyProductDataToCatalog(currentProducts, productData)
-  await persistCatalogSnapshotAndProducts(next, fn)
+  const persistResult = await persistCatalogSnapshotAndProducts(next, fn)
   return {
     products: next,
     fileName: fn,
     csvRowCount: countVariantRowsInProducts(next),
+    persistOk: persistResult.ok,
+    ...(persistResult.ok ? {} : { persistError: persistResult.error }),
   }
 }

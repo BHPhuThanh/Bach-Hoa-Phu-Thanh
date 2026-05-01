@@ -2532,20 +2532,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleRemoveCatalogVariants = useCallback((variantIds) => {
     if (!variantIds?.length) return
-    setProducts((prev) => {
+      setProducts((prev) => {
       const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
           if (next.length === 0) {
             catalogFileNameRef.current = ''
-            await persistCatalogSnapshotAndProducts([], '')
+            const persistEmpty = await persistCatalogSnapshotAndProducts([], '')
             setFileName('')
             setCsvRowCount(0)
-          } else {
-            await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            if (persistEmpty.ok) await applyServerCatalogAfterPersist()
+            return
           }
-          await applyServerCatalogAfterPersist()
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          if (r.ok) await applyServerCatalogAfterPersist()
         })()
       })
       return next
@@ -2563,8 +2564,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          await applyServerCatalogAfterPersist()
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          if (r.ok) await applyServerCatalogAfterPersist()
         })()
       })
       return next
@@ -2578,10 +2579,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
             upsertOnlyVariants: variants,
           })
-          await applyServerCatalogAfterPersist()
+          if (r.ok) await applyServerCatalogAfterPersist()
         })()
       })
       return next
@@ -2595,8 +2596,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          await applyServerCatalogAfterPersist()
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          if (r.ok) await applyServerCatalogAfterPersist()
         })()
       })
       return next
@@ -3732,7 +3733,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const next = applySoldQtyToCatalog(prev, cartForStock)
         queueMicrotask(() => {
           if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-          void persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          void (async () => {
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            if (r.ok) await applyServerCatalogAfterPersist()
+          })()
         })
         return next
       })
@@ -3794,6 +3798,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     scrollCartLineIntoView,
     setBatchPickLineId,
     sellWholesaleMode,
+    applyServerCatalogAfterPersist,
   ])
 
   handleThanhToanRef.current = handleThanhToan

@@ -1455,19 +1455,21 @@ export default function AdminHub({
 
   const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint, upsertOnlyVariants) => {
     const fn = String(fileNameHint || '')
-    await persistCatalogSnapshotAndProducts(
+    const persistResult = await persistCatalogSnapshotAndProducts(
       nextProducts,
       fn,
       upsertOnlyVariants?.length ? { upsertOnlyVariants } : undefined
     )
     if (isSupabaseConfigured()) {
-      const fresh = await revalidateCatalogFromStore()
-      if (fresh?.products?.length) {
-        setStandaloneCatalog({
-          products: refreshCatalogSearchTexts(fresh.products),
-          fileName: fresh.fileName || fn,
-        })
-        return
+      if (persistResult.ok) {
+        const fresh = await revalidateCatalogFromStore()
+        if (fresh?.products?.length) {
+          setStandaloneCatalog({
+            products: refreshCatalogSearchTexts(fresh.products),
+            fileName: fresh.fileName || fn,
+          })
+          return
+        }
       }
     }
     if (!nextProducts?.length) {
