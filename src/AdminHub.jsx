@@ -117,8 +117,8 @@ import {
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
-  insertInboundHistoryEntry,
 } from './catalogRepository.js'
+import { insertInboundHistoryEntry } from './supabaseInboundHistory.js'
 import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
