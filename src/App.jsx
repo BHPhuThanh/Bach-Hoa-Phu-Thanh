@@ -2604,6 +2604,31 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [applyServerCatalogAfterPersist])
 
+  /** Nhập hàng — gộp nhiều biến thể (tồn + vốn + giá bán) một lần persist để tránh chồng lệnh upsert Supabase. */
+  const handleBulkPatchCatalogVariants = useCallback(
+    (patches) => {
+      if (!Array.isArray(patches) || patches.length === 0) return
+      setProducts((prev) => {
+        let next = prev
+        for (const entry of patches) {
+          const variantId = entry?.variantId
+          const patch = entry?.patch
+          if (variantId == null || !patch || typeof patch !== 'object') continue
+          next = applyProductDataToCatalog(next, { type: 'patch_variant', variantId, patch })
+        }
+        queueMicrotask(() => {
+          if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+          void (async () => {
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            if (r.ok) await applyServerCatalogAfterPersist()
+          })()
+        })
+        return next
+      })
+    },
+    [applyServerCatalogAfterPersist]
+  )
+
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần: `npm run push-catalog` hoặc nút «KHỞI TẠO DỮ LIỆU CỬA HÀNG». */
   useEffect(() => {
     let cancelled = false
@@ -4906,6 +4931,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           onTriggerCatalogImport={() => catalogImportInputRef.current?.click()}
           onRemoveCatalogVariants={handleRemoveCatalogVariants}
           onUpdateCatalogVariant={handleUpdateCatalogVariant}
+          onBulkPatchCatalogVariants={handleBulkPatchCatalogVariants}
           onReplaceCatalogGroup={handleReplaceCatalogGroup}
           onAppendCatalogVariants={handleAppendCatalogVariants}
           hubDeepLink={adminHubDeepLink}

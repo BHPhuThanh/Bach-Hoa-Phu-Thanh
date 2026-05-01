@@ -112,10 +112,15 @@ import {
   CATALOG_SNAPSHOT_STORAGE_KEY,
   CATALOG_SYNC_BUMP_KEY,
   fetchProducts,
+  fetchProductsCostAndStockByMaHang,
   readCatalogSnapshotSync,
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
 } from './catalogRepository.js'
+import {
+  collectInboundMaHangCodes,
+  computeInboundFulfillmentPlan,
+} from './inboundWeightedCost.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
@@ -583,41 +588,6 @@ function inboundLineTotal(line) {
   return Math.max(0, gross - Math.max(0, Number(line.lineDiscount) || 0))
 }
 
-/** Dòng có SL>0 mà đơn giá nhập khác giá vốn hiện tại trong danh mục (cùng variantId, dòng sau ghi đè). */
-function computeInboundCostDiffs(catalogList, inboundFormLines) {
-  const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
-  const byVid = new Map()
-  for (const raw of inboundFormLines || []) {
-    const ln = normalizeInboundLine(raw)
-    if (ln.qty <= 0 || !ln.variantId) continue
-    const v = flat.find((x) => x.id === ln.variantId)
-    if (!v) continue
-    const oldCost = Math.max(0, Number(v.cost) || 0)
-    const inboundPrice = Math.max(0, Number(ln.unitPrice) || 0)
-    const inboundQuantity = Math.max(0, Number(ln.qty) || 0)
-    if (inboundQuantity <= 0) continue
-    const currentTonKho = Math.max(0, Number(v.stockQty) || 0)
-    const denominator = currentTonKho + inboundQuantity
-    if (denominator <= 0) continue
-    const weightedCostRaw = ((oldCost * currentTonKho) + (inboundPrice * inboundQuantity)) / denominator
-    const newCost = round4(weightedCostRaw)
-    if (round4(oldCost) === newCost) continue
-    byVid.set(ln.variantId, {
-      variantId: ln.variantId,
-      ma_hang: String(ln.ma_hang ?? v.ma_hang ?? (v.code || ln.code || '')).trim() || '—',
-      code: String(v.code || ln.code || '').trim() || '—',
-      name: String(ln.name || v.name || '').trim() || '—',
-      oldCost: round4(oldCost),
-      inboundPrice: round4(inboundPrice),
-      inboundQuantity,
-      currentTonKho,
-      newCost,
-    })
-  }
-  return [...byVid.values()]
-}
-
 /** Gợi ý dạng "Tồn: 157" (số nguyên không thêm dấu phân tách nếu tròn). */
 function formatInboundTonLabel(stockQty) {
   if (stockQty == null || !Number.isFinite(Number(stockQty))) return 'Tồn: —'
@@ -861,6 +831,7 @@ export default function AdminHub({
   onTriggerCatalogImport,
   onRemoveCatalogVariants,
   onUpdateCatalogVariant,
+  onBulkPatchCatalogVariants,
   onReplaceCatalogGroup,
   onAppendCatalogVariants,
   /** Trang /doanh-thu độc lập: { readOnlyRevenue: true } khi không phải Admin — vẫn hiện layout đầy đủ */
@@ -3333,46 +3304,38 @@ export default function AdminHub({
     [applyInboundStockDeltas]
   )
 
-  const applyInboundCostUpdates = useCallback(
-    (diffs) => {
-      if (!diffs?.length) return
-      const byId = new Map()
-      for (const d of diffs) {
-        const roundedCost = Math.round(Math.max(0, Number(d.newCost) || 0) * 10000) / 10000
-        byId.set(d.variantId, roundedCost)
-      }
-      if (onUpdateCatalogVariant) {
-        for (const [variantId, cost] of byId) {
-          onUpdateCatalogVariant(variantId, { cost })
-        }
+  /** Gộp một lần: tồn + giá vốn bình quân + giá bán — tránh hai lần persist đè nhau khi có Supabase. */
+  const applyInboundFulfillmentPatches = useCallback(
+    (patches) => {
+      if (!patches?.length) return
+      if (typeof onBulkPatchCatalogVariants === 'function') {
+        onBulkPatchCatalogVariants(patches)
         return
       }
       if (!standaloneCatalog?.products?.length) return
       const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
-      const nextFlat = flat.map((v) => {
-        const c = byId.get(v.id)
-        if (c === undefined) return v
-        return { ...v, cost: c }
-      })
-      const nextProducts = buildDisplayCatalog(nextFlat)
+      const byVid = new Map(patches.map((p) => [p.variantId, p.patch]))
+      const nextFlat = flat.map((v) =>
+        byVid.has(v.id) ? { ...v, ...byVid.get(v.id) } : v
+      )
+      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
     },
-    [onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
+    [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
   const finalizeInboundCompleted = useCallback(
-    (costDiffs) => {
+    (fulfillmentPatches) => {
       const row = buildInboundOrderPayload('completed')
       setInboundOrders((prev) => [row, ...prev])
-      applyInboundStockIncrease(row.lines)
-      if (costDiffs?.length) applyInboundCostUpdates(costDiffs)
+      applyInboundFulfillmentPatches(fulfillmentPatches || [])
       closeInboundForm()
     },
-    [buildInboundOrderPayload, applyInboundStockIncrease, applyInboundCostUpdates, closeInboundForm]
+    [buildInboundOrderPayload, applyInboundFulfillmentPatches, closeInboundForm]
   )
 
   const finalizeInboundEditCompleted = useCallback(
-    (costDiffs) => {
+    (fulfillmentPatches) => {
       const editId = inboundFormEditOrderId
       if (!editId) return
       const prevRow = inboundOrders.find((o) => o.id === editId)
@@ -3385,18 +3348,7 @@ export default function AdminHub({
         createdAtMs: prevRow.createdAtMs,
         status: computeInboundStatusAfterLines(payload.lines),
       })
-      const hadStock =
-        prevRow.status === 'completed' ||
-        prevRow.status === 'returned_partial' ||
-        prevRow.status === 'returned_full'
-      if (hadStock) {
-        const oldM = netVariantQtyMapFromInboundLines(prevRow.lines)
-        const newM = netVariantQtyMapFromInboundLines(merged.lines)
-        applyInboundStockDeltasFromNetMaps(oldM, newM)
-      } else {
-        applyInboundStockIncrease(merged.lines)
-      }
-      if (costDiffs?.length) applyInboundCostUpdates(costDiffs)
+      applyInboundFulfillmentPatches(fulfillmentPatches || [])
       setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
       setInboundFormEditOrderId(null)
       closeInboundForm()
@@ -3405,9 +3357,7 @@ export default function AdminHub({
       inboundFormEditOrderId,
       inboundOrders,
       buildInboundOrderPayload,
-      applyInboundStockDeltasFromNetMaps,
-      applyInboundStockIncrease,
-      applyInboundCostUpdates,
+      applyInboundFulfillmentPatches,
       closeInboundForm,
     ]
   )
@@ -3427,21 +3377,50 @@ export default function AdminHub({
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
-    const diffs = computeInboundCostDiffs(catalogList, inboundFormLines)
-    if (diffs.length === 0) {
-      if (inboundFormEditOrderId) finalizeInboundEditCompleted(null)
-      else finalizeInboundCompleted(null)
-      return
-    }
-    inboundCompletePendingRef.current = {
-      diffs,
-      mode: inboundFormEditOrderId ? 'edit' : 'create',
-    }
-    setInboundCostDiffModal({ diffs })
+    void (async () => {
+      const priorLines = inboundFormEditOrderId
+        ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
+        : null
+      const codes = collectInboundMaHangCodes(catalogList, inboundFormLines)
+      let serverMap = new Map()
+      if (codes.length > 0 && isSupabaseConfigured()) {
+        try {
+          serverMap = await fetchProductsCostAndStockByMaHang(codes)
+        } catch (e) {
+          console.error(e)
+          alert(
+            'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
+          )
+          return
+        }
+      }
+      const { diffs, patches } = computeInboundFulfillmentPlan(
+        catalogList,
+        inboundFormLines,
+        serverMap,
+        priorLines || undefined
+      )
+      if (!patches?.length) {
+        alert('Không có dòng nhập hợp lệ để cập nhật danh mục / tồn kho.')
+        return
+      }
+      if (diffs.length > 0) {
+        inboundCompletePendingRef.current = {
+          diffs,
+          patches,
+          mode: inboundFormEditOrderId ? 'edit' : 'create',
+        }
+        setInboundCostDiffModal({ diffs })
+        return
+      }
+      if (inboundFormEditOrderId) finalizeInboundEditCompleted(patches)
+      else finalizeInboundCompleted(patches)
+    })()
   }, [
     inboundFormSupplierName,
     inboundFormLines,
     catalogList,
+    inboundOrders,
     inboundFormEditOrderId,
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
@@ -3454,11 +3433,12 @@ export default function AdminHub({
 
   const confirmInboundCostSave = useCallback(() => {
     const pending = inboundCompletePendingRef.current
-    if (!pending?.diffs?.length) {
+    if (!pending?.patches?.length) {
       cancelInboundCostDiffModal()
       return
     }
-    const diffs = pending.diffs
+    const diffs = pending.diffs || []
+    const patches = pending.patches
     const mode = pending.mode || 'create'
     const mergedRow = pending.mergedRow
     const oldRow = pending.oldRow
@@ -3466,18 +3446,7 @@ export default function AdminHub({
     setInboundCostDiffModal(null)
     if (mode === 'detail_edit' && mergedRow && oldRow) {
       const oid = mergedRow.id
-      const hadStock =
-        oldRow.status === 'completed' ||
-        oldRow.status === 'returned_partial' ||
-        oldRow.status === 'returned_full'
-      if (hadStock) {
-        const oldM = netVariantQtyMapFromInboundLines(oldRow.lines)
-        const newM = netVariantQtyMapFromInboundLines(mergedRow.lines)
-        applyInboundStockDeltasFromNetMaps(oldM, newM)
-      } else {
-        applyInboundStockIncrease(mergedRow.lines)
-      }
-      if (diffs?.length) applyInboundCostUpdates(diffs)
+      applyInboundFulfillmentPatches(patches)
       setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
       setInboundDetailLineDrafts((prev) => {
         if (!prev[oid]) return prev
@@ -3486,9 +3455,9 @@ export default function AdminHub({
         return n
       })
     } else if (mode === 'edit') {
-      finalizeInboundEditCompleted(diffs)
+      finalizeInboundEditCompleted(patches)
     } else {
-      finalizeInboundCompleted(diffs)
+      finalizeInboundCompleted(patches)
     }
     setInboundCostResultDetailsOpen(true)
     const originTab =
@@ -3507,9 +3476,7 @@ export default function AdminHub({
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
     cancelInboundCostDiffModal,
-    applyInboundStockDeltasFromNetMaps,
-    applyInboundStockIncrease,
-    applyInboundCostUpdates,
+    applyInboundFulfillmentPatches,
   ])
 
   const dismissInboundCostResultModal = useCallback(() => {
@@ -3873,42 +3840,61 @@ export default function AdminHub({
       totalValue: totals.totalValue,
       status: computeInboundStatusAfterLines(normLines),
     })
-    const hadStock =
-      prevRow.status === 'completed' ||
-      prevRow.status === 'returned_partial' ||
-      prevRow.status === 'returned_full'
-    const diffs = computeInboundCostDiffs(catalogList, normLines)
-    if (diffs.length > 0) {
-      inboundCompletePendingRef.current = {
-        diffs,
-        mode: 'detail_edit',
-        mergedRow: merged,
-        oldRow: prevRow,
+    void (async () => {
+      const codes = [
+        ...new Set([
+          ...collectInboundMaHangCodes(catalogList, normLines),
+          ...collectInboundMaHangCodes(catalogList, prevRow.lines || []),
+        ]),
+      ]
+      let serverMap = new Map()
+      if (codes.length > 0 && isSupabaseConfigured()) {
+        try {
+          serverMap = await fetchProductsCostAndStockByMaHang(codes)
+        } catch (e) {
+          console.error(e)
+          alert(
+            'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
+          )
+          return
+        }
       }
-      setInboundCostDiffModal({ diffs })
-      return
-    }
-    if (hadStock) {
-      const oldM = netVariantQtyMapFromInboundLines(prevRow.lines)
-      const newM = netVariantQtyMapFromInboundLines(merged.lines)
-      applyInboundStockDeltasFromNetMaps(oldM, newM)
-    } else {
-      applyInboundStockIncrease(merged.lines)
-    }
-    setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
-    setInboundDetailLineDrafts((prev) => {
-      if (!prev[oid]) return prev
-      const n = { ...prev }
-      delete n[oid]
-      return n
-    })
+      const { diffs, patches } = computeInboundFulfillmentPlan(
+        catalogList,
+        normLines,
+        serverMap,
+        prevRow.lines
+      )
+      if (!patches?.length) {
+        alert('Không có thay đổi nhập / tồn hợp lệ để cập nhật danh mục.')
+        return
+      }
+      if (diffs.length > 0) {
+        inboundCompletePendingRef.current = {
+          diffs,
+          patches,
+          mode: 'detail_edit',
+          mergedRow: merged,
+          oldRow: prevRow,
+        }
+        setInboundCostDiffModal({ diffs })
+        return
+      }
+      applyInboundFulfillmentPatches(patches)
+      setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
+      setInboundDetailLineDrafts((prev) => {
+        if (!prev[oid]) return prev
+        const n = { ...prev }
+        delete n[oid]
+        return n
+      })
+    })()
   }, [
     activeTab,
     inboundDetailLineDrafts,
     inboundOrders,
     catalogList,
-    applyInboundStockDeltasFromNetMaps,
-    applyInboundStockIncrease,
+    applyInboundFulfillmentPatches,
   ])
 
   const persistPosOrderAndReload = useCallback(async (nextOrder) => {

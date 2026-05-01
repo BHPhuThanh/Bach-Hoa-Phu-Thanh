@@ -591,6 +591,34 @@ async function fetchAllProductRows(sb) {
   return all
 }
 
+const MA_HANG_LOOKUP_CHUNK = 200
+
+/**
+ * Đọc `gia_von` + `ton_kho` từ `public.products` theo `ma_hang` — dùng bình quân gia quyền nhập hàng khớp server.
+ * @param {Iterable<string>} maHangKeys
+ * @returns {Promise<Map<string, Record<string, unknown>>>}
+ */
+export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
+  const uniq = [...new Set([...maHangKeys].map((x) => String(x ?? '').trim()).filter(Boolean))]
+  const map = new Map()
+  if (uniq.length === 0 || !isSupabaseConfigured()) return map
+  const sb = getSupabaseClient()
+  if (!sb) return map
+  for (let i = 0; i < uniq.length; i += MA_HANG_LOOKUP_CHUNK) {
+    const part = uniq.slice(i, i + MA_HANG_LOOKUP_CHUNK)
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho`)
+      .in(PRODUCT_PK_COLUMN, part)
+    if (error) throw error
+    for (const row of data || []) {
+      const k = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
+      if (k) map.set(k, row)
+    }
+  }
+  return map
+}
+
 /**
  * Một dòng bảng `products` → dòng phẳng giống sau `rowsToProducts` (catalogCsv), để gom nhóm ĐƠN VỊ TÍNH.
  * @param {Record<string, unknown>} row
