@@ -1,6 +1,6 @@
 /**
- * Hiển thị tồn kho theo công thức: ton_kho / quy_doi (quy_doi ≤ 0 hoặc thiếu → 1),
- * làm tròn tối đa 4 chữ số thập phân — chỉ dùng cho UI, không thay thế giá trị lưu trong catalog.
+ * Hiển thị tồn kho theo công thức: ton_kho / quy_doi (quy_doi ≤ 0 hoặc thiếu → 1).
+ * `formatDisplayTonKhoVi`: luôn **4** chữ số thập phân — chỉ UI, không thay giá trị lưu catalog.
  */
 import { catalogQuyDoiFactorToBase, parseConversionRatio } from './productUnits.js'
 
@@ -30,31 +30,20 @@ export function displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant) {
 }
 
 /**
- * @param {unknown} tonKhoRaw
- * @param {unknown} quyDoiOrVariant — hệ số hoặc object biến thể
- * @param {Record<string, unknown>} [debugRow] — nếu truyền (vd. dòng lưới Hàng hóa): log `Mã hàng` / `Tồn` / `Quy đổi` ra F12
+ * @param {unknown} tonKhoRaw — ton_kho (hoặc stock tương đương)
+ * @param {unknown} quyDoiOrVariant — hệ số quy đổi, hoặc **object dòng** (`row`) có `quy_doi` / `conversion` / `raw.quy_doi`
  */
-export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant, debugRow) {
-  if (debugRow != null && typeof debugRow === 'object') {
-    console.log(
-      'Mã hàng:',
-      debugRow.ma_hang ?? debugRow.code,
-      'Tồn:',
-      tonKhoRaw ?? debugRow.ton_kho ?? debugRow.tonKho ?? debugRow.stock ?? debugRow.stockQty,
-      'Quy đổi:',
-      debugRow.quy_doi ?? debugRow.raw?.quy_doi
-    )
-  }
+export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant) {
   const n = displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant)
   if (n == null) return '—'
-  return n.toLocaleString('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+  return n.toLocaleString('vi-VN', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
 }
 
 /** Nhãn gợi ý phiếu nhập: "Tồn: …" theo ton_kho / quy_doi. */
 export function formatInboundTonLabelVi(stockQty, variant) {
   const n = displayTonKhoNumber(stockQty, variant ?? {})
   if (n == null) return 'Tồn: —'
-  const body = n.toLocaleString('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+  const body = n.toLocaleString('vi-VN', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
   return `Tồn: ${body}`
 }
 

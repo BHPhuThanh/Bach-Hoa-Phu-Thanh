@@ -1,5 +1,31 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { formatDisplayTonKhoVi } from './displayStockQty.js'
+
+/** Giá trị tồn thô trên dòng lưới Hàng hóa (ưu tiên ton_kho). */
+function tonKhoRawFromGoodsRow(row) {
+  if (row.ton_kho != null && Number.isFinite(Number(row.ton_kho))) return Number(row.ton_kho)
+  if (row.stock != null && Number.isFinite(Number(row.stock))) return Number(row.stock)
+  return null
+}
+
+function goodsRowSnapshotEqual(a, b) {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.id === b.id &&
+    a.ton_kho === b.ton_kho &&
+    a.stock === b.stock &&
+    a.quy_doi === b.quy_doi &&
+    Number(a.price) === Number(b.price) &&
+    Number(a.cost) === Number(b.cost) &&
+    a.name === b.name &&
+    a.code === b.code &&
+    a.displayTime === b.displayTime &&
+    a.brand === b.brand &&
+    (a.dvt ?? '') === (b.dvt ?? '') &&
+    (a.unitLabel ?? '') === (b.unitLabel ?? '')
+  )
+}
 
 function GoodsCatalogDvtCell({ row }) {
   const dvt = String(row?.dvt ?? row?.unitLabel ?? '')
@@ -19,7 +45,7 @@ function GoodsCatalogDvtCell({ row }) {
 
 function goodsDataRowPropsEqual(prev, next) {
   return (
-    prev.row === next.row &&
+    goodsRowSnapshotEqual(prev.row, next.row) &&
     prev.selected === next.selected &&
     prev.isOpen === next.isOpen &&
     prev.onRowClick === next.onRowClick &&
@@ -35,6 +61,18 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
   onRowClick,
   onToggleSelect,
 }) {
+  const tonDisplayStr = useMemo(
+    () => formatDisplayTonKhoVi(tonKhoRawFromGoodsRow(row), row),
+    [
+      row.ton_kho,
+      row.stock,
+      row.quy_doi,
+      row.conversion,
+      row.conversionValue,
+      row.raw?.quy_doi,
+      row.code,
+    ]
+  )
   return (
     <tr
       className={`ah-goods-data-row${isOpen ? ' ah-goods-data-row--open' : ''}`}
@@ -56,17 +94,7 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
       <td className="ah-goods-col-brand">{row.brand ? row.brand : ''}</td>
       <td className="ah-num">{row.price.toLocaleString('vi-VN')} đ</td>
       <td className="ah-num">{row.cost.toLocaleString('vi-VN')} đ</td>
-      <td className="ah-num ah-goods-ton-cell">
-        {formatDisplayTonKhoVi(
-          row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
-            ? row.ton_kho
-            : row.stock != null && Number.isFinite(Number(row.stock))
-              ? row.stock
-              : null,
-          row.quy_doi,
-          row
-        )}
-      </td>
+      <td className="ah-num ah-goods-ton-cell">{tonDisplayStr}</td>
       <td className="ah-goods-time ah-goods-col-time">{row.displayTime}</td>
     </tr>
   )
@@ -74,7 +102,7 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
 
 function goodsVirtualRowPropsEqual(prev, next) {
   return (
-    prev.row === next.row &&
+    goodsRowSnapshotEqual(prev.row, next.row) &&
     prev.selected === next.selected &&
     prev.isOpen === next.isOpen &&
     prev.onRowClick === next.onRowClick &&
@@ -92,14 +120,17 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
 }) {
   const priceStr = (Number(row.price) || 0).toLocaleString('vi-VN')
   const costStr = (Number(row.cost) || 0).toLocaleString('vi-VN')
-  const stockStr = formatDisplayTonKhoVi(
-    row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
-      ? row.ton_kho
-      : row.stock != null && Number.isFinite(Number(row.stock))
-        ? row.stock
-        : null,
-    row.quy_doi,
-    row
+  const stockStr = useMemo(
+    () => formatDisplayTonKhoVi(tonKhoRawFromGoodsRow(row), row),
+    [
+      row.ton_kho,
+      row.stock,
+      row.quy_doi,
+      row.conversion,
+      row.conversionValue,
+      row.raw?.quy_doi,
+      row.code,
+    ]
   )
   return (
     <div
