@@ -5,8 +5,10 @@
 import { catalogQuyDoiFactorToBase, parseConversionRatio } from './productUnits.js'
 
 function effectiveQuyDoiScalar(raw) {
-  if (raw == null || (typeof raw === 'string' && !String(raw).trim())) return 1
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw
+  if (raw == null || raw === '') return 1
+  const num = Number(raw)
+  if (Number.isFinite(num) && num > 0) return num
+  if (typeof raw === 'string' && !String(raw).trim()) return 1
   const p = parseConversionRatio(String(raw))
   return p != null && p > 0 ? p : 1
 }
@@ -21,12 +23,28 @@ export function displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant) {
   if (!Number.isFinite(ton)) return null
   const q =
     quyDoiOrVariant != null && typeof quyDoiOrVariant === 'object'
-      ? catalogQuyDoiFactorToBase(quyDoiOrVariant)
-      : effectiveQuyDoiScalar(quyDoiOrVariant)
-  return Math.round((ton / q) * 1e4) / 1e4
+      ? Number(catalogQuyDoiFactorToBase(quyDoiOrVariant))
+      : Number(effectiveQuyDoiScalar(quyDoiOrVariant))
+  const denom = Number.isFinite(q) && q > 0 ? q : 1
+  return Math.round((ton / denom) * 1e4) / 1e4
 }
 
-export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant) {
+/**
+ * @param {unknown} tonKhoRaw
+ * @param {unknown} quyDoiOrVariant — hệ số hoặc object biến thể
+ * @param {Record<string, unknown>} [debugRow] — nếu truyền (vd. dòng lưới Hàng hóa): log `Mã hàng` / `Tồn` / `Quy đổi` ra F12
+ */
+export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant, debugRow) {
+  if (debugRow != null && typeof debugRow === 'object') {
+    console.log(
+      'Mã hàng:',
+      debugRow.ma_hang ?? debugRow.code,
+      'Tồn:',
+      tonKhoRaw ?? debugRow.ton_kho ?? debugRow.tonKho ?? debugRow.stock ?? debugRow.stockQty,
+      'Quy đổi:',
+      debugRow.quy_doi ?? debugRow.raw?.quy_doi
+    )
+  }
   const n = displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant)
   if (n == null) return '—'
   return n.toLocaleString('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })

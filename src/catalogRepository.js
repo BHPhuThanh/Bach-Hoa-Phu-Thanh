@@ -35,6 +35,10 @@ const DEFAULT_CATALOG_FILE_NAME = 'bhphuthanh.csv'
 const PRODUCTS_TABLE = 'products'
 /** Cột thời gian tạo trên Postgres (sau migration `products_created_at`). */
 const PRODUCTS_CREATED_AT_COLUMN = 'created_at'
+
+/** Danh sách cột SELECT — **phải có `quy_doi`** (và các cột catalog) khi đọc `products`. */
+const PRODUCTS_FETCH_COLUMNS = [...CATALOG_PRODUCT_DB_COLUMNS, PRODUCTS_CREATED_AT_COLUMN].join(',')
+
 /** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
 const PRODUCTS_UPSERT_CHUNK = 200
 
@@ -482,6 +486,24 @@ function snapshotFromPayload(j) {
 
 function normalizeDisplayVariantNumbers(v) {
   if (!v || typeof v !== 'object') return v
+  let conversion =
+    v.conversion == null || v.conversion === '' ? null : parseConversionRatio(String(v.conversion))
+  let conversionValue =
+    v.conversionValue == null || v.conversionValue === ''
+      ? null
+      : parseConversionRatio(String(v.conversionValue))
+  const qSrc = v.quy_doi ?? v.quyDoi ?? v.raw?.quy_doi
+  let fromQuy = null
+  if (qSrc != null && qSrc !== '') {
+    const n = Number(qSrc)
+    if (Number.isFinite(n) && n > 0) fromQuy = n
+    else {
+      const p = parseConversionRatio(String(qSrc))
+      if (p != null && p > 0) fromQuy = p
+    }
+  }
+  if (conversion == null && fromQuy != null) conversion = fromQuy
+  if (conversionValue == null && fromQuy != null) conversionValue = fromQuy
   return {
     ...v,
     price: parsePrice(v.price),
@@ -490,12 +512,8 @@ function normalizeDisplayVariantNumbers(v) {
     stockQty: parseStockQty(v.stockQty),
     stockNormMin: v.stockNormMin == null || v.stockNormMin === '' ? null : parseStockQty(v.stockNormMin),
     stockNormMax: v.stockNormMax == null || v.stockNormMax === '' ? null : parseStockQty(v.stockNormMax),
-    conversion:
-      v.conversion == null || v.conversion === '' ? null : parseConversionRatio(String(v.conversion)),
-    conversionValue:
-      v.conversionValue == null || v.conversionValue === ''
-        ? null
-        : parseConversionRatio(String(v.conversionValue)),
+    conversion,
+    conversionValue,
   }
 }
 
@@ -573,7 +591,7 @@ async function fetchAllProductRows(sb) {
   const all = []
   for (;;) {
     const to = from + pageSize - 1
-    let req = sb.from(PRODUCTS_TABLE).select('*')
+    let req = sb.from(PRODUCTS_TABLE).select(PRODUCTS_FETCH_COLUMNS)
     if (sortBy === PRODUCTS_CREATED_AT_COLUMN) {
       req = req
         .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
@@ -608,7 +626,7 @@ export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
     const part = uniq.slice(i, i + MA_HANG_LOOKUP_CHUNK)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
-      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho`)
+      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi`)
       .in(PRODUCT_PK_COLUMN, part)
     if (error) throw error
     for (const row of data || []) {
@@ -617,6 +635,21 @@ export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
     }
   }
   return map
+}
+
+/**
+ * Cột `quy_doi` trên Supabase (số / chuỗi Kiot) → hệ số dương hoặc null.
+ * Luôn thử `Number()` trước để không bỏ lỡ kiểu numeric từ PostgREST.
+ */
+function parseQuyDoiFromProductsTableRow(row) {
+  const raw = row?.quy_doi
+  if (raw != null && raw !== '') {
+    const n = Number(raw)
+    if (Number.isFinite(n) && n > 0) return n
+    const p = parseConversionRatio(String(raw).trim())
+    if (p != null && p > 0) return p
+  }
+  return null
 }
 
 /**
@@ -630,8 +663,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const barcode = String(normalizeBarcodeValue(row.ma_vach ?? ''))
   const nameRaw = String(row.ten_hang ?? '').trim()
   const name = nameRaw || code
-  const convRawStr = String(row.quy_doi ?? '').trim()
-  const conversion = parseConversionRatio(convRawStr)
+  const conversion = parseQuyDoiFromProductsTableRow(row)
   const stockNormMinRaw = String(row.ton_nho_nhat ?? '').trim()
   const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
@@ -654,6 +686,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
     baseGroupCode: '',
     unitLabel: normalizeCatalogUnitLabel(String(row.dvt ?? '')),
     conversion,
+    quy_doi: row.quy_doi,
     ...(conversion != null ? { conversionValue: conversion } : {}),
     weightRaw: String(row.trong_luong ?? '')
       .replace(/\u00A0/g, ' ')

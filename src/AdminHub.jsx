@@ -212,6 +212,8 @@ function flattenCatalogToGoodsRows(products) {
         stock,
         ton_kho,
         quy_doi:
+          v.raw?.quy_doi ??
+          v.quy_doi ??
           v.conversionValue ??
           v.conversion ??
           v.heSoQuyDoi ??

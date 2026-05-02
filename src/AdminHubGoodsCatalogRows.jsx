@@ -63,7 +63,8 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
             : row.stock != null && Number.isFinite(Number(row.stock))
               ? row.stock
               : null,
-          row.quy_doi
+          row.quy_doi,
+          row
         )}
       </td>
       <td className="ah-goods-time ah-goods-col-time">{row.displayTime}</td>
@@ -97,7 +98,8 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
       : row.stock != null && Number.isFinite(Number(row.stock))
         ? row.stock
         : null,
-    row.quy_doi
+    row.quy_doi,
+    row
   )
   return (
     <div

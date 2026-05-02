@@ -301,9 +301,15 @@ export function normalizeGroupRoot(productCode, linkedMasterCode) {
  * Khớp thứ tự gom nhóm trong {@link buildDisplayCatalog} — ví dụ 1 thùng = 48 hộp → 48.
  */
 export function catalogQuyDoiFactorToBase(v) {
-  const raw = v?.conversionValue ?? v?.conversion
+  const raw =
+    v?.conversionValue ??
+    v?.conversion ??
+    v?.quy_doi ??
+    v?.quyDoi ??
+    v?.raw?.quy_doi
   if (raw == null || (typeof raw === 'string' && !String(raw).trim())) return 1
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw
+  const asNum = Number(raw)
+  if (Number.isFinite(asNum) && asNum > 0) return asNum
   const p = parseConversionRatio(String(raw))
   return p != null && p > 0 ? p : 1
 }
