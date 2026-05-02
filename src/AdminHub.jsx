@@ -14,6 +14,7 @@ import { buildK80ReceiptHtml, RECEIPT_STORE_NAME } from './receiptHtml.js'
 import AdminHubRevenuePanel from './AdminHubRevenuePanel.jsx'
 import AdminHubTabErrorBoundary from './AdminHubTabErrorBoundary.jsx'
 import { AdminHubComboModal } from './AdminHubComboModal.jsx'
+import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
 import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
 import { AdminHubGoodsBrandHeaderFilter } from './AdminHubGoodsBrandHeaderFilter.jsx'
@@ -1268,30 +1269,8 @@ export default function AdminHub({
   const [goodsSaveToastGen, setGoodsSaveToastGen] = useState(0)
 
   const [goodsNewModalOpen, setGoodsNewModalOpen] = useState(false)
-  const goodsNewModalOpenRef = useRef(false)
-  const goodsNewBarcodeRef = useRef(null)
-  const goodsNewCodeRef = useRef(null)
-  const goodsNewNameRef = useRef(null)
-  const goodsCreateScanBufferRef = useRef({ buf: '', times: [] })
-  /** Tăng mỗi lần mở modal để remount 3 ô mã vạch / mã hàng / tên (uncontrolled + defaultValue). */
-  const [goodsCreateFieldsKey, setGoodsCreateFieldsKey] = useState(0)
-  const [goodsNewUnit, setGoodsNewUnit] = useState('Cái')
-  const [goodsNewBrand, setGoodsNewBrand] = useState('')
-  const [goodsNewPrice, setGoodsNewPrice] = useState('')
-  const [goodsNewWholesale, setGoodsNewWholesale] = useState('')
-  const [goodsNewCost, setGoodsNewCost] = useState('')
-  const [goodsNewStock, setGoodsNewStock] = useState('0')
-  const [goodsNewUseExpiry, setGoodsNewUseExpiry] = useState('no')
-  const [goodsNewExpiryYmd, setGoodsNewExpiryYmd] = useState('')
-  /** Nhiều ĐVT sau modal thiết lập; null = một dòng theo form. */
-  const [goodsNewMultiVariants, setGoodsNewMultiVariants] = useState(null)
-  /** Trùng mã vạch với catalog — vô hiệu hóa Lưu + hiển thị lỗi dưới ô mã. */
-  const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
   /** null | { mode: 'create' } | { mode: 'edit', product } */
   const [comboModal, setComboModal] = useState(null)
-
-  /** Đồng bộ trước layout effect / capture keydown — tránh ref cũ khi vừa mở modal. */
-  goodsNewModalOpenRef.current = goodsNewModalOpen
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
@@ -1517,296 +1496,14 @@ export default function AdminHub({
     setComboModal({ mode: 'create' })
   }, [revenueReadOnly])
 
-  const closeGoodsCreateModal = useCallback(() => {
-    setGoodsNewModalOpen(false)
-    setGoodsNewUseExpiry('no')
-    setGoodsNewExpiryYmd('')
-    setGoodsNewMultiVariants(null)
-    setGoodsNewBrand('')
-    setGoodsNewWholesale('')
-    setGoodsNewBarcodeDupMsg('')
-    setGoodsNewUnit('Cái')
-    setGoodsNewPrice('')
-    setGoodsNewCost('')
-    setGoodsNewStock('0')
-    goodsCreateScanBufferRef.current = { buf: '', times: [] }
-  }, [])
-
-  const revalidateGoodsNewBarcode = useCallback(() => {
-    const raw = goodsNewBarcodeRef.current?.value ?? ''
-    const n = String(normalizeBarcodeValue(raw)).trim()
-    const list = catalogListRef.current
-    const nextMsg = !n ? '' : catalogHasNormalizedBarcode(list, n) ? 'Mã QR đã có sẵn' : ''
-    setGoodsNewBarcodeDupMsg((prev) => (prev === nextMsg ? prev : nextMsg))
-  }, [])
-
   const openGoodsCreateModal = useCallback(() => {
     if (revenueReadOnly) {
       window.alert('Chỉ tài khoản Admin / Chủ cửa hàng mới thêm hàng hóa từ đây.')
       return
     }
     setGoodsCreateOpen(false)
-    goodsCreateScanBufferRef.current = { buf: '', times: [] }
-    setGoodsCreateFieldsKey((k) => k + 1)
-    setGoodsNewUnit('Cái')
-    setGoodsNewBrand('')
-    setGoodsNewPrice('')
-    setGoodsNewWholesale('')
-    setGoodsNewCost('')
-    setGoodsNewStock('0')
-    setGoodsNewUseExpiry('no')
-    setGoodsNewExpiryYmd('')
-    setGoodsNewMultiVariants(null)
-    setGoodsNewBarcodeDupMsg('')
     setGoodsNewModalOpen(true)
   }, [revenueReadOnly])
-
-  useLayoutEffect(() => {
-    if (!goodsNewModalOpen) return
-    revalidateGoodsNewBarcode()
-  }, [goodsNewModalOpen, goodsCreateFieldsKey, revalidateGoodsNewBarcode])
-
-  const openGoodsCreateUnitModal = useCallback(() => {
-    if (revenueReadOnly) return
-    const nameTrim = String(goodsNewNameRef.current?.value ?? '')
-      .replace(/\u00A0/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (!nameTrim) {
-      window.alert('Vui lòng nhập tên hàng trước khi thiết lập đơn vị tính.')
-      return
-    }
-    const tid =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `gc-${Date.now()}`
-    const root =
-      String(goodsNewCodeRef.current?.value ?? '').trim() ||
-      suggestNextProductCodeFromCatalog(catalogList)
-    const templateRow = {
-      id: tid,
-      code: root,
-      barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
-      name: nameTrim,
-      nameRaw: nameTrim,
-      price: parseMoneyDraftVi(goodsNewPrice),
-      cost: parseMoneyDraftVi(goodsNewCost),
-      stockQty: parseMoneyDraftVi(goodsNewStock),
-      wholesalePrice: parseMoneyDraftVi(goodsNewWholesale),
-      unitLabel: normalizeCatalogUnitLabel(goodsNewUnit) || 'Cái',
-      conversion: 1,
-      conversionValue: 1,
-      linkedMasterCode: '',
-      brand: String(goodsNewBrand ?? '').trim(),
-      supplier: '',
-      stockNormMin: null,
-      stockNormMax: null,
-      weightRaw: '',
-      createdAtMs: Date.now(),
-      raw: [],
-    }
-    const seedVariants = goodsNewMultiVariants?.length
-      ? sortVariantsSmallestUnitFirst(goodsNewMultiVariants)
-      : [templateRow]
-    const anchorId = String(seedVariants[0]?.id || tid)
-    setUnitModal({
-      anchorVariantId: anchorId,
-      lines: createUnitModalLinesFromVariants(seedVariants),
-      source: 'goods_create',
-    })
-  }, [
-    revenueReadOnly,
-    goodsNewPrice,
-    goodsNewWholesale,
-    goodsNewCost,
-    goodsNewStock,
-    goodsNewUnit,
-    goodsNewBrand,
-    goodsNewMultiVariants,
-    catalogList,
-  ])
-
-  const applyExpiryToVariants = useCallback(
-    (rows) => {
-      if (!Array.isArray(rows) || rows.length === 0) return rows
-      if (goodsNewUseExpiry === 'yes' && String(goodsNewExpiryYmd || '').trim()) {
-        const ymd = String(goodsNewExpiryYmd).trim()
-        const ymdDigits = ymd.replace(/\D/g, '')
-        return rows.map((r) => {
-          const codePart = String(r.code ?? '')
-            .replace(/\s/g, '')
-            .slice(-6)
-          const batchId = `LOT${ymdDigits || '00000000'}-${codePart || r.id || '0'}`
-          const q0 = Math.max(0, Number(r.stockQty) || 0)
-          return {
-            ...r,
-            lotExpiryYmd: ymd,
-            manageBatchExpiry: true,
-            stockBatches: [{ batchId, expiryYmd: ymd, qty: q0 }],
-          }
-        })
-      }
-      return rows.map((r) => {
-        const { lotExpiryYmd: _e, manageBatchExpiry: _m, stockBatches: _sb, ...rest } = r
-        return rest
-      })
-    },
-    [goodsNewUseExpiry, goodsNewExpiryYmd]
-  )
-
-  const submitGoodsCreateModal = useCallback(() => {
-    if (revenueReadOnly) return
-    const name = String(goodsNewNameRef.current?.value ?? '')
-      .replace(/\u00A0/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (!name) {
-      window.alert('Vui lòng nhập tên hàng.')
-      return
-    }
-    if (goodsNewUseExpiry === 'yes' && !String(goodsNewExpiryYmd || '').trim()) {
-      window.alert('Vui lòng chọn hạn sử dụng hoặc đổi «Quản lý theo hạn sử dụng» sang Không.')
-      return
-    }
-    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
-    const codeSetExisting = new Set(flat.map((v) => String(v.code ?? '').trim().toLowerCase()).filter(Boolean))
-    const barcodeSetExisting = new Set(
-      flat.map((v) => String(normalizeBarcodeValue(v.barcode ?? ''))).filter(Boolean)
-    )
-
-    const primaryBc = String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')).trim()
-    if (primaryBc && catalogHasNormalizedBarcode(catalogListRef.current, primaryBc)) {
-      setGoodsNewBarcodeDupMsg((p) => (p === 'Mã QR đã có sẵn' ? p : 'Mã QR đã có sẵn'))
-      return
-    }
-
-    if (goodsNewMultiVariants?.length) {
-      for (const v of goodsNewMultiVariants) {
-        const c = String(v.code ?? '').trim().toLowerCase()
-        if (c && codeSetExisting.has(c)) {
-          window.alert(`Mã hàng «${v.code}» đã tồn tại. Vui lòng chỉnh lại trong thiết lập ĐVT.`)
-          return
-        }
-        const b = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
-        if (b && barcodeSetExisting.has(b)) {
-          window.alert(`Mã vạch/QR «${b}» đã có trên hàng khác. Vui lòng chỉnh trong thiết lập ĐVT.`)
-          return
-        }
-      }
-      const brandTrim = String(goodsNewBrand ?? '').trim()
-      const rows = applyExpiryToVariants(
-        goodsNewMultiVariants.map((v) => ({
-          ...v,
-          name,
-          nameRaw: name,
-          brand: brandTrim || String(v.brand ?? '').trim(),
-        }))
-      )
-      if (onAppendCatalogVariants) {
-        onAppendCatalogVariants(rows)
-      } else {
-        const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rows])
-        const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-        void persistStandaloneProducts(
-          nextProducts,
-          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
-          rows
-        )
-      }
-      closeGoodsCreateModal()
-      triggerGoodsSaveSuccessToast()
-      return
-    }
-
-    const code = allocateAutoHhSkuIfEmpty(
-      catalogList,
-      String(goodsNewCodeRef.current?.value ?? '').trim()
-    )
-    const unitLabel = normalizeCatalogUnitLabel(goodsNewUnit) || 'Cái'
-    const codeLc = code.toLowerCase()
-    if (codeSetExisting.has(codeLc)) {
-      window.alert('Mã hàng đã tồn tại. Vui lòng đổi mã khác.')
-      return
-    }
-    const price = parseMoneyDraftVi(goodsNewPrice)
-    const wholesalePrice = parseMoneyDraftVi(goodsNewWholesale)
-    const cost = parseMoneyDraftVi(goodsNewCost)
-    const stockQty = parseMoneyDraftVi(goodsNewStock)
-    if (stockQty < 0) {
-      window.alert('Tồn kho không được âm.')
-      return
-    }
-    const id =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `new-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-    const row = {
-      id,
-      code,
-      barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
-      name,
-      nameRaw: name,
-      price,
-      wholesalePrice,
-      cost,
-      stockQty,
-      supplier: '',
-      brand: String(goodsNewBrand ?? '').trim(),
-      linkedMasterCode: '',
-      baseGroupCode: '',
-      unitLabel,
-      conversion: null,
-      weightRaw: '',
-      stockNormMin: null,
-      stockNormMax: null,
-      createdAtMs: Date.now(),
-      raw: [],
-      ...(goodsNewUseExpiry === 'yes' && String(goodsNewExpiryYmd || '').trim()
-        ? (() => {
-            const ymd = String(goodsNewExpiryYmd).trim()
-            const ymdDigits = ymd.replace(/\D/g, '')
-            const batchId = `LOT${ymdDigits || '00000000'}-${String(code).replace(/\s/g, '').slice(-6) || id}`
-            return {
-              lotExpiryYmd: ymd,
-              manageBatchExpiry: true,
-              stockBatches: [{ batchId, expiryYmd: ymd, qty: Math.max(0, stockQty) }],
-            }
-          })()
-        : {}),
-    }
-    if (onAppendCatalogVariants) {
-      onAppendCatalogVariants([row])
-    } else {
-      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, row])
-      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-      void persistStandaloneProducts(
-        nextProducts,
-        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
-        [row]
-      )
-    }
-    closeGoodsCreateModal()
-    triggerGoodsSaveSuccessToast()
-  }, [
-    revenueReadOnly,
-    goodsNewUnit,
-    goodsNewBrand,
-    goodsNewPrice,
-    goodsNewWholesale,
-    goodsNewCost,
-    goodsNewStock,
-    goodsNewUseExpiry,
-    goodsNewExpiryYmd,
-    goodsNewMultiVariants,
-    catalogList,
-    onAppendCatalogVariants,
-    standaloneCatalog?.fileName,
-    catalogFileName,
-    persistStandaloneProducts,
-    triggerGoodsSaveSuccessToast,
-    applyExpiryToVariants,
-    closeGoodsCreateModal,
-  ])
 
   const replaceCatalogGroupFromModal = useCallback(
     (anchorVariantId, replacements) => {
@@ -1846,88 +1543,10 @@ export default function AdminHub({
   }, [unitModal, closeUnitModal])
 
   useEffect(() => {
-    if (!goodsNewModalOpen) return
-    const onKey = (e) => {
-      if (e.key !== 'Escape') return
-      if (unitModal) return
-      e.preventDefault()
-      closeGoodsCreateModal()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [goodsNewModalOpen, closeGoodsCreateModal, unitModal])
-
-  useLayoutEffect(() => {
-    if (!goodsNewModalOpen) return
-    const id = window.requestAnimationFrame(() => {
-      goodsNewBarcodeRef.current?.focus()
-    })
-    return () => window.cancelAnimationFrame(id)
-  }, [goodsNewModalOpen])
-
-  useEffect(() => {
-    if (!goodsNewModalOpen) return
-    const flush = () => {
-      goodsCreateScanBufferRef.current = { buf: '', times: [] }
-    }
-    const shouldPauseWedge = () => {
-      if (unitModal) return true
-      const ae = document.activeElement
-      if (!ae) return false
-      if (ae === goodsNewBarcodeRef.current) return true
-      if (ae.closest?.('.ah-goods-create-dialog') && ahIsEditableFieldElement(ae)) return true
-      return false
-    }
-    const onKeyDownCapture = (e) => {
-      if (e.repeat) return
-      if (e.ctrlKey || e.metaKey || e.altKey) return
-      if (!goodsNewModalOpenRef.current) return
-      if (shouldPauseWedge()) {
-        flush()
-        return
-      }
-      const st = goodsCreateScanBufferRef.current
-      if (e.key === 'Enter') {
-        const { buf, times } = st
-        flush()
-        if (buf.length < AH_SCAN_MIN_CHARS) return
-        if (!ahScanTimingLooksLikeWedge(times)) return
-        if (!posQueryLooksLikeBarcodeKeyInput(buf)) return
-        e.preventDefault()
-        e.stopPropagation()
-        if (goodsNewBarcodeRef.current) goodsNewBarcodeRef.current.value = buf
-        queueMicrotask(() => {
-          goodsNewBarcodeRef.current?.focus()
-          goodsNewBarcodeRef.current?.select?.()
-          revalidateGoodsNewBarcode()
-        })
-        return
-      }
-      if (ahIsPrintableBarcodeKey(e.key)) {
-        const now = performance.now()
-        if (st.times.length > 0 && now - st.times[st.times.length - 1] > AH_SCAN_MAX_INTER_KEY_MS) {
-          st.buf = ''
-          st.times = []
-        }
-        st.buf += e.key
-        st.times.push(now)
-        e.preventDefault()
-        e.stopPropagation()
-      }
-    }
-    window.addEventListener('keydown', onKeyDownCapture, true)
-    return () => {
-      window.removeEventListener('keydown', onKeyDownCapture, true)
-      flush()
-    }
-  }, [goodsNewModalOpen, unitModal, revalidateGoodsNewBarcode])
-
-  useEffect(() => {
     if (!unitModal?.anchorVariantId) return
-    if (unitModal.source === 'goods_create') return
     if (findVariantContext(catalogList, unitModal.anchorVariantId)) return
     setUnitModal(null)
-  }, [catalogList, unitModal?.anchorVariantId, unitModal?.source])
+  }, [catalogList, unitModal?.anchorVariantId])
 
   const openGoodsUnitModal = useCallback(() => {
     const anchor = goodsDetailSelectedVid || goodsExpandedId
@@ -2504,79 +2123,6 @@ export default function AdminHub({
   const commitUnitModal = useCallback(() => {
     if (!unitModal) return
 
-    if (unitModal.source === 'goods_create') {
-      const nameTrim = String(goodsNewNameRef.current?.value ?? '')
-        .replace(/\u00A0/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (!nameTrim) {
-        window.alert('Vui lòng nhập tên sản phẩm trước khi lưu đơn vị.')
-        return
-      }
-      const sortedLines = sortUnitModalLinesByConversion(unitModal.lines)
-      const root =
-        String(sortedLines[0]?.code ?? goodsNewCodeRef.current?.value ?? '').trim() ||
-        suggestNextProductCodeFromCatalog(catalogList)
-      const err = validateUnitModalLines(sortedLines, root)
-      if (err) {
-        window.alert(err)
-        return
-      }
-      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
-      const templateVariant = {
-        id: unitModal.anchorVariantId,
-        code: root,
-        barcode: String(normalizeBarcodeValue(goodsNewBarcodeRef.current?.value ?? '')),
-        name: nameTrim,
-        nameRaw: nameTrim,
-        price: parseMoneyDigitsVi(sortedLines[0]?.price ?? '0'),
-        cost: parseMoneyDigitsVi(sortedLines[0]?.cost ?? '0'),
-        stockQty: parseMoneyDraftVi(goodsNewStock),
-        wholesalePrice: parseMoneyDraftVi(goodsNewWholesale),
-        unitLabel: normalizeCatalogUnitLabel(sortedLines[0]?.unitLabel ?? goodsNewUnit),
-        conversion: parsePositiveConversion(sortedLines[0]?.conversion) ?? 1,
-        conversionValue: parsePositiveConversion(sortedLines[0]?.conversion) ?? 1,
-        linkedMasterCode: '',
-        brand: String(goodsNewBrand ?? '').trim(),
-        supplier: '',
-        stockNormMin: null,
-        stockNormMax: null,
-        weightRaw: '',
-        createdAtMs: Date.now(),
-        raw: [],
-      }
-      const replacements = buildCatalogVariantsFromUnitModal({
-        templateVariant,
-        linesSorted: sortedLines,
-        nameTrim,
-        prevByVariantId: new Map(),
-      })
-      for (const r of replacements) {
-        const c = String(r.code ?? '').trim().toLowerCase()
-        if (c && flat.some((v) => String(v.code ?? '').trim().toLowerCase() === c)) {
-          window.alert(`Mã hàng «${r.code}» đã tồn tại trong danh mục.`)
-          return
-        }
-      }
-      setGoodsNewMultiVariants(replacements)
-      const first = replacements[0]
-      if (first) {
-        if (goodsNewCodeRef.current) goodsNewCodeRef.current.value = String(first.code ?? '').trim()
-        setGoodsNewUnit(normalizeCatalogUnitLabel(first.unitLabel ?? goodsNewUnit))
-        setGoodsNewPrice(formatMoneyDraftVi(Number(first.price) || 0))
-        setGoodsNewWholesale(formatMoneyDraftVi(Number(first.wholesalePrice) || 0))
-        setGoodsNewCost(formatMoneyDraftVi(Number(first.cost) || 0))
-        if (goodsNewBarcodeRef.current) {
-          goodsNewBarcodeRef.current.value = String(
-            normalizeBarcodeValue(first.barcode ?? goodsNewBarcodeRef.current.value ?? '')
-          )
-        }
-      }
-      setUnitModal(null)
-      triggerGoodsSaveSuccessToast()
-      return
-    }
-
     const ctx = findVariantContext(catalogList, unitModal.anchorVariantId)
     if (!ctx?.variants?.length) {
       setUnitModal(null)
@@ -2631,9 +2177,6 @@ export default function AdminHub({
   }, [
     unitModal,
     catalogList,
-    goodsNewUnit,
-    goodsNewBrand,
-    goodsNewStock,
     goodsDetailDraft,
     goodsDetailVariant,
     soloGoodsDraft,
@@ -2962,6 +2505,7 @@ export default function AdminHub({
   const [inboundCostResultDetailsOpen, setInboundCostResultDetailsOpen] = useState(true)
   const [inboundFormLines, setInboundFormLines] = useState([])
   const [inboundFormProductQ, setInboundFormProductQ] = useState('')
+  const [inboundProductSuggestIdx, setInboundProductSuggestIdx] = useState(0)
   const inboundProductSearchRef = useRef(null)
   const [inboundQuickPickOpen, setInboundQuickPickOpen] = useState(false)
   const [inboundQuickPickSelected, setInboundQuickPickSelected] = useState(() => new Set())
@@ -3020,6 +2564,24 @@ export default function AdminHub({
       surface: 'admin-inbound-product-suggest',
     })
   }, [catalogList, inboundFormProductDebounced])
+
+  const inboundDraftProductQuickAdd = !revenueReadOnly
+  const inboundProductSuggestPanelOpen = useMemo(
+    () =>
+      Boolean(
+        inboundFormProductDebounced.trim() &&
+          (inboundProductSuggest.length > 0 || inboundDraftProductQuickAdd)
+      ),
+    [inboundFormProductDebounced, inboundProductSuggest.length, inboundDraftProductQuickAdd]
+  )
+  const inboundProductSuggestRowCount = useMemo(
+    () => (inboundDraftProductQuickAdd ? 1 : 0) + inboundProductSuggest.length,
+    [inboundDraftProductQuickAdd, inboundProductSuggest.length]
+  )
+
+  useEffect(() => {
+    setInboundProductSuggestIdx(0)
+  }, [inboundFormProductDebounced, inboundProductSuggest])
 
   const inboundFormGoodsSubtotal = useMemo(
     () => inboundFormLines.reduce((s, ln) => s + inboundLineTotal(ln), 0),
@@ -7080,11 +6642,51 @@ export default function AdminHub({
                       autoComplete="off"
                       spellCheck={false}
                       value={inboundFormProductQ}
-                      onChange={(e) => setInboundFormProductQ(e.target.value)}
+                      onChange={(e) => {
+                        setInboundFormProductQ(e.target.value)
+                        setInboundProductSuggestIdx(0)
+                      }}
                       onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown') {
+                          if (!inboundProductSuggestPanelOpen || inboundProductSuggestRowCount <= 0) return
+                          e.preventDefault()
+                          setInboundProductSuggestIdx((i) =>
+                            Math.min(i + 1, inboundProductSuggestRowCount - 1)
+                          )
+                          return
+                        }
+                        if (e.key === 'ArrowUp') {
+                          if (!inboundProductSuggestPanelOpen || inboundProductSuggestRowCount <= 0) return
+                          e.preventDefault()
+                          setInboundProductSuggestIdx((i) => Math.max(i - 1, 0))
+                          return
+                        }
                         if (e.key !== 'Enter') return
                         const q = inboundFormProductQ.trim()
-                        if (!q || catalogList.length === 0) return
+                        if (!q) return
+
+                        if (
+                          inboundProductSuggestPanelOpen &&
+                          inboundProductSuggestRowCount > 0
+                        ) {
+                          if (inboundDraftProductQuickAdd && inboundProductSuggestIdx === 0) {
+                            e.preventDefault()
+                            openGoodsCreateModal()
+                            return
+                          }
+                          const prodIdx = inboundDraftProductQuickAdd
+                            ? inboundProductSuggestIdx - 1
+                            : inboundProductSuggestIdx
+                          if (prodIdx >= 0 && prodIdx < inboundProductSuggest.length) {
+                            e.preventDefault()
+                            const hit = inboundProductSuggest[prodIdx]
+                            addInboundFormLine(hit.product, hit.variant)
+                            return
+                          }
+                        }
+
+                        if (catalogList.length === 0) return
+
                         e.preventDefault()
                         if (posQueryLooksLikeBarcodeKeyInput(q)) {
                           const needle = String(normalizeBarcodeValue(q))
@@ -7104,9 +6706,29 @@ export default function AdminHub({
                       }}
                       placeholder="Mã vạch, mã hàng hoặc tên…"
                     />
-                    {inboundFormProductDebounced.trim() && inboundProductSuggest.length > 0 && (
+                    {inboundProductSuggestPanelOpen && (
                       <ul className="ah-inbound-suggest-list" role="listbox">
-                        {inboundProductSuggest.map(({ product, variant }) => {
+                        {inboundDraftProductQuickAdd ? (
+                          <li role="none">
+                            <button
+                              type="button"
+                              role="option"
+                              id="ah-inbound-sug-quick-add"
+                              className={`ah-inbound-suggest-item ah-inbound-suggest-item--draft ah-inbound-suggest-item--quick-add${
+                                inboundProductSuggestIdx === 0 ? ' ah-inbound-suggest-item--active' : ''
+                              }`}
+                              title="Tạo mới sản phẩm trong danh mục"
+                              onMouseEnter={() => setInboundProductSuggestIdx(0)}
+                              onClick={() => openGoodsCreateModal()}
+                            >
+                              <span className="ah-inbound-sug-name ah-inbound-sug-quick-label">
+                                + Thêm mới sản phẩm
+                              </span>
+                            </button>
+                          </li>
+                        ) : null}
+                        {inboundProductSuggest.map(({ product, variant }, si) => {
+                          const rowIdx = (inboundDraftProductQuickAdd ? 1 : 0) + si
                           const titleName =
                             String(product.name || variant.name || '').trim() || '—'
                           const dvt = normalizeCatalogUnitLabel(variant.unitLabel)
@@ -7116,8 +6738,14 @@ export default function AdminHub({
                               <button
                                 type="button"
                                 role="option"
-                                className="ah-inbound-suggest-item ah-inbound-suggest-item--draft"
+                                id={`ah-inbound-sug-${rowIdx}`}
+                                className={`ah-inbound-suggest-item ah-inbound-suggest-item--draft${
+                                  inboundProductSuggestIdx === rowIdx
+                                    ? ' ah-inbound-suggest-item--active'
+                                    : ''
+                                }`}
                                 title={`${titleName} · ${dvt} · ${ton}`}
+                                onMouseEnter={() => setInboundProductSuggestIdx(rowIdx)}
                                 onClick={() => addInboundFormLine(product, variant)}
                               >
                                 <span className="ah-inbound-sug-name">{titleName}</span>
@@ -7127,6 +6755,11 @@ export default function AdminHub({
                             </li>
                           )
                         })}
+                        {inboundFormProductDebounced.trim() && inboundProductSuggest.length === 0 ? (
+                          <li className="ah-inbound-suggest-empty" role="presentation">
+                            Không có sản phẩm khớp.
+                          </li>
+                        ) : null}
                       </ul>
                     )}
                   </div>
@@ -8127,236 +7760,17 @@ export default function AdminHub({
         />
       )}
 
-      {goodsNewModalOpen && (
-        <div
-          className={`ah-goods-create-overlay${
-            unitModal?.source === 'goods_create' ? ' ah-goods-create-overlay--dim' : ''
-          }`}
-          role="presentation"
-          onClick={closeGoodsCreateModal}
-        >
-          <div
-            className="ah-goods-create-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ah-goods-create-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="ah-goods-create-head">
-              <h2 id="ah-goods-create-title" className="ah-goods-create-title">
-                Tạo hàng hóa
-              </h2>
-              <button
-                type="button"
-                className="ah-goods-create-close"
-                aria-label="Đóng"
-                onClick={closeGoodsCreateModal}
-              >
-                ×
-              </button>
-            </header>
-            <div className="ah-goods-create-body">
-              <div className="ah-goods-create-grid">
-                <label className="ah-goods-create-field ah-goods-create-field--full">
-                  <span className="ah-goods-create-label">
-                    Mã vạch <span className="ah-goods-create-hint">(ưu tiên quét; có thể gõ)</span>
-                  </span>
-                  <input
-                    key={`gnew-bc-${goodsCreateFieldsKey}`}
-                    ref={goodsNewBarcodeRef}
-                    className="ah-goods-create-input ah-goods-create-input--barcode"
-                    type="text"
-                    defaultValue=""
-                    placeholder="Quét hoặc nhập mã vạch"
-                    autoComplete="off"
-                    spellCheck={false}
-                    inputMode="text"
-                    onInput={revalidateGoodsNewBarcode}
-                  />
-                  {goodsNewBarcodeDupMsg ? (
-                    <p className="ah-goods-create-barcode-err" role="alert">
-                      {goodsNewBarcodeDupMsg}
-                    </p>
-                  ) : null}
-                </label>
-                <label className="ah-goods-create-field ah-goods-create-field--full">
-                  <span className="ah-goods-create-label">
-                    Mã hàng <span className="ah-goods-create-hint">(gợi ý tự động, có thể sửa)</span>
-                  </span>
-                  <input
-                    key={`gnew-code-${goodsCreateFieldsKey}`}
-                    ref={goodsNewCodeRef}
-                    className="ah-goods-create-input"
-                    type="text"
-                    defaultValue=""
-                    placeholder={suggestNextProductCodeFromCatalog(catalogList)}
-                    title="Để trống: khi Lưu hệ thống gán đúng mã gợi ý (kiểm tra trùng trước khi gán)"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </label>
-                <label className="ah-goods-create-field ah-goods-create-field--full">
-                  <span className="ah-goods-create-label">
-                    Tên hàng <span className="ah-goods-create-req">*</span>
-                  </span>
-                  <input
-                    key={`gnew-name-${goodsCreateFieldsKey}`}
-                    ref={goodsNewNameRef}
-                    className="ah-goods-create-input"
-                    type="text"
-                    defaultValue=""
-                    placeholder="Nhập tên sản phẩm"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </label>
-                <label className="ah-goods-create-field ah-goods-create-field--full">
-                  <span className="ah-goods-create-label">Thương hiệu</span>
-                  <input
-                    className="ah-goods-create-input"
-                    type="text"
-                    value={goodsNewBrand}
-                    onChange={(e) => setGoodsNewBrand(e.target.value)}
-                    list="ah-goods-new-brand-datalist"
-                    placeholder="Nhập hoặc chọn từ gợi ý"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <datalist id="ah-goods-new-brand-datalist">
-                    {brandOptions.map((b) => (
-                      <option key={b} value={b} />
-                    ))}
-                  </datalist>
-                </label>
-                <label className="ah-goods-create-field">
-                  <span className="ah-goods-create-label">ĐVT (Đơn vị tính cơ bản)</span>
-                  <input
-                    className="ah-goods-create-input"
-                    type="text"
-                    value={goodsNewUnit}
-                    onChange={(e) => setGoodsNewUnit(e.target.value)}
-                    placeholder="cái, chai, thùng…"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </label>
-                <label className="ah-goods-create-field">
-                  <span className="ah-goods-create-label">Giá bán lẻ</span>
-                  <input
-                    className="ah-goods-create-input ah-goods-create-input--num"
-                    type="text"
-                    inputMode="numeric"
-                    value={goodsNewPrice}
-                    onChange={(e) => setGoodsNewPrice(formatMoneyThousandsTyping(e.target.value))}
-                    placeholder="0"
-                    autoComplete="off"
-                  />
-                </label>
-                <label className="ah-goods-create-field">
-                  <span className="ah-goods-create-label">Giá sỉ</span>
-                  <input
-                    className="ah-goods-create-input ah-goods-create-input--num"
-                    type="text"
-                    inputMode="numeric"
-                    value={goodsNewWholesale}
-                    onChange={(e) => setGoodsNewWholesale(formatMoneyThousandsTyping(e.target.value))}
-                    placeholder="0"
-                    autoComplete="off"
-                  />
-                </label>
-                <label className="ah-goods-create-field">
-                  <span className="ah-goods-create-label">Giá vốn</span>
-                  <input
-                    className="ah-goods-create-input ah-goods-create-input--num"
-                    type="text"
-                    inputMode="numeric"
-                    value={goodsNewCost}
-                    onChange={(e) => setGoodsNewCost(formatMoneyThousandsTyping(e.target.value))}
-                    placeholder="0"
-                    autoComplete="off"
-                  />
-                </label>
-                <label className="ah-goods-create-field">
-                  <span className="ah-goods-create-label">Tồn kho</span>
-                  <input
-                    className="ah-goods-create-input ah-goods-create-input--num"
-                    type="text"
-                    inputMode="numeric"
-                    value={goodsNewStock}
-                    onChange={(e) => setGoodsNewStock(e.target.value)}
-                    onBlur={() =>
-                      setGoodsNewStock((v) =>
-                        String(v ?? '').trim() === '' ? '0' : formatMoneyDraftVi(parseMoneyDraftVi(v))
-                      )
-                    }
-                    placeholder="0"
-                    autoComplete="off"
-                  />
-                </label>
-                <div className="ah-goods-create-field ah-goods-create-field--full ah-goods-create-expiry-row">
-                  <span className="ah-goods-create-label">Quản lý theo hạn sử dụng</span>
-                  <div className="ah-goods-create-expiry-inner">
-                    <select
-                      className="ah-goods-create-select"
-                      value={goodsNewUseExpiry}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        setGoodsNewUseExpiry(v)
-                        if (v === 'no') setGoodsNewExpiryYmd('')
-                      }}
-                      aria-label="Quản lý theo hạn sử dụng"
-                    >
-                      <option value="no">Không</option>
-                      <option value="yes">Có</option>
-                    </select>
-                    {goodsNewUseExpiry === 'yes' ? (
-                      <input
-                        className="ah-goods-create-input ah-goods-create-input--date"
-                        type="date"
-                        value={goodsNewExpiryYmd}
-                        onChange={(e) => setGoodsNewExpiryYmd(e.target.value)}
-                        aria-label="Hạn sử dụng"
-                      />
-                    ) : null}
-                  </div>
-                </div>
-                <div className="ah-goods-create-field ah-goods-create-field--full">
-                  <div className="ah-goods-create-uom-row">
-                    <div className="ah-goods-create-uom-text">
-                      <div className="ah-goods-create-uom-title">Quản lý theo đơn vị tính và thuộc tính</div>
-                      <p className="ah-goods-create-uom-desc">
-                        Tạo nhiều đơn vị bán hoặc nhập (chai, lốc, thùng). Đặt công thức quy đổi (ví dụ: 1 thùng = 24
-                        lon). Mỗi đơn vị có thể có mã hàng riêng.
-                      </p>
-                      {goodsNewMultiVariants?.length > 1 ? (
-                        <p className="ah-goods-create-uom-status">
-                          Đã thiết lập {goodsNewMultiVariants.length} đơn vị — bấm Thiết lập để chỉnh lại.
-                        </p>
-                      ) : null}
-                    </div>
-                    <button type="button" className="ah-goods-create-uom-btn" onClick={openGoodsCreateUnitModal}>
-                      Thiết lập
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <footer className="ah-goods-create-foot">
-              <button type="button" className="ah-goods-create-btn ah-goods-create-btn--ghost" onClick={closeGoodsCreateModal}>
-                Bỏ qua
-              </button>
-              <button
-                type="button"
-                className="ah-goods-create-btn ah-goods-create-btn--primary"
-                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg}
-                onClick={submitGoodsCreateModal}
-              >
-                Lưu
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
+      <AdminHubGoodsCreateModal
+        open={goodsNewModalOpen}
+        onClose={() => setGoodsNewModalOpen(false)}
+        catalogList={catalogList}
+        brandOptions={brandOptions}
+        revenueReadOnly={revenueReadOnly}
+        onAppendCatalogVariants={onAppendCatalogVariants}
+        persistStandaloneProducts={persistStandaloneProducts}
+        fileNameHint={standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'}
+        onSaved={triggerGoodsSaveSuccessToast}
+      />
 
       {unitModal && (
         <div

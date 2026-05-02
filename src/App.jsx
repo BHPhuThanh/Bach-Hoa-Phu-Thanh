@@ -35,6 +35,7 @@ import {
 } from './sellerRoleStorage.js'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
+import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import {
   parseAdminHubDeepLinkFromWindow,
   parseAhOpenProductVariantIdFromLocation,
@@ -2347,6 +2348,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [batchPickLineId, setBatchPickLineId] = useState(null)
   const [batchDraftId, setBatchDraftId] = useState(null)
   const [batchSearch, setBatchSearch] = useState('')
+  /** Modal tạo nhanh hàng hóa từ gợi ý ô tìm POS — tái sử dụng AdminHubGoodsCreateModal. */
+  const [posGoodsCreateModalOpen, setPosGoodsCreateModalOpen] = useState(false)
   /** Modal nhóm quy đổi theo «ma_hh_lien_quan» (CSV) — `groupProducts` = biến thể thu được từ danh mục. */
   const [posMaHhLienConvModal, setPosMaHhLienConvModal] = useState(null)
   /**
@@ -3148,6 +3151,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [products, posTextSearchScanList, codeSalesMap, headerSearch, catalogBarcodeCaches]
   )
 
+  const posGoodsBrandOptions = useMemo(() => {
+    const s = new Set()
+    for (const p of products || []) {
+      for (const v of p.groupVariants || [p]) {
+        const b = String(v.brand || '').trim()
+        if (b) s.add(b)
+      }
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [products])
+
+  const showPosQuickAddProductRow =
+    activeView === 'sell' && activeSellerId === 'admin' && headerSuggestOpen
+
+  const posHeaderSuggestTotalRows =
+    (showPosQuickAddProductRow ? 1 : 0) + headerSuggestRows.length
+
   useEffect(() => {
     if (!headerSuggestOpen || headerSuggestRows.length === 0) return
     headerSuggestRows.forEach((row, x) => {
@@ -3164,10 +3184,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   useEffect(() => {
     setHeaderHighlightIndex((h) => {
-      if (headerSuggestRows.length === 0) return 0
-      return Math.min(h, headerSuggestRows.length - 1)
+      if (posHeaderSuggestTotalRows === 0) return 0
+      return Math.min(h, posHeaderSuggestTotalRows - 1)
     })
-  }, [headerSuggestRows.length])
+  }, [posHeaderSuggestTotalRows])
 
   useEffect(() => {
     if (!headerSuggestOpen) return
@@ -3180,11 +3200,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [headerSuggestOpen])
 
   useLayoutEffect(() => {
-    if (!headerSuggestOpen || headerSuggestRows.length === 0) return
+    if (!headerSuggestOpen || posHeaderSuggestTotalRows === 0) return
     document
       .getElementById(`pos-header-sug-${headerHighlightIndex}`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [headerHighlightIndex, headerSuggestOpen, headerSuggestRows.length])
+  }, [headerHighlightIndex, headerSuggestOpen, posHeaderSuggestTotalRows])
 
   useEffect(() => {
     let cancelled = false
@@ -3204,6 +3224,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (activeView !== 'sell') {
       setUnitPickerProduct(null)
       setHeaderSuggestOpen(false)
+      setPosGoodsCreateModalOpen(false)
       setShowConversionByLineId({})
     }
   }, [activeView])
@@ -3282,7 +3303,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
 
     const shouldPauseGlobalScan = () => {
-      if (unitPickerProduct || scannerMenuOpen || batchPickLineId || posMaHhLienConvModal) return true
+      if (
+        unitPickerProduct ||
+        scannerMenuOpen ||
+        batchPickLineId ||
+        posMaHhLienConvModal ||
+        posGoodsCreateModalOpen
+      )
+        return true
       const ae = document.activeElement
       if (ae && ae === headerSearchRef.current) return true
       if (ae && isEditableFieldElement(ae)) return true
@@ -3351,7 +3379,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       window.removeEventListener('keydown', onKeyDownCapture, true)
       flushBuffer()
     }
-  }, [activeView, products.length, unitPickerProduct, scannerMenuOpen, batchPickLineId, posMaHhLienConvModal])
+  }, [
+    activeView,
+    products.length,
+    unitPickerProduct,
+    scannerMenuOpen,
+    batchPickLineId,
+    posMaHhLienConvModal,
+    posGoodsCreateModalOpen,
+  ])
 
   const tryAddProductFromHeader = useCallback(() => {
     const raw = headerSearch.trim()
@@ -3443,13 +3479,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const onHeaderSearchKeyDown = useCallback(
     (e) => {
       if (e.key === 'ArrowDown') {
-        if (!headerSuggestOpen || headerSuggestRows.length === 0) return
+        if (!headerSuggestOpen || posHeaderSuggestTotalRows === 0) return
         e.preventDefault()
-        setHeaderHighlightIndex((h) => Math.min(h + 1, headerSuggestRows.length - 1))
+        setHeaderHighlightIndex((h) => Math.min(h + 1, posHeaderSuggestTotalRows - 1))
         return
       }
       if (e.key === 'ArrowUp') {
-        if (!headerSuggestOpen || headerSuggestRows.length === 0) return
+        if (!headerSuggestOpen || posHeaderSuggestTotalRows === 0) return
         e.preventDefault()
         setHeaderHighlightIndex((h) => Math.max(h - 1, 0))
         return
@@ -3487,11 +3523,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       if (
         headerSuggestOpen &&
-        headerSuggestRows.length > 0 &&
-        headerHighlightIndex >= 0 &&
-        headerHighlightIndex < headerSuggestRows.length
+        showPosQuickAddProductRow &&
+        headerHighlightIndex === 0
       ) {
-        pickHeaderSuggestRow(headerSuggestRows[headerHighlightIndex])
+        setHeaderSuggestOpen(false)
+        setPosGoodsCreateModalOpen(true)
+        return
+      }
+      if (
+        headerSuggestOpen &&
+        headerSuggestRows.length > 0 &&
+        headerHighlightIndex >= (showPosQuickAddProductRow ? 1 : 0) &&
+        headerHighlightIndex < posHeaderSuggestTotalRows
+      ) {
+        const rowIdx = headerHighlightIndex - (showPosQuickAddProductRow ? 1 : 0)
+        pickHeaderSuggestRow(headerSuggestRows[rowIdx])
         return
       }
       tryAddProductFromHeader()
@@ -3510,6 +3556,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       markBarcodeNotFound,
       catalogBarcodeCaches,
       setHeaderSearch,
+      posHeaderSuggestTotalRows,
+      showPosQuickAddProductRow,
     ]
   )
 
@@ -4507,7 +4555,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     aria-controls="pos-header-suggest-list"
                     aria-autocomplete="list"
                     aria-activedescendant={
-                      headerSuggestOpen && headerSuggestRows.length > 0
+                      headerSuggestOpen && posHeaderSuggestTotalRows > 0
                         ? `pos-header-sug-${headerHighlightIndex}`
                         : undefined
                     }
@@ -4556,12 +4604,35 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     role="listbox"
                     aria-label="Gợi ý sản phẩm"
                   >
+                    {showPosQuickAddProductRow ? (
+                      <button
+                        type="button"
+                        role="option"
+                        id="pos-header-sug-0"
+                        aria-selected={headerHighlightIndex === 0}
+                        className={`pos-header-suggest-row pos-header-suggest-row--quick-add${
+                          headerHighlightIndex === 0 ? ' pos-header-suggest-row--active' : ''
+                        }`}
+                        title="Tạo mới sản phẩm trong danh mục"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setHeaderHighlightIndex(0)}
+                        onClick={() => {
+                          setHeaderSuggestOpen(false)
+                          setPosGoodsCreateModalOpen(true)
+                        }}
+                      >
+                        <span className="pos-header-suggest-cell pos-header-suggest-cell--left pos-header-suggest-cell--quick-add">
+                          + Thêm mới sản phẩm
+                        </span>
+                      </button>
+                    ) : null}
                     {headerSuggestRows.length === 0 ? (
                       headerSearch.trim() !== '' ? (
                         <p className="pos-header-suggest-empty">Không có sản phẩm khớp.</p>
                       ) : null
                     ) : (
                       headerSuggestRows.map((row, i) => {
+                        const rowIndex = (showPosQuickAddProductRow ? 1 : 0) + i
                         const v = resolveHeaderSuggestVariant(row, headerSuggestUnitPickByProductId)
                         const sku = String(v.code || '').trim() || '—'
                         const dvt = normalizeCatalogUnitLabel(v.unitLabel)
@@ -4580,14 +4651,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                             key={`pos-sug-${String(v.id)}-${i}`}
                             type="button"
                             role="option"
-                            aria-selected={i === headerHighlightIndex}
-                            id={`pos-header-sug-${i}`}
+                            aria-selected={rowIndex === headerHighlightIndex}
+                            id={`pos-header-sug-${rowIndex}`}
                             className={`pos-header-suggest-row${
-                              i === headerHighlightIndex ? ' pos-header-suggest-row--active' : ''
+                              rowIndex === headerHighlightIndex ? ' pos-header-suggest-row--active' : ''
                             }${showUomSelect ? ' pos-header-suggest-row--multi-uom' : ''}`}
                             title={title}
                             onMouseDown={(e) => e.preventDefault()}
-                            onMouseEnter={() => setHeaderHighlightIndex(i)}
+                            onMouseEnter={() => setHeaderHighlightIndex(rowIndex)}
                             onClick={() => pickHeaderSuggestRow(row)}
                           >
                             <span className="pos-header-suggest-cell pos-header-suggest-cell--left">
@@ -4897,6 +4968,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             </div>
           </div>
         </div>
+      )}
+
+      {activeView === 'sell' && (
+        <AdminHubGoodsCreateModal
+          open={posGoodsCreateModalOpen}
+          onClose={() => setPosGoodsCreateModalOpen(false)}
+          catalogList={products}
+          brandOptions={posGoodsBrandOptions}
+          revenueReadOnly={activeSellerId !== 'admin'}
+          onAppendCatalogVariants={handleAppendCatalogVariants}
+          fileNameHint={fileName || 'hang-hoa-thu-cong'}
+        />
       )}
 
       {activeView === 'dashboard' && (

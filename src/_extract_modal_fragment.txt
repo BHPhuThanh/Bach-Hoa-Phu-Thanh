@@ -1,0 +1,480 @@
+﻿      {goodsNewModalOpen && (
+        <div
+          className={`ah-goods-create-overlay${
+            unitModal?.source === 'goods_create' ? ' ah-goods-create-overlay--dim' : ''
+          }`}
+          role="presentation"
+          onClick={closeGoodsCreateModal}
+        >
+          <div
+            className="ah-goods-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-goods-create-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-goods-create-head">
+              <h2 id="ah-goods-create-title" className="ah-goods-create-title">
+                Táº¡o hÃ ng hÃ³a
+              </h2>
+              <button
+                type="button"
+                className="ah-goods-create-close"
+                aria-label="ÄÃ³ng"
+                onClick={closeGoodsCreateModal}
+              >
+                Ã—
+              </button>
+            </header>
+            <div className="ah-goods-create-body">
+              <div className="ah-goods-create-grid">
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    MÃ£ váº¡ch <span className="ah-goods-create-hint">(Æ°u tiÃªn quÃ©t; cÃ³ thá»ƒ gÃµ)</span>
+                  </span>
+                  <input
+                    key={`gnew-bc-${goodsCreateFieldsKey}`}
+                    ref={goodsNewBarcodeRef}
+                    className="ah-goods-create-input ah-goods-create-input--barcode"
+                    type="text"
+                    defaultValue=""
+                    placeholder="QuÃ©t hoáº·c nháº­p mÃ£ váº¡ch"
+                    autoComplete="off"
+                    spellCheck={false}
+                    inputMode="text"
+                    onInput={revalidateGoodsNewBarcode}
+                  />
+                  {goodsNewBarcodeDupMsg ? (
+                    <p className="ah-goods-create-barcode-err" role="alert">
+                      {goodsNewBarcodeDupMsg}
+                    </p>
+                  ) : null}
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    MÃ£ hÃ ng <span className="ah-goods-create-hint">(gá»£i Ã½ tá»± Ä‘á»™ng, cÃ³ thá»ƒ sá»­a)</span>
+                  </span>
+                  <input
+                    key={`gnew-code-${goodsCreateFieldsKey}`}
+                    ref={goodsNewCodeRef}
+                    className="ah-goods-create-input"
+                    type="text"
+                    defaultValue=""
+                    placeholder={suggestNextProductCodeFromCatalog(catalogList)}
+                    title="Äá»ƒ trá»‘ng: khi LÆ°u há»‡ thá»‘ng gÃ¡n Ä‘Ãºng mÃ£ gá»£i Ã½ (kiá»ƒm tra trÃ¹ng trÆ°á»›c khi gÃ¡n)"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">
+                    TÃªn hÃ ng <span className="ah-goods-create-req">*</span>
+                  </span>
+                  <input
+                    key={`gnew-name-${goodsCreateFieldsKey}`}
+                    ref={goodsNewNameRef}
+                    className="ah-goods-create-input"
+                    type="text"
+                    defaultValue=""
+                    placeholder="Nháº­p tÃªn sáº£n pháº©m"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field ah-goods-create-field--full">
+                  <span className="ah-goods-create-label">ThÆ°Æ¡ng hiá»‡u</span>
+                  <input
+                    className="ah-goods-create-input"
+                    type="text"
+                    value={goodsNewBrand}
+                    onChange={(e) => setGoodsNewBrand(e.target.value)}
+                    list="ah-goods-new-brand-datalist"
+                    placeholder="Nháº­p hoáº·c chá»n tá»« gá»£i Ã½"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <datalist id="ah-goods-new-brand-datalist">
+                    {brandOptions.map((b) => (
+                      <option key={b} value={b} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">ÄVT (ÄÆ¡n vá»‹ tÃ­nh cÆ¡ báº£n)</span>
+                  <input
+                    className="ah-goods-create-input"
+                    type="text"
+                    value={goodsNewUnit}
+                    onChange={(e) => setGoodsNewUnit(e.target.value)}
+                    placeholder="cÃ¡i, chai, thÃ¹ngâ€¦"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">GiÃ¡ bÃ¡n láº»</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewPrice}
+                    onChange={(e) => setGoodsNewPrice(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">GiÃ¡ sá»‰</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewWholesale}
+                    onChange={(e) => setGoodsNewWholesale(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">GiÃ¡ vá»‘n</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewCost}
+                    onChange={(e) => setGoodsNewCost(formatMoneyThousandsTyping(e.target.value))}
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="ah-goods-create-field">
+                  <span className="ah-goods-create-label">Tá»“n kho</span>
+                  <input
+                    className="ah-goods-create-input ah-goods-create-input--num"
+                    type="text"
+                    inputMode="numeric"
+                    value={goodsNewStock}
+                    onChange={(e) => setGoodsNewStock(e.target.value)}
+                    onBlur={() =>
+                      setGoodsNewStock((v) =>
+                        String(v ?? '').trim() === '' ? '0' : formatMoneyDraftVi(parseMoneyDraftVi(v))
+                      )
+                    }
+                    placeholder="0"
+                    autoComplete="off"
+                  />
+                </label>
+                <div className="ah-goods-create-field ah-goods-create-field--full ah-goods-create-expiry-row">
+                  <span className="ah-goods-create-label">Quáº£n lÃ½ theo háº¡n sá»­ dá»¥ng</span>
+                  <div className="ah-goods-create-expiry-inner">
+                    <select
+                      className="ah-goods-create-select"
+                      value={goodsNewUseExpiry}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setGoodsNewUseExpiry(v)
+                        if (v === 'no') setGoodsNewExpiryYmd('')
+                      }}
+                      aria-label="Quáº£n lÃ½ theo háº¡n sá»­ dá»¥ng"
+                    >
+                      <option value="no">KhÃ´ng</option>
+                      <option value="yes">CÃ³</option>
+                    </select>
+                    {goodsNewUseExpiry === 'yes' ? (
+                      <input
+                        className="ah-goods-create-input ah-goods-create-input--date"
+                        type="date"
+                        value={goodsNewExpiryYmd}
+                        onChange={(e) => setGoodsNewExpiryYmd(e.target.value)}
+                        aria-label="Háº¡n sá»­ dá»¥ng"
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div className="ah-goods-create-field ah-goods-create-field--full">
+                  <div className="ah-goods-create-uom-row">
+                    <div className="ah-goods-create-uom-text">
+                      <div className="ah-goods-create-uom-title">Quáº£n lÃ½ theo Ä‘Æ¡n vá»‹ tÃ­nh vÃ  thuá»™c tÃ­nh</div>
+                      <p className="ah-goods-create-uom-desc">
+                        Táº¡o nhiá»u Ä‘Æ¡n vá»‹ bÃ¡n hoáº·c nháº­p (chai, lá»‘c, thÃ¹ng). Äáº·t cÃ´ng thá»©c quy Ä‘á»•i (vÃ­ dá»¥: 1 thÃ¹ng = 24
+                        lon). Má»—i Ä‘Æ¡n vá»‹ cÃ³ thá»ƒ cÃ³ mÃ£ hÃ ng riÃªng.
+                      </p>
+                      {goodsNewMultiVariants?.length > 1 ? (
+                        <p className="ah-goods-create-uom-status">
+                          ÄÃ£ thiáº¿t láº­p {goodsNewMultiVariants.length} Ä‘Æ¡n vá»‹ â€” báº¥m Thiáº¿t láº­p Ä‘á»ƒ chá»‰nh láº¡i.
+                        </p>
+                      ) : null}
+                    </div>
+                    <button type="button" className="ah-goods-create-uom-btn" onClick={openGoodsCreateUnitModal}>
+                      Thiáº¿t láº­p
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <footer className="ah-goods-create-foot">
+              <button type="button" className="ah-goods-create-btn ah-goods-create-btn--ghost" onClick={closeGoodsCreateModal}>
+                Bá» qua
+              </button>
+              <button
+                type="button"
+                className="ah-goods-create-btn ah-goods-create-btn--primary"
+                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg}
+                onClick={submitGoodsCreateModal}
+              >
+                LÆ°u
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {unitModal && (
+        <div
+          className="ah-unit-modal-overlay"
+          role="presentation"
+          onClick={closeUnitModal}
+        >
+          <div
+            className="ah-unit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ah-unit-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-unit-modal__head">
+              <h2 id="ah-unit-modal-title" className="ah-unit-modal__title">
+                Thiáº¿t láº­p Ä‘Æ¡n vá»‹ tÃ­nh vÃ  thuá»™c tÃ­nh
+              </h2>
+              <button type="button" className="ah-unit-modal__close" aria-label="ÄÃ³ng" onClick={closeUnitModal}>
+                Ã—
+              </button>
+            </header>
+            <div className="ah-unit-modal__body">
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">ÄÆ¡n vá»‹ tÃ­nh</h3>
+                <p className="ah-unit-modal__lead">
+                  ThÃªm Ä‘Æ¡n vá»‹ bÃ¡n hoáº·c nháº­p nhÆ° chai, lá»‘c, thÃ¹ng. Äáº·t cÃ´ng thá»©c quy Ä‘á»•i Ä‘á»ƒ tÃ­nh nhanh giÃ¡ vÃ  tá»“n
+                  kho. VÃ­ dá»¥: 1 lá»‘c = 6 chai, 1 thÃ¹ng = 24 chai.
+                </p>
+                <div className="ah-unit-modal__chips" aria-label="Danh sÃ¡ch Ä‘Æ¡n vá»‹">
+                  {unitModalSortedRows.map((row, idx) => {
+                    const baseLbl =
+                      normalizeCatalogUnitLabel(unitModalSortedRows[0]?.unitLabel || '').trim() ||
+                      'Ä‘Æ¡n vá»‹ cÆ¡ báº£n'
+                    const conv = parsePositiveConversion(row.conversion) ?? 1
+                    const sub =
+                      idx === 0
+                        ? 'ÄÆ¡n vá»‹ cÆ¡ báº£n'
+                        : `1 ${normalizeCatalogUnitLabel(row.unitLabel) || 'â€¦'} = ${conv} ${baseLbl}`
+                    return (
+                      <div
+                        key={row.key}
+                        className={`ah-unit-modal__chip${idx === 0 ? ' ah-unit-modal__chip--base' : ''}`}
+                      >
+                        <div className="ah-unit-modal__chip-meta">{sub}</div>
+                        <div className="ah-unit-modal__chip-fields">
+                          <label className="ah-unit-modal__sr" htmlFor={`um-u-${row.key}`}>
+                            ÄÆ¡n vá»‹
+                          </label>
+                          <input
+                            id={`um-u-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__chip-input"
+                            value={row.unitLabel}
+                            onChange={(e) =>
+                              setUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                            placeholder="VÃ­ dá»¥: Chai"
+                            autoComplete="off"
+                          />
+                          <label className="ah-unit-modal__sr" htmlFor={`um-c-${row.key}`}>
+                            Quy Ä‘á»•i
+                          </label>
+                          <input
+                            id={`um-c-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__chip-input ah-unit-modal__chip-input--conv"
+                            inputMode="decimal"
+                            value={row.conversion}
+                            onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                            placeholder="1"
+                          />
+                          {idx > 0 ? (
+                            <button
+                              type="button"
+                              className="ah-unit-modal__chip-remove"
+                              aria-label="XÃ³a Ä‘Æ¡n vá»‹"
+                              onClick={() => removeUnitModalRowKey(row.key)}
+                            >
+                              Ã—
+                            </button>
+                          ) : (
+                            <span className="ah-unit-modal__chip-spacer" aria-hidden />
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <button type="button" className="ah-unit-modal__add-inline" onClick={addUnitModalRow}>
+                  + ThÃªm Ä‘Æ¡n vá»‹
+                </button>
+              </section>
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">Thuá»™c tÃ­nh</h3>
+                <p className="ah-unit-modal__muted">ChÆ°a cÃ³ thuá»™c tÃ­nh.</p>
+              </section>
+              <section className="ah-unit-modal__section">
+                <h3 className="ah-unit-modal__section-title">HÃ ng cÃ¹ng loáº¡i</h3>
+                <p className="ah-unit-modal__lead ah-unit-modal__lead--tight">
+                  Báº£ng Ä‘á»“ng bá»™ vá»›i Ä‘Æ¡n vá»‹ á»Ÿ trÃªn. Nháº­p giÃ¡ vá»‘n / giÃ¡ bÃ¡n á»Ÿ Ä‘Æ¡n vá»‹ nhá» nháº¥t Ä‘á»ƒ há»‡ thá»‘ng nhÃ¢n theo tá»·
+                  lá»‡ quy Ä‘á»•i (cÃ³ thá»ƒ chá»‰nh tay tá»«ng dÃ²ng).
+                </p>
+                <div className="admin-hub-table-wrap ah-unit-modal__table-wrap">
+                  <table className="admin-hub-table ah-unit-modal__table">
+                    <thead>
+                      <tr>
+                        <th>ÄÆ¡n vá»‹</th>
+                        <th className="ah-num">Quy Ä‘á»•i</th>
+                        <th>MÃ£ hÃ ng</th>
+                        <th>MÃ£ váº¡ch</th>
+                        <th className="ah-num">GiÃ¡ vá»‘n</th>
+                        <th className="ah-num">GiÃ¡ bÃ¡n</th>
+                        <th aria-label="XÃ³a" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {unitModalSortedRows.map((row, idx) => (
+                        <tr key={`tbl-${row.key}`}>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.unitLabel}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--narrow"
+                              inputMode="decimal"
+                              value={row.conversion}
+                              onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.code}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, code: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input"
+                              value={row.barcode}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, barcode: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
+                              inputMode="numeric"
+                              value={row.cost}
+                              onChange={(e) =>
+                                updateUnitModalCostAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </td>
+                          <td className="ah-num">
+                            <input
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
+                              inputMode="numeric"
+                              value={row.price}
+                              onChange={(e) =>
+                                updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </td>
+                          <td>
+                            {idx > 0 ? (
+                              <button
+                                type="button"
+                                className="ah-unit-modal__row-remove"
+                                aria-label="XÃ³a dÃ²ng"
+                                onClick={() => removeUnitModalRowKey(row.key)}
+                              >
+                                XÃ³a
+                              </button>
+                            ) : (
+                              <span className="admin-hub-muted">â€”</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+            <footer className="ah-unit-modal__foot">
+              <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={closeUnitModal}>
+                Bá» qua
+              </button>
+              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={commitUnitModal}>
+                Xong
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {goodsSaveToastGen > 0 && (
+        <div
+          key={goodsSaveToastGen}
+          className="ah-save-toast"
+          role="status"
+          aria-live="polite"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return
+            setGoodsSaveToastGen(0)

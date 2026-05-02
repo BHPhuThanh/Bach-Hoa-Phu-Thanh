@@ -1186,6 +1186,21 @@
   border-bottom: none;
 }
 
+.pos-header-suggest-row--quick-add {
+  border-bottom: 1px solid #334155;
+  font-weight: 600;
+  color: #38bdf8;
+}
+
+.pos-header-suggest-row--quick-add:hover,
+.pos-header-suggest-row--quick-add.pos-header-suggest-row--active {
+  color: #e0f2fe;
+}
+
+.pos-header-suggest-cell--quick-add {
+  font-size: 0.92rem;
+}
+
 .pos-header-suggest-row:hover,
 .pos-header-suggest-row--active {
   background: rgba(0, 86, 179, 0.38);
