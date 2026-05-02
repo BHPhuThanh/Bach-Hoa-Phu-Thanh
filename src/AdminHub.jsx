@@ -98,6 +98,7 @@ import {
   saveStockCheckVouchers,
   stockQtyMeaningfullyChanged,
 } from './stockCheckStorage.js'
+import { formatInboundTonLabelVi } from './displayStockQty.js'
 import {
   COST_ADJUST_SYNC_BUMP_KEY,
   appendCompletedCostAdjustFromGoods,
@@ -210,6 +211,12 @@ function flattenCatalogToGoodsRows(products) {
         cost,
         stock,
         ton_kho,
+        quy_doi:
+          v.conversionValue ??
+          v.conversion ??
+          v.heSoQuyDoi ??
+          v.quyDoi ??
+          '',
         createdAtMs: okTime ? createdAtMs : 0,
         displayTime,
       })
@@ -589,14 +596,6 @@ function netVariantQtyMapFromInboundLines(lines) {
 function inboundLineTotal(line) {
   const gross = Math.max(0, Number(line.qty) || 0) * Math.max(0, Number(line.unitPrice) || 0)
   return Math.max(0, gross - Math.max(0, Number(line.lineDiscount) || 0))
-}
-
-/** Gợi ý dạng "Tồn: 157" (số nguyên không thêm dấu phân tách nếu tròn). */
-function formatInboundTonLabel(stockQty) {
-  if (stockQty == null || !Number.isFinite(Number(stockQty))) return 'Tồn: —'
-  const n = Number(stockQty)
-  const body = Number.isInteger(n) ? String(n) : n.toLocaleString('vi-VN', { maximumFractionDigits: 4 })
-  return `Tồn: ${body}`
 }
 
 /** Thương hiệu — CSV `thuong_hieu` (cột D) được map vào `brand` trên biến thể. */
@@ -6732,7 +6731,7 @@ export default function AdminHub({
                           const titleName =
                             String(product.name || variant.name || '').trim() || '—'
                           const dvt = normalizeCatalogUnitLabel(variant.unitLabel)
-                          const ton = formatInboundTonLabel(variant.stockQty)
+                          const ton = formatInboundTonLabelVi(variant.stockQty, variant)
                           return (
                             <li key={variant.id} role="none">
                               <button

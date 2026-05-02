@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { formatDisplayTonKhoVi } from './displayStockQty.js'
 
 function GoodsCatalogDvtCell({ row }) {
   const dvt = String(row?.dvt ?? row?.unitLabel ?? '')
@@ -56,16 +57,14 @@ export const GoodsCatalogDataRow = memo(function GoodsCatalogDataRow({
       <td className="ah-num">{row.price.toLocaleString('vi-VN')} đ</td>
       <td className="ah-num">{row.cost.toLocaleString('vi-VN')} đ</td>
       <td className="ah-num ah-goods-ton-cell">
-        {(() => {
-          console.log('Dữ liệu tồn kho:', row.ton_kho)
-          const n =
-            row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
-              ? Number(row.ton_kho)
-              : row.stock != null && Number.isFinite(Number(row.stock))
-                ? Number(row.stock)
-                : null
-          return n != null ? n.toLocaleString('vi-VN') : '—'
-        })()}
+        {formatDisplayTonKhoVi(
+          row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
+            ? row.ton_kho
+            : row.stock != null && Number.isFinite(Number(row.stock))
+              ? row.stock
+              : null,
+          row.quy_doi
+        )}
       </td>
       <td className="ah-goods-time ah-goods-col-time">{row.displayTime}</td>
     </tr>
@@ -92,13 +91,14 @@ export const GoodsCatalogVirtualDataRow = memo(function GoodsCatalogVirtualDataR
 }) {
   const priceStr = (Number(row.price) || 0).toLocaleString('vi-VN')
   const costStr = (Number(row.cost) || 0).toLocaleString('vi-VN')
-  const tonNum =
+  const stockStr = formatDisplayTonKhoVi(
     row.ton_kho != null && Number.isFinite(Number(row.ton_kho))
-      ? Number(row.ton_kho)
+      ? row.ton_kho
       : row.stock != null && Number.isFinite(Number(row.stock))
-        ? Number(row.stock)
-        : null
-  const stockStr = tonNum != null ? tonNum.toLocaleString('vi-VN') : '—'
+        ? row.stock
+        : null,
+    row.quy_doi
+  )
   return (
     <div
       role="row"

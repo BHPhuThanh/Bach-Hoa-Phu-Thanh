@@ -19,6 +19,7 @@ import {
 } from './stockCheckStorage.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
+import { formatDisplayTonKhoVi } from './displayStockQty.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
@@ -52,11 +53,6 @@ function parseStockInput(raw) {
   return Number.isFinite(n) ? n : null
 }
 
-function formatQtyVi(n) {
-  if (n == null || !Number.isFinite(Number(n))) return '—'
-  return Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 4 })
-}
-
 function formatSignedQtyVi(n) {
   if (!Number.isFinite(n)) return '—'
   const abs = Math.abs(n)
@@ -72,6 +68,18 @@ function deltaLabel(branchQty, actualRaw) {
   if (actual === null) return '—'
   if (b === null) return formatSignedQtyVi(actual)
   return formatSignedQtyVi(actual - b)
+}
+
+function findCatalogVariantById(products, variantId) {
+  const id = String(variantId ?? '').trim()
+  if (!id) return null
+  for (const p of products || []) {
+    const vars = p.groupVariants || [p]
+    for (const v of vars) {
+      if (String(v.id) === id) return v
+    }
+  }
+  return null
 }
 
 function buildRowFromVariant(product, variant) {
@@ -481,7 +489,9 @@ export default function StockCheckCreatePage() {
                     </td>
                   </tr>
                 ) : (
-                  pageRows.map((row, i) => (
+                  pageRows.map((row, i) => {
+                    const vDisp = findCatalogVariantById(products, row.variantId)
+                    return (
                     <tr key={row.key}>
                       <td>{(pageSafe - 1) * pageSize + i + 1}</td>
                       <td>
@@ -492,7 +502,7 @@ export default function StockCheckCreatePage() {
                         <div className="cac-name-code">{row.productCode || '—'}</div>
                       </td>
                       <td>{row.unitLabel || '—'}</td>
-                      <td className="cac-num">{formatQtyVi(row.branchQty)}</td>
+                      <td className="cac-num">{formatDisplayTonKhoVi(row.branchQty, vDisp ?? {})}</td>
                       <td className="cac-num">
                         <input
                           className="cac-in"
@@ -530,7 +540,8 @@ export default function StockCheckCreatePage() {
                         </button>
                       </td>
                     </tr>
-                  ))
+                    )
+                  })
                 )}
               </tbody>
             </table>

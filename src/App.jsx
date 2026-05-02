@@ -101,6 +101,7 @@ import {
   mergeCartLineStockIntoDeltaMap,
   salableComboPackCount,
 } from './comboCatalog.js'
+import { displayTonKhoNumber, formatRoundedStockQtyVi } from './displayStockQty.js'
 
 /**
  * Tách một dòng CSV/delimited, hỗ trợ dấu ngoặc kép và ký tự phân cách tùy chọn (, hoặc ;).
@@ -409,7 +410,10 @@ function salableQtyInVariantUnitsForPos(products, product, variant) {
   return null
 }
 
-/** Tồn kho hiển thị trên thẻ (đa ĐƠN VỊ TÍNH: lấy tồn đơn vị cơ sở; combo = số gói bán được theo BOM). */
+/**
+ * Tồn kho hiển thị trên thẻ: ton_kho / quy_doi (4 chữ số thập phân);
+ * đa ĐƠN VỊ TÍNH: từ biến thể cơ sở; combo = số gói bán được theo BOM.
+ */
 function catalogStockLabel(products, p) {
   if (p && isComboCatalogProduct(p)) {
     return salableComboPackCount(products, getComboBom(p))
@@ -418,21 +422,24 @@ function catalogStockLabel(products, p) {
   if (vars.length > 1) {
     const base = baseVariantForProduct(p)
     const q = base?.stockQty
-    if (q != null && Number.isFinite(Number(q))) return Number(q)
+    if (q != null && Number.isFinite(Number(q))) return displayTonKhoNumber(q, base)
     return null
   }
   const rep = p?.stockQty
-  if (rep != null && Number.isFinite(Number(rep))) return Number(rep)
+  if (rep != null && Number.isFinite(Number(rep))) return displayTonKhoNumber(rep, p)
   let sum = 0
   let n = 0
   for (const v of vars) {
     const q = v.stockQty
     if (q != null && Number.isFinite(Number(q))) {
-      sum += Number(q)
-      n += 1
+      const d = displayTonKhoNumber(q, v)
+      if (d != null) {
+        sum += d
+        n += 1
+      }
     }
   }
-  if (n > 0) return sum
+  if (n > 0) return Math.round(sum * 1e4) / 1e4
   return null
 }
 
@@ -1804,14 +1811,6 @@ function formatVnDots(n) {
   const sign = x < 0 ? '-' : ''
   const abs = Math.abs(x)
   return sign + String(abs).replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-}
-
-/** Hiển thị SL / tồn (có thể thập phân). */
-function formatQtyOrStockVi(n) {
-  const x = Number(n)
-  if (!Number.isFinite(x)) return '0'
-  if (Math.abs(x - Math.round(x)) < 1e-9) return formatVnDots(Math.round(x))
-  return x.toLocaleString('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 6 })
 }
 
 function parseVnIntMoney(str) {
@@ -4639,7 +4638,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                         const salable = salableQtyInVariantUnitsForPos(products, row.product, v)
                         const stock =
                           salable != null && Number.isFinite(Number(salable))
-                            ? formatQtyOrStockVi(salable)
+                            ? formatRoundedStockQtyVi(salable)
                             : '—'
                         const priceStr = `${effectiveSellUnitPrice(v, sellWholesaleMode).toLocaleString('vi-VN')} đ`
                         const baseName = String(v.name ?? '').trim() || 'Không tên'
@@ -5630,7 +5629,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                                   >
                                     <span className="pos-bestseller-stock" aria-label="Tồn kho">
                                       {stockVal != null
-                                        ? `Tồn ${formatQtyOrStockVi(stockVal)}`
+                                        ? `Tồn ${formatRoundedStockQtyVi(stockVal)}`
                                         : 'Tồn —'}
                                     </span>
                                     {p.multiUnit ? (
@@ -5913,7 +5912,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                               />
                             </td>
                             <td>{b.expiryYmd ? formatExpiryYmdVi(b.expiryYmd) : '—'}</td>
-                            <td className="pos-batch-col-num">{formatQtyOrStockVi(b.qty)}</td>
+                            <td className="pos-batch-col-num">{formatRoundedStockQtyVi(b.qty)}</td>
                           </tr>
                         )
                       })
@@ -6047,7 +6046,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 const label = `— ${normalizeCatalogUnitLabel(u)}`
                 const sal = salableQtyInVariantUnitsForPos(products, unitPickerProduct, v)
                 const salStr =
-                  sal != null && Number.isFinite(sal) ? `Có thể bán: ${formatQtyOrStockVi(sal)}` : null
+                  sal != null && Number.isFinite(sal) ? `Có thể bán: ${formatRoundedStockQtyVi(sal)}` : null
                 return (
                   <li key={v.id}>
                     <button
