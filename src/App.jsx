@@ -89,6 +89,7 @@ import {
   CATALOG_SYNC_BUMP_KEY,
   applyProductDataToCatalog,
   fetchProducts,
+  flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
   readCatalogSnapshotSync,
   revalidateCatalogFromStore,
@@ -96,9 +97,9 @@ import {
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
+  buildCartSaleStockDeltaByVariantId,
   getComboBom,
   isComboCatalogProduct,
-  mergeCartLineStockIntoDeltaMap,
   salableComboPackCount,
 } from './comboCatalog.js'
 import { displayTonKhoNumber, formatRoundedStockQtyVi } from './displayStockQty.js'
@@ -1753,13 +1754,15 @@ function rehydrateSellOrdersFromSnapshot(products, rawOrders, wholesaleMode) {
   return { orders: hydrated }
 }
 
-/** Trừ tồn kho catalog theo số lượng bán (đa ĐƠN VỊ TÍNH: trừ theo đơn vị cơ sở); trừ thêm từng lô nếu có stockBatches. */
-function applySoldQtyToCatalog(products, cartLines) {
+/**
+ * Trừ tồn kho catalog theo số lượng bán (SL × quy_doi theo ĐVT cơ bản; trừ đồng bộ mọi SKU anh em);
+ * trừ thêm từng lô nếu có stockBatches.
+ * @param {{ precomputedDelta?: Map<string, number> }} [options]
+ */
+function applySoldQtyToCatalog(products, cartLines, options) {
   if (!products?.length || !cartLines?.length) return products
-  const deltaBaseByVid = new Map()
-  for (const l of cartLines) {
-    mergeCartLineStockIntoDeltaMap(products, l, deltaBaseByVid)
-  }
+  const deltaBaseByVid =
+    options?.precomputedDelta ?? buildCartSaleStockDeltaByVariantId(products, cartLines)
 
   /** @type {Map<string, Map<string, number>>} */
   const batchDecByVariantId = new Map()
@@ -3826,12 +3829,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ...l,
         qty: effectiveCartLineQty(l, cartQtyDraftByLine),
       }))
+      const saleStockDelta = buildCartSaleStockDeltaByVariantId(products, cartForStock)
+      const touchedVariantIds = new Set([...saleStockDelta.keys()].map((id) => String(id)))
       setProducts((prev) => {
-        const next = applySoldQtyToCatalog(prev, cartForStock)
+        const next = applySoldQtyToCatalog(prev, cartForStock, {
+          precomputedDelta: saleStockDelta,
+        })
         queueMicrotask(() => {
           if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
           void (async () => {
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            const flat = flattenDisplayCatalogToVariants(next)
+            const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+              tonKhoOnlyVariants,
+            })
             if (r.ok) await applyServerCatalogAfterPersist()
           })()
         })

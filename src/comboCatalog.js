@@ -1,5 +1,8 @@
 /**
  * Sản phẩm Combo — BOM (thành phần) + trừ tồn theo từng mặt hàng lẻ khi bán.
+ *
+ * Hàng thường (không combo): xuất kho theo ĐVT cơ bản = SL × Number(quy_doi); trừ đồng bộ
+ * cùng một lượng đó vào mọi biến thể «anh em» (cùng ma_goc: ma_hh_lien_quan nếu có, không thì ma_hang).
  */
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 import { catalogQuyDoiFactorToBase } from './productUnits.js'
@@ -14,6 +17,54 @@ export function findProductContainingVariantId(products, variantId) {
     if (vars.some((v) => String(v.id) === vid)) return p
   }
   return null
+}
+
+/** `{ product, variant }` theo `variantId` — không import App.jsx. */
+export function findCatalogVariantInProducts(products, variantId) {
+  const vid = String(variantId ?? '').trim()
+  if (!vid) return null
+  for (const p of products || []) {
+    const vars = p.groupVariants || [p]
+    for (const v of vars) {
+      if (String(v.id) === vid) return { product: p, variant: v }
+    }
+  }
+  return null
+}
+
+/**
+ * Mã gốc nhóm ĐVT: có «ma_hh_lien_quan» → ma_goc đó; không → `ma_hang` (field `code`).
+ * @param {object} v — biến thể catalog
+ */
+export function resolveMaGocFromVariant(v) {
+  if (!v) return ''
+  const lq = String(v.linkedMasterCode ?? '').trim()
+  if (lq) return lq
+  return String(v.code ?? '').trim()
+}
+
+/**
+ * Mọi biến thể có `code === ma_goc` **hoặc** `linkedMasterCode === ma_goc` (đồng bộ tồn chéo).
+ * @param {string} maGoc — đã chuẩn hóa trim
+ * @returns {string[]} — danh sách `variant.id` (không trùng)
+ */
+export function collectSiblingVariantIds(products, maGoc) {
+  const k = String(maGoc ?? '').trim()
+  if (!k) return []
+  const seen = new Set()
+  const out = []
+  for (const p of products || []) {
+    for (const v of p.groupVariants || [p]) {
+      const code = String(v.code ?? '').trim()
+      const lq = String(v.linkedMasterCode ?? '').trim()
+      if (code !== k && lq !== k) continue
+      const id = String(v.id ?? '')
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  return out
 }
 
 export function isComboCatalogProduct(p) {
@@ -86,13 +137,29 @@ export function mergeCartLineStockIntoDeltaMap(products, line, deltaBaseByVid) {
     return
   }
 
-  const { baseVariantId, basePieces } = basePiecesSoldForVariantQty(
-    products,
-    line.variantId,
-    cartQty
-  )
-  if (!baseVariantId || basePieces <= 0) return
-  deltaBaseByVid.set(baseVariantId, (deltaBaseByVid.get(baseVariantId) || 0) + basePieces)
+  const hit = findCatalogVariantInProducts(products, line.variantId)
+  if (!hit) return
+  const v = hit.variant
+  const ma_goc = resolveMaGocFromVariant(v)
+  if (!ma_goc) return
+
+  const qdRaw = Number(v.raw?.quy_doi ?? v.quy_doi ?? v.quyDoi)
+  const quy_doi = Number.isFinite(qdRaw) && qdRaw > 0 ? qdRaw : 1
+  const tong_xuat = cartQty * quy_doi
+
+  const siblingIds = collectSiblingVariantIds(products, ma_goc)
+  for (const sid of siblingIds) {
+    deltaBaseByVid.set(sid, (deltaBaseByVid.get(sid) || 0) + tong_xuat)
+  }
+}
+
+/** Gộp delta xuất kho (đơn vị cơ bản) theo `variant.id` — dùng chung POS và snapshot Supabase. */
+export function buildCartSaleStockDeltaByVariantId(products, cartLines) {
+  const deltaBaseByVid = new Map()
+  for (const l of cartLines || []) {
+    mergeCartLineStockIntoDeltaMap(products, l, deltaBaseByVid)
+  }
+  return deltaBaseByVid
 }
 
 /** Tổng giá vốn mặc định = Σ (giá vốn thành phần × số lượng trong combo) theo đơn vị đang chọn. */

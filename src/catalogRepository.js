@@ -224,11 +224,75 @@ function dedupeRowsByProductCode(rows) {
   return [...map.values()]
 }
 
-function flattenDisplayCatalogToVariants(products) {
+export function flattenDisplayCatalogToVariants(products) {
   if (!Array.isArray(products) || products.length === 0) return []
   return products.flatMap((p) =>
     Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
   )
+}
+
+/**
+ * Chỉ cập nhật `ton_kho` trên `products` (PATCH), không gửi `gia_ban` / các cột khác — tránh đè giá server.
+ * @param {Array<object>} flatDisplayVariants — biến thể phẳng (đủ `code`, `stockQty`)
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpdate?: number, error?: unknown }>}
+ */
+export async function saveProductsTonKhoPatchToSupabase(flatDisplayVariants) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    const err = new Error(
+      '[saveProductsTonKhoPatchToSupabase] Không tạo được Supabase client (thiếu env hoặc cấu hình).'
+    )
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err }
+  }
+  if (!Array.isArray(flatDisplayVariants) || flatDisplayVariants.length === 0) {
+    return { ok: true, written: 0, skippedUpdate: 0 }
+  }
+  const rows = []
+  for (const v of flatDisplayVariants) {
+    const ma = String(v?.code ?? '').trim()
+    if (!ma) continue
+    const tonStr = cleanKiotAmountToDecimalString(v?.stockQty)
+    rows.push({ [PRODUCT_PK_COLUMN]: ma, ton_kho: String(tonStr) })
+  }
+  if (rows.length === 0) {
+    const err = new Error('Cập nhật tồn: không có «Mã hàng» hợp lệ.')
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err }
+  }
+  let written = 0
+  let skippedUpdate = 0
+  for (const row of rows) {
+    const ma = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
+    const { error } = await sb
+      .from(PRODUCTS_TABLE)
+      .update({ ton_kho: row.ton_kho })
+      .eq(PRODUCT_PK_COLUMN, ma)
+    if (error) {
+      skippedUpdate += 1
+      console.warn(
+        '[saveProductsTonKhoPatchToSupabase] Bỏ qua dòng',
+        ma,
+        formatSupabaseWriteError(error)
+      )
+    } else {
+      written += 1
+    }
+  }
+  if (skippedUpdate > 0 && written === 0) {
+    const err = new Error(
+      `Cập nhật «ton_kho» trên Supabase: không ghi được dòng nào (${skippedUpdate}/${rows.length}). Kiểm tra RLS và quyền UPDATE.`
+    )
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err, written, skippedUpdate }
+  }
+  if (skippedUpdate > 0) {
+    console.warn(
+      `[saveProductsTonKhoPatchToSupabase] Hoàn tất: ${written}/${rows.length} dòng; ${skippedUpdate} lỗi.`
+    )
+  }
+  return { ok: true, written, skippedUpdate }
 }
 
 function catalogSnapshotDedupeKey(products, fileName) {
@@ -434,11 +498,16 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
  * Khi có Supabase: `ok` chỉ là `true` nếu bước upsert `products` thành công — tránh đọc lại từ server rồi đè UI bằng dữ liệu cũ (snapshot có thể mới nhưng `products` đọc ưu tiên không khớp).
  * @param {object} [options]
  * @param {Array<object>} [options.upsertOnlyVariants] — nếu có: chỉ upsert các biến thể này lên `products`, vẫn ghi snapshot đầy đủ `products`.
+ * @param {Array<object>} [options.tonKhoOnlyVariants] — nếu truyền (kể cả mảng rỗng): chỉ **PATCH** cột `ton_kho` — không đụng `gia_ban`.
  * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean }>}
  */
 export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
   await saveCatalogSnapshot(products, fileName)
   if (!isSupabaseConfigured()) return { ok: true }
+  if (options?.tonKhoOnlyVariants != null) {
+    const r = await saveProductsTonKhoPatchToSupabase(options.tonKhoOnlyVariants)
+    return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
+  }
   if (options?.upsertOnlyVariants?.length) {
     const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
     return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
