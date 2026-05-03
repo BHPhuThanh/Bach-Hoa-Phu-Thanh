@@ -1,8 +1,9 @@
 /**
- * Sản phẩm Combo — BOM (thành phần) + trừ tồn theo từng mặt hàng lẻ khi bán.
+ * Sản phẩm Combo — BOM (thành phần) + trừ tồn khi bán.
  *
- * Hàng thường (không combo): xuất kho theo ĐVT cơ bản = SL × Number(quy_doi); trừ đồng bộ
- * cùng một lượng đó vào mọi biến thể «anh em» (cùng ma_goc: ma_hh_lien_quan nếu có, không thì ma_hang).
+ * Hàng thường: `ton_kho` trong DB/catalog là **một số chuẩn duy nhất** (đơn vị cơ bản, thường trùng
+ * `ton_kho` của dòng `quy_doi === 1`). Mọi ĐVT anh em được gán **cùng** giá trị sau khi trừ;
+ * không trừ riêng trên từng dòng (tránh lệch Thùng/Bịch). Frontend vẫn chia `quy_doi` khi hiển thị.
  */
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 import { catalogQuyDoiFactorToBase } from './productUnits.js'
@@ -67,6 +68,33 @@ export function collectSiblingVariantIds(products, maGoc) {
   return out
 }
 
+/** `Number(quy_doi)` từ CSV / variant — tối thiểu 1 khi không hợp lệ. */
+function variantQuyDoiNumber(v) {
+  if (!v) return 1
+  const qdRaw = Number(v.raw?.quy_doi ?? v.quy_doi ?? v.quyDoi)
+  return Number.isFinite(qdRaw) && qdRaw > 0 ? qdRaw : 1
+}
+
+/**
+ * Biến thể mang «tồn chuẩn»: ưu tiên `quy_doi === 1`, sau đó dòng có `code === ma_goc`,
+ * cuối cùng `quy_doi` nhỏ nhất (đơn vị nhỏ nhất).
+ * @param {string[]} siblingIds — `collectSiblingVariantIds`
+ */
+export function findCanonicalStockRootVariant(products, siblingIds) {
+  const variants = []
+  for (const id of siblingIds || []) {
+    const hit = findCatalogVariantInProducts(products, id)
+    if (hit?.variant) variants.push(hit.variant)
+  }
+  if (variants.length === 0) return null
+  const q1 = variants.find((v) => Math.abs(variantQuyDoiNumber(v) - 1) < 1e-9)
+  if (q1) return q1
+  const maGoc = resolveMaGocFromVariant(variants[0])
+  const master = variants.find((v) => String(v.code ?? '').trim() === maGoc)
+  if (master) return master
+  return [...variants].sort((a, b) => variantQuyDoiNumber(a) - variantQuyDoiNumber(b))[0]
+}
+
 export function isComboCatalogProduct(p) {
   if (!p) return false
   if (p.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) return true
@@ -112,54 +140,79 @@ export function basePiecesSoldForVariantQty(products, variantId, qty) {
 }
 
 /**
- * Cộng dồn trừ tồn đơn vị cơ sở cho một dòng giỏ (combo → nhiều thành phần; thường → một biến thể).
+ * Combo: cộng dồn trừ tồn đơn vị cơ sở theo BOM (theo `variant.id` thành phần).
  * @param {Map<string, number>} deltaBaseByVid
  */
-export function mergeCartLineStockIntoDeltaMap(products, line, deltaBaseByVid) {
+export function mergeComboCartLineIntoDeltaMap(products, line, deltaBaseByVid) {
   const p = findProductContainingVariantId(products, line.variantId)
   const cartQty = Number(line.qty)
   if (!Number.isFinite(cartQty) || cartQty <= 0) return
-
-  if (p && isComboCatalogProduct(p)) {
-    const bom = getComboBom(p)
-    for (const row of bom) {
-      const compVid = String(row.variantId ?? '').trim()
-      const perCombo = Number(row.qty)
-      if (!compVid || !Number.isFinite(perCombo) || perCombo <= 0) continue
-      const { baseVariantId, basePieces } = basePiecesSoldForVariantQty(
-        products,
-        compVid,
-        perCombo * cartQty
-      )
-      if (!baseVariantId || basePieces <= 0) continue
-      deltaBaseByVid.set(baseVariantId, (deltaBaseByVid.get(baseVariantId) || 0) + basePieces)
-    }
-    return
-  }
-
-  const hit = findCatalogVariantInProducts(products, line.variantId)
-  if (!hit) return
-  const v = hit.variant
-  const ma_goc = resolveMaGocFromVariant(v)
-  if (!ma_goc) return
-
-  const qdRaw = Number(v.raw?.quy_doi ?? v.quy_doi ?? v.quyDoi)
-  const quy_doi = Number.isFinite(qdRaw) && qdRaw > 0 ? qdRaw : 1
-  const tong_xuat = cartQty * quy_doi
-
-  const siblingIds = collectSiblingVariantIds(products, ma_goc)
-  for (const sid of siblingIds) {
-    deltaBaseByVid.set(sid, (deltaBaseByVid.get(sid) || 0) + tong_xuat)
+  if (!p || !isComboCatalogProduct(p)) return
+  const bom = getComboBom(p)
+  for (const row of bom) {
+    const compVid = String(row.variantId ?? '').trim()
+    const perCombo = Number(row.qty)
+    if (!compVid || !Number.isFinite(perCombo) || perCombo <= 0) continue
+    const { baseVariantId, basePieces } = basePiecesSoldForVariantQty(
+      products,
+      compVid,
+      perCombo * cartQty
+    )
+    if (!baseVariantId || basePieces <= 0) continue
+    deltaBaseByVid.set(baseVariantId, (deltaBaseByVid.get(baseVariantId) || 0) + basePieces)
   }
 }
 
-/** Gộp delta xuất kho (đơn vị cơ bản) theo `variant.id` — dùng chung POS và snapshot Supabase. */
-export function buildCartSaleStockDeltaByVariantId(products, cartLines) {
+/** Hàng không combo: `ma_goc` → tổng `tong_xuat` (SL × quy_doi) cần trừ khỏi tồn chuẩn. */
+export function buildNonComboDeductionByMaGoc(products, cartLines) {
+  /** @type {Map<string, number>} */
+  const deductByMaGoc = new Map()
+  for (const l of cartLines || []) {
+    const p = findProductContainingVariantId(products, l.variantId)
+    if (p && isComboCatalogProduct(p)) continue
+    const hit = findCatalogVariantInProducts(products, l.variantId)
+    if (!hit) continue
+    const v = hit.variant
+    const ma_goc = resolveMaGocFromVariant(v)
+    if (!ma_goc) continue
+    const cartQty = Number(l.qty)
+    if (!Number.isFinite(cartQty) || cartQty <= 0) continue
+    const tong_xuat = cartQty * variantQuyDoiNumber(v)
+    deductByMaGoc.set(ma_goc, (deductByMaGoc.get(ma_goc) || 0) + tong_xuat)
+  }
+  return deductByMaGoc
+}
+
+export function buildComboCartSaleDeltaByVariantId(products, cartLines) {
   const deltaBaseByVid = new Map()
   for (const l of cartLines || []) {
-    mergeCartLineStockIntoDeltaMap(products, l, deltaBaseByVid)
+    mergeComboCartLineIntoDeltaMap(products, l, deltaBaseByVid)
   }
   return deltaBaseByVid
+}
+
+/** Toàn bộ `variant.id` cần đồng bộ `ton_kho` lên Supabase sau bán (nhóm ĐVT + thành phần combo). */
+export function collectCartSaleTouchedVariantIds(products, cartLines) {
+  const deductByMaGoc = buildNonComboDeductionByMaGoc(products, cartLines)
+  const touched = new Set()
+  for (const ma of deductByMaGoc.keys()) {
+    for (const id of collectSiblingVariantIds(products, ma)) {
+      touched.add(String(id))
+    }
+  }
+  const comboDelta = buildComboCartSaleDeltaByVariantId(products, cartLines)
+  for (const id of comboDelta.keys()) {
+    touched.add(String(id))
+  }
+  return touched
+}
+
+/**
+ * @deprecated Dùng `buildNonComboDeductionByMaGoc` + `buildComboCartSaleDeltaByVariantId` hoặc `collectCartSaleTouchedVariantIds`.
+ * Giữ tạm: chỉ gộp **delta combo** theo biến thể (hàng thường không còn dùng map này).
+ */
+export function buildCartSaleStockDeltaByVariantId(products, cartLines) {
+  return buildComboCartSaleDeltaByVariantId(products, cartLines)
 }
 
 /** Tổng giá vốn mặc định = Σ (giá vốn thành phần × số lượng trong combo) theo đơn vị đang chọn. */

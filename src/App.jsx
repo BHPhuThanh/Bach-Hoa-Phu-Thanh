@@ -97,7 +97,11 @@ import {
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
-  buildCartSaleStockDeltaByVariantId,
+  buildComboCartSaleDeltaByVariantId,
+  buildNonComboDeductionByMaGoc,
+  collectCartSaleTouchedVariantIds,
+  collectSiblingVariantIds,
+  findCanonicalStockRootVariant,
   getComboBom,
   isComboCatalogProduct,
   salableComboPackCount,
@@ -1755,14 +1759,21 @@ function rehydrateSellOrdersFromSnapshot(products, rawOrders, wholesaleMode) {
 }
 
 /**
- * Trừ tồn kho catalog theo số lượng bán (SL × quy_doi theo ĐVT cơ bản; trừ đồng bộ mọi SKU anh em);
- * trừ thêm từng lô nếu có stockBatches.
- * @param {{ precomputedDelta?: Map<string, number> }} [options]
+ * Trừ tồn kho catalog khi bán:
+ * - Hàng thường: `ton_kho_moi_chuan = ton_kho(gốc, quy_doi≈1) − Σ(tong_xuat)`; gán **cùng** số đó cho mọi ĐVT anh em.
+ * - Combo: trừ theo BOM (delta theo biến thể thành phần).
+ * Trừ thêm từng lô nếu có stockBatches.
+ * @param {{
+ *   precomputedDeductByMaGoc?: Map<string, number>
+ *   precomputedComboDelta?: Map<string, number>
+ * }} [options]
  */
 function applySoldQtyToCatalog(products, cartLines, options) {
   if (!products?.length || !cartLines?.length) return products
-  const deltaBaseByVid =
-    options?.precomputedDelta ?? buildCartSaleStockDeltaByVariantId(products, cartLines)
+  const deductByMaGoc =
+    options?.precomputedDeductByMaGoc ?? buildNonComboDeductionByMaGoc(products, cartLines)
+  const comboDelta =
+    options?.precomputedComboDelta ?? buildComboCartSaleDeltaByVariantId(products, cartLines)
 
   /** @type {Map<string, Map<string, number>>} */
   const batchDecByVariantId = new Map()
@@ -1781,15 +1792,37 @@ function applySoldQtyToCatalog(products, cartLines, options) {
     m.set(bid, (m.get(bid) || 0) + q)
   }
 
-  if (deltaBaseByVid.size === 0 && batchDecByVariantId.size === 0) return products
+  if (deductByMaGoc.size === 0 && comboDelta.size === 0 && batchDecByVariantId.size === 0)
+    return products
+
+  /** @type {Map<string, number>} — cùng một `ton_kho` chuẩn (DB) cho mọi SKU trong nhóm ĐVT */
+  const canonicalTonKhoByVid = new Map()
+  for (const [ma_goc, D] of deductByMaGoc) {
+    const sids = collectSiblingVariantIds(products, ma_goc)
+    if (sids.length === 0) continue
+    const root = findCanonicalStockRootVariant(products, sids)
+    if (!root) continue
+    const cur =
+      root.stockQty != null && Number.isFinite(Number(root.stockQty)) ? Number(root.stockQty) : 0
+    const ton_kho_moi_chuan = cur - D
+    for (const sid of sids) {
+      canonicalTonKhoByVid.set(String(sid), ton_kho_moi_chuan)
+    }
+  }
+
   const flat = []
   for (const p of products) {
     for (const v of p.groupVariants || [p]) {
-      const sold = deltaBaseByVid.get(v.id) || 0
+      const vid = String(v.id)
       let nextStock = v.stockQty
-      if (sold > 0) {
-        const cur = nextStock != null && Number.isFinite(Number(nextStock)) ? Number(nextStock) : 0
-        nextStock = cur - sold
+      if (canonicalTonKhoByVid.has(vid)) {
+        nextStock = canonicalTonKhoByVid.get(vid)
+      } else {
+        const sold = comboDelta.get(v.id) ?? comboDelta.get(vid) ?? 0
+        if (sold > 0) {
+          const cur = nextStock != null && Number.isFinite(Number(nextStock)) ? Number(nextStock) : 0
+          nextStock = cur - sold
+        }
       }
       let nextBatches = v.stockBatches
       const decMap = batchDecByVariantId.get(String(v.id))
@@ -3829,11 +3862,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ...l,
         qty: effectiveCartLineQty(l, cartQtyDraftByLine),
       }))
-      const saleStockDelta = buildCartSaleStockDeltaByVariantId(products, cartForStock)
-      const touchedVariantIds = new Set([...saleStockDelta.keys()].map((id) => String(id)))
+      const deductByMaGoc = buildNonComboDeductionByMaGoc(products, cartForStock)
+      const comboDelta = buildComboCartSaleDeltaByVariantId(products, cartForStock)
+      const touchedVariantIds = collectCartSaleTouchedVariantIds(products, cartForStock)
       setProducts((prev) => {
         const next = applySoldQtyToCatalog(prev, cartForStock, {
-          precomputedDelta: saleStockDelta,
+          precomputedDeductByMaGoc: deductByMaGoc,
+          precomputedComboDelta: comboDelta,
         })
         queueMicrotask(() => {
           if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
