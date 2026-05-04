@@ -397,24 +397,24 @@ function basePiecesSoldForCartLine(products, line) {
   return { baseVariantId: String(vid), basePieces: qty }
 }
 
-/** SL có thể bán theo ĐƠN VỊ TÍNH (từ tồn đơn vị cơ sở), hoặc tồn riêng biến thể nếu không có tồn cơ sở. */
+/**
+ * SL «Có thể bán» theo đơn vị dòng — khớp bảng Danh mục: `displayTonKhoNumber` =
+ * `parseFloat((Number(ton_kho) / Number(quy_doi)).toFixed(4))`. Không dùng floor/round làm mất thập phân.
+ */
 function salableQtyInVariantUnitsForPos(products, product, variant) {
   if (product && isComboCatalogProduct(product)) {
     return salableComboPackCount(products, getComboBom(product))
   }
-  const vars = getProductVariantRowsForPos(product)
+  if (!variant) return null
   const base = baseVariantForProduct(product)
-  const baseQ = base?.stockQty
-  if (baseQ != null && Number.isFinite(Number(baseQ)) && vars.length > 1) {
-    const cv = catalogQuyDoiFactorToBase(variant)
-    const cb = catalogQuyDoiFactorToBase(base)
-    const ratio = cv / cb
-    if (ratio > 0) return Math.floor(Number(baseQ) / ratio + 1e-9)
-  }
-  const vs = variant?.stockQty
-  if (vs != null && Number.isFinite(Number(vs))) return Number(vs)
-  if (baseQ != null && Number.isFinite(Number(baseQ))) return Math.floor(Number(baseQ) + 1e-9)
-  return null
+  const tonRaw =
+    variant.stockQty != null && Number.isFinite(Number(variant.stockQty))
+      ? Number(variant.stockQty)
+      : base?.stockQty != null && Number.isFinite(Number(base.stockQty))
+        ? Number(base.stockQty)
+        : null
+  if (tonRaw == null) return null
+  return displayTonKhoNumber(tonRaw, variant)
 }
 
 /**
