@@ -17,7 +17,6 @@ import { AdminHubComboModal } from './AdminHubComboModal.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
 import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
-import { AdminHubGoodsBrandHeaderFilter } from './AdminHubGoodsBrandHeaderFilter.jsx'
 import { AutoSizer } from 'react-virtualized-auto-sizer'
 import {
   applyInboundLineUnitChange,
@@ -46,6 +45,7 @@ import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import InboundThuongHieuAutocomplete, {
   collectUniqueThuongHieuFromCatalog,
 } from './InboundThuongHieuAutocomplete.jsx'
+import { GOODS_DATE_PRESET_OPTIONS, resolveGoodsCreatedAtRangeMs } from './adminHubGoodsDateRange.js'
 import {
   buildVariantPosSearchHaystack,
   normalizeCatalogSearchCompactKey,
@@ -1256,7 +1256,9 @@ export default function AdminHub({
   )
 
   const [goodsBrandKey, setGoodsBrandKey] = useState('')
-  const [goodsBrandOpen, setGoodsBrandOpen] = useState(false)
+  const [goodsDatePreset, setGoodsDatePreset] = useState('')
+  const [goodsDateFromStr, setGoodsDateFromStr] = useState('')
+  const [goodsDateToStr, setGoodsDateToStr] = useState('')
   const goodsDraftSeedKeyRef = useRef('')
   const [goodsCreateOpen, setGoodsCreateOpen] = useState(false)
   const goodsCreateWrapRef = useRef(null)
@@ -1284,6 +1286,10 @@ export default function AdminHub({
       setComboModal(null)
       setHangHoaDeepLinkListScope('all')
       setHangHoaDeepLinkVid(null)
+      setGoodsBrandKey('')
+      setGoodsDatePreset('')
+      setGoodsDateFromStr('')
+      setGoodsDateToStr('')
     }
   }, [activeTab])
 
@@ -1307,15 +1313,27 @@ export default function AdminHub({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [goodsCreateOpen])
 
+  const goodsCreatedAtRange = useMemo(
+    () => resolveGoodsCreatedAtRangeMs(goodsDatePreset, goodsDateFromStr, goodsDateToStr),
+    [goodsDatePreset, goodsDateFromStr, goodsDateToStr]
+  )
+
   const goodsRowsFiltered = useMemo(() => {
     const val = goodsQ.trim()
     let list = goodsRowsAll
     if (goodsBrandKey) {
       list = list.filter((r) => (r.brand || '') === goodsBrandKey)
     }
+    if (goodsCreatedAtRange) {
+      const { startMs, endMs } = goodsCreatedAtRange
+      list = list.filter((r) => {
+        const t = Number(r.createdAtMs)
+        return Number.isFinite(t) && t > 0 && t >= startMs && t <= endMs
+      })
+    }
     if (!val.length) return list
     return filterAndSortGoodsRowsSimple(list, val)
-  }, [goodsRowsAll, goodsQ, goodsBrandKey])
+  }, [goodsRowsAll, goodsQ, goodsBrandKey, goodsCreatedAtRange])
 
   const goodsDetailCtx = useMemo(() => {
     if (!goodsExpandedId) return null
@@ -4767,7 +4785,7 @@ export default function AdminHub({
             ) : null}
 
             <div className="ah-goods-toolbar">
-              <div className="ah-goods-toolbar-left">
+              <div className="ah-goods-toolbar-left ah-goods-toolbar-left--with-filters">
                 <div className="ah-goods-search-wrap ah-goods-search-wrap--solo">
                   <input
                     className="ah-goods-search"
@@ -4782,6 +4800,83 @@ export default function AdminHub({
                     autoComplete="off"
                     spellCheck={false}
                   />
+                </div>
+                <div className="ah-goods-toolbar-filters" aria-label="Bộ lọc danh mục">
+                  <div className="ah-goods-filter-field">
+                    <label className="ah-goods-filter-lbl" htmlFor="ah-goods-date-preset">
+                      Ngày tạo
+                    </label>
+                    <select
+                      id="ah-goods-date-preset"
+                      className="ah-inbound-form-input ah-goods-toolbar-select"
+                      value={goodsDatePreset}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setGoodsDatePreset(v)
+                        setHangHoaDeepLinkListScope('all')
+                        if (v !== 'custom') {
+                          setGoodsDateFromStr('')
+                          setGoodsDateToStr('')
+                        }
+                      }}
+                    >
+                      {GOODS_DATE_PRESET_OPTIONS.map((o) => (
+                        <option key={o.id === '' ? '__all' : o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    {goodsDatePreset === 'custom' ? (
+                      <div className="ah-goods-date-custom">
+                        <input
+                          type="text"
+                          className="ah-inbound-form-input ah-goods-date-input"
+                          placeholder="Từ dd/mm/yyyy"
+                          value={goodsDateFromStr}
+                          onChange={(e) => {
+                            setGoodsDateFromStr(e.target.value)
+                            setHangHoaDeepLinkListScope('all')
+                          }}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label="Từ ngày (dd/mm/yyyy)"
+                        />
+                        <span className="ah-goods-date-sep" aria-hidden>
+                          —
+                        </span>
+                        <input
+                          type="text"
+                          className="ah-inbound-form-input ah-goods-date-input"
+                          placeholder="Đến dd/mm/yyyy"
+                          value={goodsDateToStr}
+                          onChange={(e) => {
+                            setGoodsDateToStr(e.target.value)
+                            setHangHoaDeepLinkListScope('all')
+                          }}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label="Đến ngày (dd/mm/yyyy)"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="ah-goods-filter-field ah-goods-filter-field--brand">
+                    <span className="ah-goods-filter-lbl" id="ah-goods-brand-lbl">
+                      Thương hiệu
+                    </span>
+                    <div className="ah-inbound-ncc-input-wrap ah-inbound-ncc-input-wrap--combo ah-goods-toolbar-brand-wrap">
+                      <InboundThuongHieuAutocomplete
+                        id="ah-goods-toolbar-th"
+                        value={goodsBrandKey}
+                        onValueChange={(v) => {
+                          setHangHoaDeepLinkListScope('all')
+                          setGoodsBrandKey(String(v ?? '').trim())
+                        }}
+                        options={brandOptions}
+                        placeholder="Tất cả thương hiệu…"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -4879,18 +4974,8 @@ export default function AdminHub({
                 <div className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-dvt" role="columnheader">
                   ĐVT (Đơn vị tính cơ bản)
                 </div>
-                <div
-                  className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-brand ah-goods-catalog-th--filter"
-                  role="columnheader"
-                >
-                  <AdminHubGoodsBrandHeaderFilter
-                    brandOptions={brandOptions}
-                    selectedBrand={goodsBrandKey}
-                    onSelectBrand={(key) => {
-                      setHangHoaDeepLinkListScope('all')
-                      setGoodsBrandKey(key)
-                    }}
-                  />
+                <div className="ah-goods-vcell ah-goods-catalog-th ah-goods-col-brand" role="columnheader">
+                  Thương hiệu
                 </div>
                 <div className="ah-goods-vcell ah-goods-catalog-th ah-num" role="columnheader">
                   Giá bán
@@ -4915,7 +5000,7 @@ export default function AdminHub({
                   <div className="admin-hub-muted ah-goods-empty-inset">
                     {catalogList.length === 0
                       ? 'Chưa có dữ liệu hàng hóa. Dùng Import file hoặc nhập CSV ở màn Bán hàng.'
-                      : 'Không có dòng nào khớp tìm kiếm / thương hiệu.'}
+                      : 'Không có dòng nào khớp tìm kiếm hoặc bộ lọc (ngày tạo, thương hiệu).'}
                   </div>
                 </div>
               ) : (
@@ -4935,7 +5020,7 @@ export default function AdminHub({
                           toggleGoodsRowExpand={toggleGoodsRowExpand}
                           toggleGoodsSelect={toggleGoodsSelect}
                           expandedSlot={goodsExpandedBelowSlot}
-                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsRowsFiltered.length}|${goodsExpandedId ?? ''}`}
+                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsRowsFiltered.length}|${goodsExpandedId ?? ''}`}
                         />
                       )
                     }}

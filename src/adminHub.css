@@ -1230,6 +1230,92 @@
   min-width: min(100%, 200px);
 }
 
+/* Tab Hàng hóa: ô tìm + lọc ngày / thương hiệu (UI giống ô NCC phiếu nhập) */
+.ah-goods-toolbar-left--with-filters {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.55rem;
+  flex: 1 1 320px;
+  min-width: min(100%, 240px);
+}
+
+@media (min-width: 1100px) {
+  .ah-goods-toolbar-left--with-filters {
+    flex-direction: row;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .ah-goods-toolbar-left--with-filters .ah-goods-search-wrap--solo {
+    flex: 1 1 260px;
+    max-width: min(100%, 36rem);
+  }
+
+  .ah-goods-toolbar-filters {
+    flex: 1 1 400px;
+  }
+}
+
+.ah-goods-toolbar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.55rem 0.85rem;
+}
+
+.ah-goods-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-width: min(100%, 140px);
+}
+
+.ah-goods-filter-field--brand {
+  flex: 1 1 200px;
+  min-width: min(100%, 200px);
+  max-width: 28rem;
+}
+
+.ah-goods-filter-lbl {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.ah-goods-toolbar-select {
+  min-height: 40px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ah-goods-date-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.ah-goods-date-input {
+  flex: 1 1 108px;
+  min-width: 6.75rem;
+  border-radius: 10px;
+}
+
+.ah-goods-date-sep {
+  color: #64748b;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.ah-goods-toolbar-brand-wrap {
+  width: 100%;
+  max-width: 28rem;
+}
+
 .ah-goods-toolbar-right {
   display: flex;
   flex-wrap: wrap;

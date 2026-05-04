@@ -4522,28 +4522,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         aria-hidden
         onChange={onFile}
       />
-      <header className={isPosMode ? 'pos-header' : 'kv-header'}>
-        {isPosMode ? (
-          <div className="pos-header-top">
-            <div className="pos-header-tools">
-              <label className="file-label pos-file-label">
-                <input
-                  type="file"
-                  accept=".csv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                  onChange={onFile}
-                  className="file-input"
-                />
-                <span className="file-button pos-file-btn">Nhập CSV</span>
-              </label>
-              {fileName && (
-                <span className="pos-file-meta">
-                  {fileName} · {csvRowCount.toLocaleString('vi-VN')} dòng ·{' '}
-                  {products.length.toLocaleString('vi-VN')} mặt hàng
-                </span>
-              )}
-            </div>
-          </div>
-        ) : (
+      <header className={isPosMode ? 'pos-header pos-header--workbar-only' : 'kv-header'}>
+        {!isPosMode ? (
           <div className="kv-header-inner kv-header-inner--compact">
             <div className="kv-header-left">
               {activeView === 'sell' && (
@@ -4574,7 +4554,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             </div>
             {renderHeaderIconRail('kv')}
           </div>
-        )}
+        ) : null}
         {isPosMode && (
           <div className="pos-header-workbar">
             <div className="pos-header-workbar-inner">

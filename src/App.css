@@ -755,6 +755,16 @@
   flex-shrink: 0;
 }
 
+/* POS: chỉ thanh xanh tìm kiếm — bỏ dải đen «Nhập CSV» phía trên */
+.pos-header.pos-header--workbar-only {
+  background: #0056b3;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.pos-header.pos-header--workbar-only .pos-header-workbar {
+  border-top: none;
+}
+
 .pos-header-top {
   display: flex;
   flex-wrap: wrap;
