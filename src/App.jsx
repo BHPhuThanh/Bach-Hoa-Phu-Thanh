@@ -4046,11 +4046,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const bump = () => {
       void refreshPosCustomers()
     }
+    const onStorage = (e) => {
+      if (e.storageArea !== localStorage) return
+      if (e.key !== POS_CUSTOMERS_STORAGE_KEY) return
+      void refreshPosCustomers()
+    }
     window.addEventListener('csv-preview-customers-changed', bump)
-    window.addEventListener('storage', bump)
+    window.addEventListener('storage', onStorage)
     return () => {
       window.removeEventListener('csv-preview-customers-changed', bump)
-      window.removeEventListener('storage', bump)
+      window.removeEventListener('storage', onStorage)
     }
   }, [refreshPosCustomers])
 
@@ -4100,7 +4105,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setCustomerAddOpen(false)
       setNewCustomerName('')
       setNewCustomerPhone('')
-      window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+      /* Không dispatch csv-preview-customers-changed ở đây: đã gọi refreshPosCustomers (Supabase) hoặc đã setState + saveStoredCustomers — dispatch làm listener App gọi fetch /customers lần nữa. */
     } catch (e) {
       window.alert(formatPostgrestErrorForUser(e))
     } finally {

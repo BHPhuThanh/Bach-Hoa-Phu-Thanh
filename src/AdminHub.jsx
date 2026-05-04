@@ -2541,32 +2541,37 @@ export default function AdminHub({
     setSuppliers(rows)
   }, [])
 
-  /** Chỉ đồng bộ từ Supabase (bảng suppliers) khi vào tab Nhập hàng — không gọi theo từng phím gõ. */
-  const inboundSuppliersFetchGenRef = useRef(0)
+  /** Một lần / phiên làm việc khi lần đầu mở tab Nhập hàng — không phụ thuộc refreshKey, không lặp khi đổi tab. */
+  const suppliersInboundFetchedOnceRef = useRef(false)
   useEffect(() => {
     if (activeTab !== TAB_INBOUND && activeTab !== TAB_INBOUND_DRAFT) return
-    const gen = ++inboundSuppliersFetchGenRef.current
-    const t = window.setTimeout(() => {
-      void (async () => {
-        if (gen !== inboundSuppliersFetchGenRef.current) return
-        if (!isSupabaseConfigured()) {
+    if (suppliersInboundFetchedOnceRef.current) return
+    let cancelled = false
+    void (async () => {
+      if (!isSupabaseConfigured()) {
+        if (cancelled) return
+        setSuppliers(loadSuppliersFromStorage())
+        suppliersInboundFetchedOnceRef.current = true
+        return
+      }
+      try {
+        const remote = await fetchSuppliersFromSupabase()
+        if (cancelled) return
+        const local = loadSuppliersFromStorage()
+        const merged = mergeSupplierListsDedupe(remote, local)
+        persistSuppliers(merged)
+        suppliersInboundFetchedOnceRef.current = true
+      } catch (e) {
+        console.warn('[AdminHub] Đồng bộ nhà cung cấp (suppliers)', e)
+        if (!cancelled) {
           setSuppliers(loadSuppliersFromStorage())
-          return
+          suppliersInboundFetchedOnceRef.current = true
         }
-        try {
-          const remote = await fetchSuppliersFromSupabase()
-          if (gen !== inboundSuppliersFetchGenRef.current) return
-          const local = loadSuppliersFromStorage()
-          const merged = mergeSupplierListsDedupe(remote, local)
-          persistSuppliers(merged)
-        } catch (e) {
-          console.warn('[AdminHub] Đồng bộ nhà cung cấp (suppliers)', e)
-          if (gen !== inboundSuppliersFetchGenRef.current) return
-          setSuppliers(loadSuppliersFromStorage())
-        }
-      })()
-    }, 400)
-    return () => window.clearTimeout(t)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [activeTab, persistSuppliers])
 
   /** Khi true, hiện tab "Phiếu nhập mới" trên nav (cho đến khi đóng / lưu). */
@@ -4529,33 +4534,48 @@ export default function AdminHub({
   const [custQ, setCustQ] = useState('')
   const custDebounced = useDebounced(custQ, 180)
   const [customers, setCustomers] = useState(() => loadCustomersFromStorage())
+  /** Một lần / phiên: tải từ Supabase khi lần đầu mở tab — không dùng refreshKey (tránh bão API khi salesRefresh tăng). */
+  const customersRemoteFetchedOnceRef = useRef(false)
+  const [customersRemoteLoading, setCustomersRemoteLoading] = useState(false)
 
-  const adminCustomersSyncGenRef = useRef(0)
   useEffect(() => {
     if (activeTab !== TAB_CUSTOMERS) return
-    const gen = ++adminCustomersSyncGenRef.current
-    const t = window.setTimeout(() => {
-      void (async () => {
-        if (gen !== adminCustomersSyncGenRef.current) return
+    if (customersRemoteFetchedOnceRef.current) return
+    if (!isSupabaseConfigured()) {
+      customersRemoteFetchedOnceRef.current = true
+      setCustomers(loadCustomersFromStorage())
+      return
+    }
+    let cancelled = false
+    setCustomersRemoteLoading(true)
+    void (async () => {
+      try {
+        const remote = await fetchCustomersFromSupabase()
+        if (cancelled) return
+        const local = loadCustomersFromStorage()
+        const merged = mergeCustomerListsDedupe(remote, local)
+        setCustomers(merged)
         try {
-          const remote = await fetchCustomersFromSupabase()
-          if (gen !== adminCustomersSyncGenRef.current) return
-          const local = loadCustomersFromStorage()
-          const merged = mergeCustomerListsDedupe(remote, local)
-          setCustomers(merged)
-          try {
-            localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
-          } catch (e) {
-            console.warn(e)
-          }
-          window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+          localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
         } catch (e) {
-          console.warn('[AdminHub] Tải khách hàng (customers)', e)
+          console.warn(e)
         }
-      })()
-    }, 500)
-    return () => window.clearTimeout(t)
-  }, [activeTab, refreshKey])
+        /* Không dispatch csv-preview-customers-changed ở đây — tránh App.jsx gọi fetch /customers lần 2 (vòng lặp gấp đôi). */
+        customersRemoteFetchedOnceRef.current = true
+      } catch (e) {
+        console.warn('[AdminHub] Tải khách hàng (customers)', e)
+        if (!cancelled) {
+          setCustomers(loadCustomersFromStorage())
+          customersRemoteFetchedOnceRef.current = true
+        }
+      } finally {
+        if (!cancelled) setCustomersRemoteLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab])
 
   const custFiltered = useMemo(() => {
     const q = custDebounced.trim().toLowerCase()
@@ -4583,36 +4603,51 @@ export default function AdminHub({
   const [staffQ, setStaffQ] = useState('')
   const staffDebounced = useDebounced(staffQ, 120)
   const [staffRows, setStaffRows] = useState(STAFF_ROWS_DEFAULT)
-  const adminStaffSyncGenRef = useRef(0)
+  const staffRemoteFetchedOnceRef = useRef(false)
+  const [staffRemoteLoading, setStaffRemoteLoading] = useState(false)
+
   useEffect(() => {
     if (activeTab !== TAB_STAFF) return
-    const gen = ++adminStaffSyncGenRef.current
-    const t = window.setTimeout(() => {
-      void (async () => {
-        if (gen !== adminStaffSyncGenRef.current) return
-        try {
-          const remote = await fetchEmployeesFromSupabase()
-          if (gen !== adminStaffSyncGenRef.current) return
-          if (remote.length > 0) {
-            setStaffRows(
-              remote.map((r) => ({
-                name: r.name,
-                phone: r.phone || '—',
-                address: r.address || '—',
-                cccd: r.cccd || '—',
-                mail: r.mail || '—',
-              }))
-            )
-          } else {
-            setStaffRows(STAFF_ROWS_DEFAULT)
-          }
-        } catch (e) {
-          console.warn('[AdminHub] Tải nhân viên (employees)', e)
+    if (staffRemoteFetchedOnceRef.current) return
+    if (!isSupabaseConfigured()) {
+      staffRemoteFetchedOnceRef.current = true
+      setStaffRows(STAFF_ROWS_DEFAULT)
+      return
+    }
+    let cancelled = false
+    setStaffRemoteLoading(true)
+    void (async () => {
+      try {
+        const remote = await fetchEmployeesFromSupabase()
+        if (cancelled) return
+        if (remote.length > 0) {
+          setStaffRows(
+            remote.map((r) => ({
+              name: r.name,
+              phone: r.phone || '—',
+              address: r.address || '—',
+              cccd: r.cccd || '—',
+              mail: r.mail || '—',
+            }))
+          )
+        } else {
+          setStaffRows(STAFF_ROWS_DEFAULT)
         }
-      })()
-    }, 500)
-    return () => window.clearTimeout(t)
-  }, [activeTab, refreshKey])
+        staffRemoteFetchedOnceRef.current = true
+      } catch (e) {
+        console.warn('[AdminHub] Tải nhân viên (employees)', e)
+        if (!cancelled) {
+          setStaffRows(STAFF_ROWS_DEFAULT)
+          staffRemoteFetchedOnceRef.current = true
+        }
+      } finally {
+        if (!cancelled) setStaffRemoteLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab])
 
   const staffFiltered = useMemo(() => {
     const q = staffDebounced.trim().toLowerCase()
@@ -5003,7 +5038,7 @@ export default function AdminHub({
           activeTab === TAB_COST_ADJUST ? ' admin-hub-main--cost-adjust' : ''
         }`}
       >
-        <AdminHubTabErrorBoundary key={activeTab} tabLabel={adminHubActiveTabLabel}>
+        <AdminHubTabErrorBoundary tabLabel={adminHubActiveTabLabel}>
           <>
             {activeTab === TAB_STOCK_CHECK && (
               <AdminHubStockCheckPanel vouchers={stockCheckVouchers} />
@@ -5807,7 +5842,13 @@ export default function AdminHub({
                   </tr>
                 </thead>
                 <tbody>
-                  {custFiltered.length === 0 ? (
+                  {customersRemoteLoading && isSupabaseConfigured() ? (
+                    <tr>
+                      <td colSpan={5} className="admin-hub-muted">
+                        Đang tải danh sách từ Supabase (một lần)…
+                      </td>
+                    </tr>
+                  ) : custFiltered.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="admin-hub-muted">
                         {customers.length === 0
@@ -5868,15 +5909,23 @@ export default function AdminHub({
                   </tr>
                 </thead>
                 <tbody>
-                  {staffFiltered.map((r, i) => (
-                    <tr key={i}>
-                      <td>{r.name}</td>
-                      <td>{r.phone}</td>
-                      <td>{r.address}</td>
-                      <td>{r.cccd}</td>
-                      <td>{r.mail}</td>
+                  {staffRemoteLoading && isSupabaseConfigured() ? (
+                    <tr>
+                      <td colSpan={5} className="admin-hub-muted">
+                        Đang tải danh sách từ Supabase (một lần)…
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    staffFiltered.map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.name}</td>
+                        <td>{r.phone}</td>
+                        <td>{r.address}</td>
+                        <td>{r.cccd}</td>
+                        <td>{r.mail}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
