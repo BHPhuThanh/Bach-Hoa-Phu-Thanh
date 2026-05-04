@@ -46,6 +46,15 @@ import InboundThuongHieuAutocomplete, {
   collectUniqueThuongHieuFromCatalog,
 } from './InboundThuongHieuAutocomplete.jsx'
 import { GOODS_DATE_PRESET_OPTIONS, resolveGoodsCreatedAtRangeMs } from './adminHubGoodsDateRange.js'
+import EntityPersonModal from './EntityPersonModal.jsx'
+import {
+  fetchCustomersFromSupabase,
+  fetchEmployeesFromSupabase,
+  insertCustomerSupabase,
+  insertEmployeeSupabase,
+  insertSupplierSupabase,
+  mergeCustomerListsDedupe,
+} from './entityContactsRepository.js'
 import {
   buildVariantPosSearchHaystack,
   normalizeCatalogSearchCompactKey,
@@ -170,6 +179,25 @@ function catalogHasNormalizedBarcode(catalogProducts, needleNorm) {
 
 const POS_CUSTOMERS_KEY = 'csv-preview-pos-customers-v1'
 
+/** Ưu tiên `createdAtMs` biến thể; fallback `raw.created_at` / `created_at` (Supabase) — khớp lọc «Ngày tạo». */
+function effectiveCreatedAtMsFromVariant(v) {
+  const n = Number(v?.createdAtMs)
+  if (Number.isFinite(n) && n > 0) return n
+  const raw = v?.raw
+  let iso
+  if (raw && typeof raw === 'object') {
+    iso = raw.created_at ?? raw.createdAt
+  }
+  if (iso == null || iso === '') {
+    iso = v?.created_at ?? v?.createdAt
+  }
+  if (iso != null && String(iso).trim() !== '') {
+    const ms = Date.parse(String(iso))
+    if (Number.isFinite(ms) && ms > 0) return ms
+  }
+  return 0
+}
+
 function flattenCatalogToGoodsRows(products) {
   const rows = []
   for (const p of products || []) {
@@ -186,8 +214,8 @@ function flattenCatalogToGoodsRows(products) {
         stock = Number(v.stockQty)
       }
       const ton_kho = stock
-      const createdAtMs = Number(v.createdAtMs)
-      const okTime = Number.isFinite(createdAtMs) && createdAtMs > 0
+      const createdAtMs = effectiveCreatedAtMsFromVariant(v)
+      const okTime = createdAtMs > 0
       const displayTime = okTime ? new Date(createdAtMs).toLocaleString('vi-VN') : '—'
       const unitLabel = normalizeCatalogUnitLabel(v.unitLabel)
       const dvt = unitLabel
@@ -478,6 +506,7 @@ function loadCustomersFromStorage() {
         phone: String(c.phone || '').trim(),
         address: String(c.address || '').trim(),
         cccd: String(c.cccd || '').trim(),
+        mail: String(c.mail || '').trim(),
       }))
       .filter((c) => c.name)
   } catch {
@@ -755,6 +784,7 @@ function loadSuppliersFromStorage() {
         phone: String(s.phone || '').trim(),
         address: String(s.address || '').trim(),
         cccd: String(s.cccd || '').trim(),
+        mail: String(s.mail || '').trim(),
       }))
   } catch {
     return []
@@ -819,9 +849,9 @@ function useDebounced(value, ms) {
   return out
 }
 
-const STAFF_ROWS = [
-  { name: 'Admin — Chủ cửa hàng', phone: '—', address: '—', cccd: '—' },
-  { name: 'Nhân viên bán hàng', phone: '—', address: '—', cccd: '—' },
+const STAFF_ROWS_DEFAULT = [
+  { name: 'Admin — Chủ cửa hàng', phone: '—', address: '—', cccd: '—', mail: '—' },
+  { name: 'Nhân viên bán hàng', phone: '—', address: '—', cccd: '—', mail: '—' },
 ]
 
 /** Một reference cố định — tránh `?? []` tạo mảng mới mỗi render làm `catalogList` đổi identity → vòng lặp useEffect. */
@@ -1321,8 +1351,9 @@ export default function AdminHub({
   const goodsRowsFiltered = useMemo(() => {
     const val = goodsQ.trim()
     let list = goodsRowsAll
-    if (goodsBrandKey) {
-      list = list.filter((r) => (r.brand || '') === goodsBrandKey)
+    const brandKey = String(goodsBrandKey || '').trim()
+    if (brandKey) {
+      list = list.filter((r) => String(r.brand || '').trim() === brandKey)
     }
     if (goodsCreatedAtRange) {
       const { startMs, endMs } = goodsCreatedAtRange
@@ -2536,7 +2567,8 @@ export default function AdminHub({
   const [inboundFormDiscMode, setInboundFormDiscMode] = useState('amount')
   const [inboundFormDiscRaw, setInboundFormDiscRaw] = useState('')
   const [supplierModalOpen, setSupplierModalOpen] = useState(false)
-  const [newSup, setNewSup] = useState({ name: '', phone: '', address: '', cccd: '' })
+  const [customerModalOpen, setCustomerModalOpen] = useState(false)
+  const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
   /** Đang sửa phiếu nhập có sẵn (id đơn). */
   const [inboundFormEditOrderId, setInboundFormEditOrderId] = useState(null)
   /** Hoàn trả: đơn + số lượng trả nhập theo lineId (chuỗi ô input). */
@@ -2634,7 +2666,6 @@ export default function AdminHub({
     setInboundFormDiscMode('amount')
     setInboundFormDiscRaw('')
     setSupplierModalOpen(false)
-    setNewSup({ name: '', phone: '', address: '', cccd: '' })
   }, [])
 
   const openInboundCreateForm = useCallback(() => {
@@ -2718,25 +2749,105 @@ export default function AdminHub({
     setInboundFormLines((prev) => prev.filter((ln) => ln.lineId !== lineId))
   }, [])
 
-  const submitNewSupplier = useCallback(() => {
-    const name = String(newSup.name || '').trim()
-    if (!name) {
-      alert('Nhập tên nhà cung cấp.')
-      return
-    }
-    const row = {
-      id: createInboundId(),
-      name,
-      phone: String(newSup.phone || '').trim(),
-      address: String(newSup.address || '').trim(),
-      cccd: String(newSup.cccd || '').trim(),
-    }
-    persistSuppliers([...suppliers, row])
-    setInboundFormSupplierName(name)
-    setInboundFormSupplierQ(name)
-    setSupplierModalOpen(false)
-    setNewSup({ name: '', phone: '', address: '', cccd: '' })
-  }, [newSup, suppliers, persistSuppliers])
+  const submitNewSupplier = useCallback(
+    async (draft) => {
+      const name = String(draft?.name || '').trim()
+      if (!name) {
+        alert('Nhập tên nhà cung cấp.')
+        return
+      }
+      const row = {
+        id: createInboundId(),
+        name,
+        phone: String(draft?.phone || '').trim(),
+        address: String(draft?.address || '').trim(),
+        cccd: String(draft?.cccd || '').trim(),
+        mail: String(draft?.mail || '').trim(),
+      }
+      const ins = await insertSupplierSupabase(row)
+      if (ins.ok && ins.row?.id) {
+        row.id = ins.row.id
+      } else if (!ins.ok && !ins.skipped) {
+        alert(ins.error?.message || 'Không lưu được nhà cung cấp lên Supabase.')
+        return
+      }
+      persistSuppliers([...suppliers, row])
+      setInboundFormSupplierName(name)
+      setInboundFormSupplierQ(name)
+      setSupplierModalOpen(false)
+    },
+    [suppliers, persistSuppliers]
+  )
+
+  const submitNewCustomerAdmin = useCallback(
+    async (draft) => {
+      const name = String(draft?.name || '').trim()
+      if (!name) {
+        alert('Nhập họ tên khách.')
+        return
+      }
+      const row = {
+        name,
+        phone: String(draft?.phone || '').trim(),
+        address: String(draft?.address || '').trim(),
+        cccd: String(draft?.cccd || '').trim(),
+        mail: String(draft?.mail || '').trim(),
+      }
+      const ins = await insertCustomerSupabase(row)
+      if (!ins.ok && !ins.skipped) {
+        alert(ins.error?.message || 'Không lưu được khách hàng.')
+        return
+      }
+      const remote = await fetchCustomersFromSupabase()
+      const local = loadCustomersFromStorage()
+      const merged = mergeCustomerListsDedupe(remote, local)
+      setCustomers(merged)
+      try {
+        localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+      } catch (e) {
+        console.warn(e)
+      }
+      setCustomerModalOpen(false)
+      window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+    },
+    []
+  )
+
+  const submitNewEmployeeAdmin = useCallback(
+    async (draft) => {
+      const name = String(draft?.name || '').trim()
+      if (!name) {
+        alert('Nhập họ tên nhân viên.')
+        return
+      }
+      const row = {
+        name,
+        phone: String(draft?.phone || '').trim(),
+        address: String(draft?.address || '').trim(),
+        cccd: String(draft?.cccd || '').trim(),
+        mail: String(draft?.mail || '').trim(),
+      }
+      const ins = await insertEmployeeSupabase(row)
+      if (!ins.ok && !ins.skipped) {
+        alert(ins.error?.message || 'Không lưu được nhân viên.')
+        return
+      }
+      const remote = await fetchEmployeesFromSupabase()
+      if (remote.length > 0) {
+        setStaffRows(
+          remote.map((r) => ({
+            name: r.name,
+            phone: r.phone || '—',
+            address: r.address || '—',
+            cccd: r.cccd || '—',
+            mail: r.mail || '—',
+          }))
+        )
+      }
+      setEmployeeModalOpen(false)
+    },
+    []
+  )
 
   const buildInboundOrderPayload = useCallback(
     (status) => {
@@ -4316,9 +4427,19 @@ export default function AdminHub({
   const [customers, setCustomers] = useState(() => loadCustomersFromStorage())
 
   useEffect(() => {
-    if (activeTab === TAB_CUSTOMERS) {
-      setCustomers(loadCustomersFromStorage())
-    }
+    if (activeTab !== TAB_CUSTOMERS) return
+    void (async () => {
+      const remote = await fetchCustomersFromSupabase()
+      const local = loadCustomersFromStorage()
+      const merged = mergeCustomerListsDedupe(remote, local)
+      setCustomers(merged)
+      try {
+        localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+      } catch (e) {
+        console.warn(e)
+      }
+      window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+    })()
   }, [activeTab, refreshKey])
 
   const custFiltered = useMemo(() => {
@@ -4326,26 +4447,69 @@ export default function AdminHub({
     if (!q) return customers
     return customers.filter(
       (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
-        c.address.toLowerCase().includes(q) ||
-        c.cccd.toLowerCase().includes(q)
+        String(c.name || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(c.phone || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(c.address || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(c.cccd || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(c.mail || '')
+          .toLowerCase()
+          .includes(q)
     )
   }, [customers, custDebounced])
 
   const [staffQ, setStaffQ] = useState('')
   const staffDebounced = useDebounced(staffQ, 120)
+  const [staffRows, setStaffRows] = useState(STAFF_ROWS_DEFAULT)
+  useEffect(() => {
+    if (activeTab !== TAB_STAFF) return
+    void (async () => {
+      const remote = await fetchEmployeesFromSupabase()
+      if (remote.length > 0) {
+        setStaffRows(
+          remote.map((r) => ({
+            name: r.name,
+            phone: r.phone || '—',
+            address: r.address || '—',
+            cccd: r.cccd || '—',
+            mail: r.mail || '—',
+          }))
+        )
+      } else {
+        setStaffRows(STAFF_ROWS_DEFAULT)
+      }
+    })()
+  }, [activeTab, refreshKey])
+
   const staffFiltered = useMemo(() => {
     const q = staffDebounced.trim().toLowerCase()
-    if (!q) return STAFF_ROWS
-    return STAFF_ROWS.filter(
+    if (!q) return staffRows
+    return staffRows.filter(
       (r) =>
-        r.name.toLowerCase().includes(q) ||
-        r.phone.toLowerCase().includes(q) ||
-        r.address.toLowerCase().includes(q) ||
-        r.cccd.toLowerCase().includes(q)
+        String(r.name || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(r.phone || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(r.address || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(r.cccd || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(r.mail || '')
+          .toLowerCase()
+          .includes(q)
     )
-  }, [staffDebounced])
+  }, [staffDebounced, staffRows])
 
   const sellHref = sellHomeHref()
 
@@ -5486,16 +5650,24 @@ export default function AdminHub({
             <h2 id="ah-cust-title" className="admin-hub-panel-title">
               Khách hàng
             </h2>
-            <div className="admin-hub-toolbar">
+            <div className="admin-hub-toolbar ah-hub-toolbar-split">
               <input
-                className="admin-hub-search"
+                className="admin-hub-search ah-hub-toolbar-search"
                 type="search"
-                placeholder="Tìm theo họ tên, SĐT, địa chỉ, CCCD…"
+                placeholder="Tìm theo họ tên, SĐT, địa chỉ, CCCD, mail…"
                 value={custQ}
                 onChange={(e) => setCustQ(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
               />
+              <button
+                type="button"
+                className="ah-hub-add-entity-btn"
+                onClick={() => setCustomerModalOpen(true)}
+                title="Thêm khách hàng mới"
+              >
+                + Thêm khách hàng mới
+              </button>
             </div>
             <div className="admin-hub-table-wrap">
               <table className="admin-hub-table">
@@ -5505,14 +5677,15 @@ export default function AdminHub({
                     <th>Số điện thoại</th>
                     <th>Địa chỉ</th>
                     <th>Số CCCD</th>
+                    <th>Mail</th>
                   </tr>
                 </thead>
                 <tbody>
                   {custFiltered.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="admin-hub-muted">
+                      <td colSpan={5} className="admin-hub-muted">
                         {customers.length === 0
-                          ? 'Chưa có khách lưu trên trình duyệt này (thêm tại màn Bán hàng).'
+                          ? 'Chưa có khách — thêm mới hoặc đồng bộ từ Supabase.'
                           : 'Không có khách khớp tìm kiếm.'}
                       </td>
                     </tr>
@@ -5523,6 +5696,7 @@ export default function AdminHub({
                         <td>{c.phone || '—'}</td>
                         <td>{c.address || '—'}</td>
                         <td>{c.cccd || '—'}</td>
+                        <td>{c.mail || '—'}</td>
                       </tr>
                     ))
                   )}
@@ -5537,9 +5711,9 @@ export default function AdminHub({
             <h2 id="ah-staff-title" className="admin-hub-panel-title">
               Nhân viên
             </h2>
-            <div className="admin-hub-toolbar">
+            <div className="admin-hub-toolbar ah-hub-toolbar-split">
               <input
-                className="admin-hub-search"
+                className="admin-hub-search ah-hub-toolbar-search"
                 type="search"
                 placeholder="Tìm trong danh sách…"
                 value={staffQ}
@@ -5547,6 +5721,14 @@ export default function AdminHub({
                 autoComplete="off"
                 spellCheck={false}
               />
+              <button
+                type="button"
+                className="ah-hub-add-entity-btn"
+                onClick={() => setEmployeeModalOpen(true)}
+                title="Thêm nhân viên"
+              >
+                + Thêm nhân viên
+              </button>
             </div>
             <div className="admin-hub-table-wrap">
               <table className="admin-hub-table">
@@ -5556,6 +5738,7 @@ export default function AdminHub({
                     <th>Số điện thoại</th>
                     <th>Địa chỉ</th>
                     <th>Số CCCD</th>
+                    <th>Mail</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5565,6 +5748,7 @@ export default function AdminHub({
                       <td>{r.phone}</td>
                       <td>{r.address}</td>
                       <td>{r.cccd}</td>
+                      <td>{r.mail}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -7247,90 +7431,27 @@ export default function AdminHub({
         }}
       />
 
-      {supplierModalOpen && (
-        <div
-          className="ah-inbound-sup-backdrop"
-          role="presentation"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setSupplierModalOpen(false)
-              setNewSup({ name: '', phone: '', address: '', cccd: '' })
-            }
-          }}
-        >
-          <div
-            className="ah-inbound-sup-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ah-inbound-sup-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 id="ah-inbound-sup-title" className="ah-inbound-sup-title">
-              Thêm nhà cung cấp
-            </h3>
-            <label className="ah-inbound-sup-field">
-              <span>Tên NCC</span>
-              <input
-                type="text"
-                className="ah-inbound-form-input"
-                value={newSup.name}
-                onChange={(e) => setNewSup((s) => ({ ...s, name: e.target.value }))}
-                autoComplete="organization"
-                autoFocus
-              />
-            </label>
-            <label className="ah-inbound-sup-field">
-              <span>Số điện thoại</span>
-              <input
-                type="tel"
-                className="ah-inbound-form-input"
-                value={newSup.phone}
-                onChange={(e) => setNewSup((s) => ({ ...s, phone: e.target.value }))}
-                autoComplete="tel"
-              />
-            </label>
-            <label className="ah-inbound-sup-field">
-              <span>Địa chỉ</span>
-              <input
-                type="text"
-                className="ah-inbound-form-input"
-                value={newSup.address}
-                onChange={(e) => setNewSup((s) => ({ ...s, address: e.target.value }))}
-                autoComplete="street-address"
-              />
-            </label>
-            <label className="ah-inbound-sup-field">
-              <span>CCCD</span>
-              <input
-                type="text"
-                className="ah-inbound-form-input"
-                value={newSup.cccd}
-                onChange={(e) => setNewSup((s) => ({ ...s, cccd: e.target.value }))}
-                autoComplete="off"
-              />
-            </label>
-            <div className="ah-inbound-sup-actions">
-              <button
-                type="button"
-                className="ah-inbound-footer-btn ah-inbound-footer-btn--ghost"
-                onClick={() => {
-                  setSupplierModalOpen(false)
-                  setNewSup({ name: '', phone: '', address: '', cccd: '' })
-                }}
-              >
-                Hủy
-              </button>
-              <button
-                type="button"
-                className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
-                onClick={submitNewSupplier}
-              >
-                Lưu NCC
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <EntityPersonModal
+        open={supplierModalOpen}
+        title="Thêm nhà cung cấp"
+        saveLabel="Lưu NCC"
+        onClose={() => setSupplierModalOpen(false)}
+        onSubmit={submitNewSupplier}
+      />
+      <EntityPersonModal
+        open={customerModalOpen}
+        title="Thêm khách hàng"
+        saveLabel="Lưu"
+        onClose={() => setCustomerModalOpen(false)}
+        onSubmit={submitNewCustomerAdmin}
+      />
+      <EntityPersonModal
+        open={employeeModalOpen}
+        title="Thêm nhân viên"
+        saveLabel="Lưu"
+        onClose={() => setEmployeeModalOpen(false)}
+        onSubmit={submitNewEmployeeAdmin}
+      />
 
       {inboundCatalogBulkSaving && (
         <div

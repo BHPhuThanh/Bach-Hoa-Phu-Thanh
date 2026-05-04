@@ -97,6 +97,11 @@ import {
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
+  fetchCustomersFromSupabase,
+  insertCustomerSupabase,
+  mergeCustomerListsDedupe,
+} from './entityContactsRepository.js'
+import {
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
   collectCartSaleTouchedVariantIds,
@@ -1637,6 +1642,9 @@ function loadStoredCustomers() {
       .map((c) => ({
         name: String(c.name || '').trim(),
         phone: String(c.phone || '').trim(),
+        address: String(c.address || '').trim(),
+        cccd: String(c.cccd || '').trim(),
+        mail: String(c.mail || '').trim(),
       }))
       .filter((c) => c.name)
   } catch {
@@ -2948,7 +2956,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const q = stripAccents(raw.toLowerCase())
     return storedCustomers
       .filter((c) => {
-        const hay = stripAccents(`${c.name} ${c.phone}`.toLowerCase())
+        const hay = stripAccents(`${c.name} ${c.phone} ${c.mail || ''}`.toLowerCase())
         return hay.includes(q)
       })
       .slice(0, 8)
@@ -4010,22 +4018,71 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     window.open(getAdminOrdersAbsUrl(), '_blank', 'noopener,noreferrer')
   }, [])
 
-  const submitNewCustomer = useCallback(() => {
+  const refreshPosCustomers = useCallback(async () => {
+    const local = loadStoredCustomers()
+    if (!isSupabaseConfigured()) {
+      setStoredCustomers(local)
+      return
+    }
+    try {
+      const remote = await fetchCustomersFromSupabase()
+      const merged = mergeCustomerListsDedupe(remote, local)
+      setStoredCustomers(merged)
+      saveStoredCustomers(merged)
+    } catch (e) {
+      console.warn('[POS] Đồng bộ khách hàng', e)
+      setStoredCustomers(local)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeView !== 'sell') return
+    void refreshPosCustomers()
+  }, [activeView, refreshPosCustomers])
+
+  useEffect(() => {
+    const bump = () => {
+      void refreshPosCustomers()
+    }
+    window.addEventListener('csv-preview-customers-changed', bump)
+    window.addEventListener('storage', bump)
+    return () => {
+      window.removeEventListener('csv-preview-customers-changed', bump)
+      window.removeEventListener('storage', bump)
+    }
+  }, [refreshPosCustomers])
+
+  const submitNewCustomer = useCallback(async () => {
     const name = newCustomerName.trim()
     const phone = newCustomerPhone.trim()
     if (!name) {
       window.alert('Vui lòng nhập họ tên khách.')
       return
     }
-    const entry = { name, phone: phone || '' }
-    setStoredCustomers((prev) => {
-      const without = phone
-        ? prev.filter((c) => String(c.phone || '').trim() !== phone)
-        : prev.filter((c) => c.name !== name)
-      const next = [entry, ...without].slice(0, 200)
-      saveStoredCustomers(next)
-      return next
-    })
+    const entry = {
+      name,
+      phone: phone || '',
+      address: '',
+      cccd: '',
+      mail: '',
+    }
+    if (isSupabaseConfigured()) {
+      const ins = await insertCustomerSupabase(entry)
+      if (!ins.ok && !ins.skipped) {
+        window.alert(ins.error?.message || 'Không lưu được khách hàng trên Supabase.')
+        return
+      }
+      await refreshPosCustomers()
+    } else {
+      setStoredCustomers((prev) => {
+        const without = phone
+          ? prev.filter((c) => String(c.phone || '').trim() !== phone)
+          : prev.filter((c) => c.name !== name)
+        const next = [entry, ...without].slice(0, 200)
+        saveStoredCustomers(next)
+        return next
+      })
+    }
     updateActiveOrder((o) => ({
       ...o,
       customerName: name,
@@ -4035,7 +4092,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setCustomerAddOpen(false)
     setNewCustomerName('')
     setNewCustomerPhone('')
-  }, [newCustomerName, newCustomerPhone, updateActiveOrder])
+    window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+  }, [newCustomerName, newCustomerPhone, refreshPosCustomers, updateActiveOrder])
 
   useEffect(() => {
     if (activeView !== 'sell' || products.length === 0) return

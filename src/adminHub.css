@@ -262,6 +262,38 @@
   margin-bottom: 0.75rem;
 }
 
+.admin-hub-toolbar.ah-hub-toolbar-split {
+  align-items: stretch;
+  justify-content: space-between;
+}
+
+.ah-hub-toolbar-search {
+  flex: 1 1 200px;
+}
+
+.ah-hub-add-entity-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.48rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(56, 189, 248, 0.12);
+  color: #e0f2fe;
+  font-size: 0.86rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.ah-hub-add-entity-btn:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.55);
+}
+
 .admin-hub-search {
   flex: 1 1 12rem;
   min-width: min(100%, 220px);
