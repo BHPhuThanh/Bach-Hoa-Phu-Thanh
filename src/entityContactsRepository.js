@@ -136,3 +136,47 @@ export function mergeCustomerListsDedupe(remote, local) {
   }
   return out
 }
+
+function fallbackSupplierRowId() {
+  return `sup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+/**
+ * Gộp nhà cung cấp (ưu tiên `remote`), tránh trùng cặp (phone + name). Giữ `id` từ remote hoặc local.
+ * @param {Array} remote
+ * @param {Array} local
+ * @returns {Array<{ id: string, name: string, phone: string, address: string, cccd: string, mail: string }>}
+ */
+export function mergeSupplierListsDedupe(remote, local) {
+  const seen = new Set()
+  const out = []
+  const keyOf = (c) =>
+    `${String(c.phone || '').trim().toLowerCase()}|${String(c.name || '').trim().toLowerCase()}`
+  for (const r of remote || []) {
+    const k = keyOf(r)
+    if (!String(r?.name || '').trim() || seen.has(k)) continue
+    seen.add(k)
+    out.push({
+      id: String(r.id || '').trim() || fallbackSupplierRowId(),
+      name: String(r.name || '').trim(),
+      phone: String(r.phone || '').trim(),
+      address: String(r.address || '').trim(),
+      cccd: String(r.cccd || '').trim(),
+      mail: String(r.mail || '').trim(),
+    })
+  }
+  for (const l of local || []) {
+    const k = keyOf(l)
+    if (!String(l?.name || '').trim() || seen.has(k)) continue
+    seen.add(k)
+    out.push({
+      id: String(l.id || '').trim() || fallbackSupplierRowId(),
+      name: String(l.name || '').trim(),
+      phone: String(l.phone || '').trim(),
+      address: String(l.address || '').trim(),
+      cccd: String(l.cccd || '').trim(),
+      mail: String(l.mail || '').trim(),
+    })
+  }
+  return out
+}

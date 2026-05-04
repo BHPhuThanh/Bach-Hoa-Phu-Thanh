@@ -50,11 +50,13 @@ import EntityPersonModal from './EntityPersonModal.jsx'
 import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
+  fetchSuppliersFromSupabase,
   formatPostgrestErrorForUser,
   insertCustomerSupabase,
   insertEmployeeSupabase,
   insertSupplierSupabase,
   mergeCustomerListsDedupe,
+  mergeSupplierListsDedupe,
 } from './entityContactsRepository.js'
 import {
   buildVariantPosSearchHaystack,
@@ -2530,11 +2532,6 @@ export default function AdminHub({
   const inboundListImportRef = useRef(null)
   const [suppliers, setSuppliers] = useState(() => loadSuppliersFromStorage())
 
-  useEffect(() => {
-    if (activeTab !== TAB_INBOUND) return
-    setSuppliers(loadSuppliersFromStorage())
-  }, [activeTab, refreshKey])
-
   const persistSuppliers = useCallback((rows) => {
     try {
       localStorage.setItem(SUPPLIERS_STORAGE_KEY, JSON.stringify(rows))
@@ -2543,6 +2540,34 @@ export default function AdminHub({
     }
     setSuppliers(rows)
   }, [])
+
+  /** Chỉ đồng bộ từ Supabase (bảng suppliers) khi vào tab Nhập hàng — không gọi theo từng phím gõ. */
+  const inboundSuppliersFetchGenRef = useRef(0)
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND && activeTab !== TAB_INBOUND_DRAFT) return
+    const gen = ++inboundSuppliersFetchGenRef.current
+    const t = window.setTimeout(() => {
+      void (async () => {
+        if (gen !== inboundSuppliersFetchGenRef.current) return
+        if (!isSupabaseConfigured()) {
+          setSuppliers(loadSuppliersFromStorage())
+          return
+        }
+        try {
+          const remote = await fetchSuppliersFromSupabase()
+          if (gen !== inboundSuppliersFetchGenRef.current) return
+          const local = loadSuppliersFromStorage()
+          const merged = mergeSupplierListsDedupe(remote, local)
+          persistSuppliers(merged)
+        } catch (e) {
+          console.warn('[AdminHub] Đồng bộ nhà cung cấp (suppliers)', e)
+          if (gen !== inboundSuppliersFetchGenRef.current) return
+          setSuppliers(loadSuppliersFromStorage())
+        }
+      })()
+    }, 400)
+    return () => window.clearTimeout(t)
+  }, [activeTab, persistSuppliers])
 
   /** Khi true, hiện tab "Phiếu nhập mới" trên nav (cho đến khi đóng / lưu). */
   const [inboundDraftSession, setInboundDraftSession] = useState(() => Boolean(standaloneInboundCreate))
@@ -2610,6 +2635,29 @@ export default function AdminHub({
     () => collectUniqueThuongHieuFromCatalog(catalogList),
     [catalogList]
   )
+
+  /** Gợi ý NCC: ưu tiên bảng `suppliers` (Supabase), thêm thương hiệu trong danh mục nếu chưa có. */
+  const inboundNccAutocompleteOptions = useMemo(() => {
+    const seen = new Set()
+    const out = []
+    for (const s of suppliers || []) {
+      const n = String(s?.name || '').trim()
+      if (!n) continue
+      const k = n.toLowerCase()
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push(n)
+    }
+    for (const br of catalogThuongHieuUnique || []) {
+      const n = String(br || '').trim()
+      if (!n) continue
+      const k = n.toLowerCase()
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push(n)
+    }
+    return out.sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [suppliers, catalogThuongHieuUnique])
 
   const inboundProductSuggest = useMemo(() => {
     const raw = inboundFormProductDebounced.trim()
@@ -2777,7 +2825,18 @@ export default function AdminHub({
           window.alert(formatPostgrestErrorForUser(ins.error))
           return
         }
-        persistSuppliers([...suppliers, row])
+        if (isSupabaseConfigured() && ins.ok) {
+          try {
+            const remote = await fetchSuppliersFromSupabase()
+            const local = loadSuppliersFromStorage()
+            persistSuppliers(mergeSupplierListsDedupe(remote, local))
+          } catch (e) {
+            console.warn('[AdminHub] Tải lại NCC sau lưu', e)
+            persistSuppliers(mergeSupplierListsDedupe([], [...suppliers, row]))
+          }
+        } else {
+          persistSuppliers([...suppliers, row])
+        }
         setInboundFormSupplierName(name)
         setInboundFormSupplierQ(name)
         setSupplierModalOpen(false)
@@ -4471,20 +4530,31 @@ export default function AdminHub({
   const custDebounced = useDebounced(custQ, 180)
   const [customers, setCustomers] = useState(() => loadCustomersFromStorage())
 
+  const adminCustomersSyncGenRef = useRef(0)
   useEffect(() => {
     if (activeTab !== TAB_CUSTOMERS) return
-    void (async () => {
-      const remote = await fetchCustomersFromSupabase()
-      const local = loadCustomersFromStorage()
-      const merged = mergeCustomerListsDedupe(remote, local)
-      setCustomers(merged)
-      try {
-        localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
-      } catch (e) {
-        console.warn(e)
-      }
-      window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
-    })()
+    const gen = ++adminCustomersSyncGenRef.current
+    const t = window.setTimeout(() => {
+      void (async () => {
+        if (gen !== adminCustomersSyncGenRef.current) return
+        try {
+          const remote = await fetchCustomersFromSupabase()
+          if (gen !== adminCustomersSyncGenRef.current) return
+          const local = loadCustomersFromStorage()
+          const merged = mergeCustomerListsDedupe(remote, local)
+          setCustomers(merged)
+          try {
+            localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+          } catch (e) {
+            console.warn(e)
+          }
+          window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+        } catch (e) {
+          console.warn('[AdminHub] Tải khách hàng (customers)', e)
+        }
+      })()
+    }, 500)
+    return () => window.clearTimeout(t)
   }, [activeTab, refreshKey])
 
   const custFiltered = useMemo(() => {
@@ -4513,24 +4583,35 @@ export default function AdminHub({
   const [staffQ, setStaffQ] = useState('')
   const staffDebounced = useDebounced(staffQ, 120)
   const [staffRows, setStaffRows] = useState(STAFF_ROWS_DEFAULT)
+  const adminStaffSyncGenRef = useRef(0)
   useEffect(() => {
     if (activeTab !== TAB_STAFF) return
-    void (async () => {
-      const remote = await fetchEmployeesFromSupabase()
-      if (remote.length > 0) {
-        setStaffRows(
-          remote.map((r) => ({
-            name: r.name,
-            phone: r.phone || '—',
-            address: r.address || '—',
-            cccd: r.cccd || '—',
-            mail: r.mail || '—',
-          }))
-        )
-      } else {
-        setStaffRows(STAFF_ROWS_DEFAULT)
-      }
-    })()
+    const gen = ++adminStaffSyncGenRef.current
+    const t = window.setTimeout(() => {
+      void (async () => {
+        if (gen !== adminStaffSyncGenRef.current) return
+        try {
+          const remote = await fetchEmployeesFromSupabase()
+          if (gen !== adminStaffSyncGenRef.current) return
+          if (remote.length > 0) {
+            setStaffRows(
+              remote.map((r) => ({
+                name: r.name,
+                phone: r.phone || '—',
+                address: r.address || '—',
+                cccd: r.cccd || '—',
+                mail: r.mail || '—',
+              }))
+            )
+          } else {
+            setStaffRows(STAFF_ROWS_DEFAULT)
+          }
+        } catch (e) {
+          console.warn('[AdminHub] Tải nhân viên (employees)', e)
+        }
+      })()
+    }, 500)
+    return () => window.clearTimeout(t)
   }, [activeTab, refreshKey])
 
   const staffFiltered = useMemo(() => {
@@ -7264,8 +7345,9 @@ export default function AdminHub({
                         setInboundFormSupplierQ(v)
                         setInboundFormSupplierName(v)
                       }}
-                      options={catalogThuongHieuUnique}
-                      placeholder="Chọn hoặc gõ Thương hiệu — NCC phiếu (= thuong_hieu)"
+                      options={inboundNccAutocompleteOptions}
+                      filterDebounceMs={500}
+                      placeholder="Chọn hoặc gõ tên NCC (bảng suppliers)…"
                     />
                   </div>
                   <button
@@ -7281,9 +7363,9 @@ export default function AdminHub({
                   </button>
                 </div>
                 <p className="ah-inbound-ncc-hint">
-                  Danh sách lấy từ <strong>thuong_hieu</strong> (CSV cột D). Tối đa <strong>50</strong> dòng lọc được
-                  (cuộn trong menu). Có thể gõ tùy ý; chọn một mục để đồng bộ tên NCC phiếu nhập với thương hiệu trong
-                  kho — hoặc <strong>+ Thêm NCC</strong> để lưu SĐT / địa chỉ.
+                  Gợi ý ưu tiên từ <strong>Supabase · bảng suppliers</strong> (tải khi mở tab; gõ tìm sau 500ms, không
+                  gọi API theo từng phím). Có thêm thương hiệu từ <strong>thuong_hieu</strong> (danh mục) nếu chưa trùng.
+                  Tối đa <strong>50</strong> dòng — hoặc <strong>+ Thêm NCC</strong> để lưu và làm mới danh sách.
                 </p>
 
                 <label className="ah-inbound-form-lbl" htmlFor="ah-inbound-order-code">

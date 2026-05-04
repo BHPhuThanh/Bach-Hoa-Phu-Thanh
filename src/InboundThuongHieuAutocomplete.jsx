@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { List, useListRef } from 'react-window'
 
 /**
@@ -40,9 +40,22 @@ const NccSuggestRow = memo(function NccSuggestRow({ index, style, items, onPick 
   )
 })
 
+function useDebouncedFilterQuery(raw, debounceMs) {
+  const [out, setOut] = useState(raw)
+  useEffect(() => {
+    if (debounceMs <= 0) {
+      setOut(raw)
+      return undefined
+    }
+    const t = window.setTimeout(() => setOut(raw), debounceMs)
+    return () => window.clearTimeout(t)
+  }, [raw, debounceMs])
+  return debounceMs <= 0 ? raw : out
+}
+
 /**
  * Ô Nhà cung cấp / thương hiệu phiếu nhập: nhập + lọc + tối đa 50 gợi ý (virtual list).
- * @param {{ value: string, onValueChange: (s: string) => void, options: string[], placeholder?: string, id?: string }} props
+ * @param {{ value: string, onValueChange: (s: string) => void, options: string[], placeholder?: string, id?: string, filterDebounceMs?: number }} props
  */
 export default function InboundThuongHieuAutocomplete({
   value,
@@ -50,6 +63,7 @@ export default function InboundThuongHieuAutocomplete({
   options,
   placeholder = 'Chọn hoặc gõ thương hiệu…',
   id = 'ah-inbound-ncc-combo',
+  filterDebounceMs = 0,
 }) {
   const wrapRef = useRef(null)
   const inputRef = useRef(null)
@@ -58,9 +72,10 @@ export default function InboundThuongHieuAutocomplete({
   const [listW, setListW] = useState(280)
 
   const all = useMemo(() => (Array.isArray(options) ? options : []).filter(Boolean), [options])
+  const filterQ = useDebouncedFilterQuery(value, filterDebounceMs)
 
   const filtered = useMemo(() => {
-    const q = String(value ?? '').trim().toLowerCase()
+    const q = String(filterQ ?? '').trim().toLowerCase()
     if (!q) return all.slice(0, MAX_VISIBLE)
     const out = []
     for (const n of all) {
@@ -70,7 +85,7 @@ export default function InboundThuongHieuAutocomplete({
       }
     }
     return out
-  }, [all, value])
+  }, [all, filterQ])
 
   const listHeight = Math.min(filtered.length * ROW_H, DROPDOWN_MAX_H)
 
@@ -101,11 +116,11 @@ export default function InboundThuongHieuAutocomplete({
   useLayoutEffect(() => {
     if (!open) return
     listRef.current?.scrollToRow?.({ index: 0, align: 'start', behavior: 'instant' })
-  }, [open, value, filtered.length, listRef])
+  }, [open, filterQ, filtered.length, listRef])
 
   const showList = filtered.length > 0
   const showEmptyHint =
-    filtered.length === 0 && all.length > 0 && String(value ?? '').trim().length > 0
+    filtered.length === 0 && all.length > 0 && String(filterQ ?? '').trim().length > 0
   const showNoCatalogHint = all.length === 0
   const showDropdownPanel = open && (showList || showEmptyHint || showNoCatalogHint)
 
