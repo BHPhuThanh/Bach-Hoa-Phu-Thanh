@@ -19,7 +19,7 @@ import {
 } from './stockCheckStorage.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
-import { formatDisplayTonKhoVi } from './displayStockQty.js'
+import { formatDisplayTonKhoVi, formatStockQtyDisplayVi } from './displayStockQty.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
@@ -56,7 +56,8 @@ function parseStockInput(raw) {
 function formatSignedQtyVi(n) {
   if (!Number.isFinite(n)) return '—'
   const abs = Math.abs(n)
-  const t = abs.toLocaleString('vi-VN', { maximumFractionDigits: 4 })
+  const t = formatStockQtyDisplayVi(abs)
+  if (t === '—') return '—'
   if (n < 0) return `−${t}`
   return t
 }

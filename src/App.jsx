@@ -102,9 +102,11 @@ import {
   collectCartSaleTouchedVariantIds,
   collectSiblingVariantIds,
   findCanonicalStockRootVariant,
+  findRootStockTonKhoForMaGoc,
   getComboBom,
   isComboCatalogProduct,
   salableComboPackCount,
+  variantQuyDoiNumber,
 } from './comboCatalog.js'
 import { displayTonKhoNumber, formatRoundedStockQtyVi } from './displayStockQty.js'
 
@@ -416,7 +418,7 @@ function salableQtyInVariantUnitsForPos(products, product, variant) {
 }
 
 /**
- * Tồn kho hiển thị trên thẻ: ton_kho / quy_doi (4 chữ số thập phân);
+ * Tồn kho hiển thị trên thẻ: `parseFloat((ton_kho / quy_doi).toFixed(4))` (xem displayStockQty.js);
  * đa ĐƠN VỊ TÍNH: từ biến thể cơ sở; combo = số gói bán được theo BOM.
  */
 function catalogStockLabel(products, p) {
@@ -444,7 +446,7 @@ function catalogStockLabel(products, p) {
       }
     }
   }
-  if (n > 0) return Math.round(sum * 1e4) / 1e4
+  if (n > 0) return parseFloat(sum.toFixed(4))
   return null
 }
 
@@ -1400,8 +1402,7 @@ function cartLineQuyDoiFactor(products, line) {
   if (!line) return 1
   const p = findProductForCartLine(products, line)
   const v = resolveCartLineVariantRowOrFallback(p, line)
-  const n = effectiveConversionForVariant(v || line)
-  return Number.isFinite(Number(n)) && Number(n) > 0 ? Number(n) : 1
+  return variantQuyDoiNumber(v || line)
 }
 
 /**
@@ -1760,7 +1761,8 @@ function rehydrateSellOrdersFromSnapshot(products, rawOrders, wholesaleMode) {
 
 /**
  * Trừ tồn kho catalog khi bán:
- * - Hàng thường: `ton_kho_moi_chuan = ton_kho(gốc, quy_doi≈1) − Σ(tong_xuat)`; gán **cùng** số đó cho mọi ĐVT anh em.
+ * - Hàng thường: `ma_goc` từ `ma_hh_lien_quan` hoặc `ma_hang`; `tong_xuat = SL × Number(quy_doi)`;
+ *   `ton_kho_chuan = ton_kho` của dòng **ma_hang === ma_goc** − Σ(tong_xuat); gán **cùng** `ton_kho_chuan` cho mọi SKU có `ma_hang` hoặc `ma_hh_lien_quan` === `ma_goc`.
  * - Combo: trừ theo BOM (delta theo biến thể thành phần).
  * Trừ thêm từng lô nếu có stockBatches.
  * @param {{
@@ -1800,10 +1802,13 @@ function applySoldQtyToCatalog(products, cartLines, options) {
   for (const [ma_goc, D] of deductByMaGoc) {
     const sids = collectSiblingVariantIds(products, ma_goc)
     if (sids.length === 0) continue
-    const root = findCanonicalStockRootVariant(products, sids)
-    if (!root) continue
-    const cur =
-      root.stockQty != null && Number.isFinite(Number(root.stockQty)) ? Number(root.stockQty) : 0
+    let cur = findRootStockTonKhoForMaGoc(products, ma_goc)
+    if (cur == null || !Number.isFinite(cur)) {
+      const root = findCanonicalStockRootVariant(products, sids)
+      if (!root) continue
+      cur =
+        root.stockQty != null && Number.isFinite(Number(root.stockQty)) ? Number(root.stockQty) : 0
+    }
     const ton_kho_moi_chuan = cur - D
     for (const sid of sids) {
       canonicalTonKhoByVid.set(String(sid), ton_kho_moi_chuan)

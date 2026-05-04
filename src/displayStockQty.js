@@ -1,10 +1,8 @@
 /**
- * Hiển thị tồn kho theo công thức: ton_kho / quy_doi (quy_doi ≤ 0 hoặc thiếu → 1).
- * `formatDisplayTonKhoVi`: luôn **4** chữ số thập phân — chỉ UI, không thay giá trị lưu catalog.
- * Dấu thập phân dùng **chấm** (.), giống nhiều phần mềm bán hàng — tránh nhầm với hàng nghìn.
+ * Hiển thị tồn kho: `parseFloat((Number(ton_kho) / Number(quy_doi)).toFixed(4))` — ưu tiên cột `quy_doi`;
+ * chỉ UI, không đổi giá trị lưu catalog. Số nguyên hiển thị gọn (8 không thành 8.0000).
  *
- * Hệ số quy đổi: ưu tiên `quy_doi` / `raw.quy_doi` (CSV Kiot) trước `conversion` nội bộ —
- * tránh trường hợp conversion = 1 nhưng quy_doi = 12 (vd. thùng 12 lẻ) làm chia sai.
+ * Mẫu số: ưu tiên `raw.quy_doi` / `quy_doi` (Kiot), sau đó fallback `conversion` / `catalogQuyDoiFactorToBase`.
  */
 import { catalogQuyDoiFactorToBase, parseConversionRatio } from './productUnits.js'
 
@@ -18,7 +16,7 @@ function effectiveQuyDoiScalar(raw) {
 }
 
 /**
- * Mẫu số hiển thị tồn: ép kiểu `quy_doi` từ dòng/variant (ưu tiên CSV), fallback logic conversion cũ.
+ * Mẫu số hiển thị: ưu tiên `Number(quy_doi)` từ CSV; fallback conversion nội bộ.
  * @param {object} row
  */
 function quyDoiDenominatorForDisplay(row) {
@@ -33,6 +31,13 @@ function quyDoiDenominatorForDisplay(row) {
   return Number.isFinite(fb) && fb > 0 ? fb : 1
 }
 
+/** Chuỗi hiển thị sau `parseFloat(…toFixed(4))` — bỏ số 0 thập phân thừa. */
+export function formatStockQtyDisplayVi(n) {
+  if (n == null || !Number.isFinite(Number(n))) return '—'
+  const x = parseFloat(Number(n).toFixed(4))
+  return String(x)
+}
+
 /**
  * @param {unknown} tonKhoRaw — giá trị từ cột tồn (ton_kho)
  * @param {unknown} quyDoiOrVariant — số quy_doi hoặc object biến thể có conversion / conversionValue
@@ -45,8 +50,8 @@ export function displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant) {
     quyDoiOrVariant != null && typeof quyDoiOrVariant === 'object'
       ? quyDoiDenominatorForDisplay(quyDoiOrVariant)
       : effectiveQuyDoiScalar(quyDoiOrVariant)
-  const d = Number.isFinite(denom) && denom > 0 ? denom : 1
-  return Math.round((ton / d) * 1e4) / 1e4
+  const d = Number.isFinite(Number(denom)) && Number(denom) > 0 ? Number(denom) : 1
+  return parseFloat((ton / d).toFixed(4))
 }
 
 /**
@@ -56,19 +61,17 @@ export function displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant) {
 export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant) {
   const n = displayTonKhoNumber(tonKhoRaw, quyDoiOrVariant)
   if (n == null) return '—'
-  return n.toFixed(4)
+  return formatStockQtyDisplayVi(n)
 }
 
 /** Nhãn gợi ý phiếu nhập: "Tồn: …" theo ton_kho / quy_doi. */
 export function formatInboundTonLabelVi(stockQty, variant) {
   const n = displayTonKhoNumber(stockQty, variant ?? {})
   if (n == null) return 'Tồn: —'
-  return `Tồn: ${n.toFixed(4)}`
+  return `Tồn: ${formatStockQtyDisplayVi(n)}`
 }
 
-/** Số lượng bán/ tồn tính sẵn (vd. "có thể bán") — làm tròn 4 chữ số thập phân khi hiển thị. */
+/** Số lượng bán / tồn tính sẵn (POS, lô…) — cùng chuẩn `parseFloat(toFixed(4))`. */
 export function formatRoundedStockQtyVi(n) {
-  if (n == null || !Number.isFinite(Number(n))) return '—'
-  const x = Math.round(Number(n) * 1e4) / 1e4
-  return x.toLocaleString('vi-VN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+  return formatStockQtyDisplayVi(n)
 }

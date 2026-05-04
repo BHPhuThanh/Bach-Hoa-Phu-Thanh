@@ -68,11 +68,33 @@ export function collectSiblingVariantIds(products, maGoc) {
   return out
 }
 
-/** `Number(quy_doi)` từ CSV / variant — tối thiểu 1 khi không hợp lệ. */
-function variantQuyDoiNumber(v) {
+/**
+ * `tong_xuat` khi bán: `so_luong_ban * Number(quy_doi)` — chỉ cột `quy_doi` (CSV / Supabase),
+ * không dùng conversionValue/conversion để tránh lệch với tồn chuẩn.
+ * @param {object} v — biến thể catalog
+ */
+export function variantQuyDoiNumber(v) {
   if (!v) return 1
   const qdRaw = Number(v.raw?.quy_doi ?? v.quy_doi ?? v.quyDoi)
   return Number.isFinite(qdRaw) && qdRaw > 0 ? qdRaw : 1
+}
+
+/**
+ * `ton_kho` hiện tại của **sản phẩm gốc**: dòng có `ma_hang` (`code`) === `ma_goc`.
+ * @param {string} maGoc — đã trim
+ * @returns {number | null} — null nếu không tìm thấy dòng hoặc tồn không hợp lệ
+ */
+export function findRootStockTonKhoForMaGoc(products, maGoc) {
+  const k = String(maGoc ?? '').trim()
+  if (!k) return null
+  for (const p of products || []) {
+    for (const v of p.groupVariants || [p]) {
+      if (String(v.code ?? '').trim() !== k) continue
+      const sq = v.stockQty
+      if (sq != null && Number.isFinite(Number(sq))) return Number(sq)
+    }
+  }
+  return null
 }
 
 /**
