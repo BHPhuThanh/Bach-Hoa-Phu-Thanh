@@ -9,6 +9,7 @@ export default function EntityPersonModal({
   open,
   title,
   saveLabel = 'Lưu',
+  isSaving = false,
   onClose,
   onSubmit,
 }) {
@@ -21,6 +22,7 @@ export default function EntityPersonModal({
   if (!open) return null
 
   const submit = () => {
+    if (isSaving) return
     onSubmit({ ...draft })
   }
 
@@ -29,7 +31,7 @@ export default function EntityPersonModal({
       className="ah-inbound-sup-backdrop"
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose?.()
+        if (e.target === e.currentTarget && !isSaving) onClose?.()
       }}
     >
       <div
@@ -37,6 +39,7 @@ export default function EntityPersonModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="entity-person-modal-title"
+        aria-busy={isSaving}
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="entity-person-modal-title" className="ah-inbound-sup-title">
@@ -51,6 +54,7 @@ export default function EntityPersonModal({
             onChange={(e) => setDraft((s) => ({ ...s, name: e.target.value }))}
             autoComplete="name"
             autoFocus
+            disabled={isSaving}
           />
         </label>
         <label className="ah-inbound-sup-field">
@@ -61,6 +65,7 @@ export default function EntityPersonModal({
             value={draft.phone}
             onChange={(e) => setDraft((s) => ({ ...s, phone: e.target.value }))}
             autoComplete="tel"
+            disabled={isSaving}
           />
         </label>
         <label className="ah-inbound-sup-field">
@@ -71,6 +76,7 @@ export default function EntityPersonModal({
             value={draft.address}
             onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
             autoComplete="street-address"
+            disabled={isSaving}
           />
         </label>
         <label className="ah-inbound-sup-field">
@@ -81,6 +87,7 @@ export default function EntityPersonModal({
             value={draft.cccd}
             onChange={(e) => setDraft((s) => ({ ...s, cccd: e.target.value }))}
             autoComplete="off"
+            disabled={isSaving}
           />
         </label>
         <label className="ah-inbound-sup-field">
@@ -91,14 +98,32 @@ export default function EntityPersonModal({
             value={draft.mail}
             onChange={(e) => setDraft((s) => ({ ...s, mail: e.target.value }))}
             autoComplete="email"
+            disabled={isSaving}
           />
         </label>
         <div className="ah-inbound-sup-actions">
-          <button type="button" className="ah-inbound-footer-btn ah-inbound-footer-btn--ghost" onClick={() => onClose?.()}>
+          <button
+            type="button"
+            className="ah-inbound-footer-btn ah-inbound-footer-btn--ghost"
+            disabled={isSaving}
+            onClick={() => onClose?.()}
+          >
             Hủy
           </button>
-          <button type="button" className="ah-inbound-footer-btn ah-inbound-footer-btn--done" onClick={submit}>
-            {saveLabel}
+          <button
+            type="button"
+            className="ah-inbound-footer-btn ah-inbound-footer-btn--done ah-entity-save-btn"
+            disabled={isSaving}
+            onClick={submit}
+          >
+            {isSaving ? (
+              <>
+                <span className="ah-entity-spinner" aria-hidden />
+                Đang lưu…
+              </>
+            ) : (
+              saveLabel
+            )}
           </button>
         </div>
       </div>

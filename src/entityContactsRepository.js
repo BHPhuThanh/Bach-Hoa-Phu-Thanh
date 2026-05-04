@@ -16,6 +16,25 @@ function normalizePersonRow(row) {
   }
 }
 
+/**
+ * Chuỗi hiển thị cho Alert — gồm mã PostgREST / Postgres khi có (vd. RLS 42501).
+ * @param {unknown} err — PostgrestError hoặc Error
+ */
+export function formatPostgrestErrorForUser(err) {
+  if (err == null) return 'Lỗi không xác định.'
+  if (typeof err === 'string') return err
+  const msg = typeof err.message === 'string' ? err.message : String(err)
+  const code = err.code != null ? String(err.code) : ''
+  const details = typeof err.details === 'string' && err.details.trim() ? err.details.trim() : ''
+  const hint = typeof err.hint === 'string' && err.hint.trim() ? err.hint.trim() : ''
+  const lines = ['Không lưu được dữ liệu lên máy chủ (Supabase).']
+  if (code) lines.push(`Mã lỗi: ${code}`)
+  if (msg) lines.push(msg)
+  if (details) lines.push(details)
+  if (hint) lines.push(`Gợi ý: ${hint}`)
+  return lines.join('\n')
+}
+
 /** @param {'suppliers'|'customers'|'employees'} table */
 async function insertPerson(table, payload) {
   const sb = getSupabaseClient()
@@ -32,9 +51,21 @@ async function insertPerson(table, payload) {
   if (!row.name) {
     return { ok: false, error: new Error('Thiếu tên') }
   }
-  const { data, error } = await sb.from(table).insert(row).select('*').single()
-  if (error) return { ok: false, error }
-  return { ok: true, row: normalizePersonRow(data) }
+  try {
+    const { data, error } = await sb.from(table).insert(row).select('*').single()
+    if (error) {
+      return { ok: false, error, code: error.code, message: error.message }
+    }
+    return { ok: true, row: normalizePersonRow(data) }
+  } catch (e) {
+    const err = /** @type {Error & { code?: string }} */ (e)
+    return {
+      ok: false,
+      error: err,
+      code: err?.code,
+      message: err?.message ?? String(e),
+    }
+  }
 }
 
 /** @param {'suppliers'|'customers'|'employees'} table */

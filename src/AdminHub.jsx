@@ -50,6 +50,7 @@ import EntityPersonModal from './EntityPersonModal.jsx'
 import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
+  formatPostgrestErrorForUser,
   insertCustomerSupabase,
   insertEmployeeSupabase,
   insertSupplierSupabase,
@@ -2569,6 +2570,9 @@ export default function AdminHub({
   const [supplierModalOpen, setSupplierModalOpen] = useState(false)
   const [customerModalOpen, setCustomerModalOpen] = useState(false)
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
+  const [supplierSaving, setSupplierSaving] = useState(false)
+  const [customerSaving, setCustomerSaving] = useState(false)
+  const [employeeSaving, setEmployeeSaving] = useState(false)
   /** Đang sửa phiếu nhập có sẵn (id đơn). */
   const [inboundFormEditOrderId, setInboundFormEditOrderId] = useState(null)
   /** Hoàn trả: đơn + số lượng trả nhập theo lineId (chuỗi ô input). */
@@ -2756,36 +2760,44 @@ export default function AdminHub({
         alert('Nhập tên nhà cung cấp.')
         return
       }
-      const row = {
-        id: createInboundId(),
-        name,
-        phone: String(draft?.phone || '').trim(),
-        address: String(draft?.address || '').trim(),
-        cccd: String(draft?.cccd || '').trim(),
-        mail: String(draft?.mail || '').trim(),
+      setSupplierSaving(true)
+      try {
+        const row = {
+          id: createInboundId(),
+          name,
+          phone: String(draft?.phone || '').trim(),
+          address: String(draft?.address || '').trim(),
+          cccd: String(draft?.cccd || '').trim(),
+          mail: String(draft?.mail || '').trim(),
+        }
+        const ins = await insertSupplierSupabase(row)
+        if (ins.ok && ins.row?.id) {
+          row.id = ins.row.id
+        } else if (!ins.ok && !ins.skipped) {
+          window.alert(formatPostgrestErrorForUser(ins.error))
+          return
+        }
+        persistSuppliers([...suppliers, row])
+        setInboundFormSupplierName(name)
+        setInboundFormSupplierQ(name)
+        setSupplierModalOpen(false)
+      } catch (e) {
+        window.alert(formatPostgrestErrorForUser(e))
+      } finally {
+        setSupplierSaving(false)
       }
-      const ins = await insertSupplierSupabase(row)
-      if (ins.ok && ins.row?.id) {
-        row.id = ins.row.id
-      } else if (!ins.ok && !ins.skipped) {
-        alert(ins.error?.message || 'Không lưu được nhà cung cấp lên Supabase.')
-        return
-      }
-      persistSuppliers([...suppliers, row])
-      setInboundFormSupplierName(name)
-      setInboundFormSupplierQ(name)
-      setSupplierModalOpen(false)
     },
     [suppliers, persistSuppliers]
   )
 
-  const submitNewCustomerAdmin = useCallback(
-    async (draft) => {
-      const name = String(draft?.name || '').trim()
-      if (!name) {
-        alert('Nhập họ tên khách.')
-        return
-      }
+  const submitNewCustomerAdmin = useCallback(async (draft) => {
+    const name = String(draft?.name || '').trim()
+    if (!name) {
+      alert('Nhập họ tên khách.')
+      return
+    }
+    setCustomerSaving(true)
+    try {
       const row = {
         name,
         phone: String(draft?.phone || '').trim(),
@@ -2794,32 +2806,54 @@ export default function AdminHub({
         mail: String(draft?.mail || '').trim(),
       }
       const ins = await insertCustomerSupabase(row)
-      if (!ins.ok && !ins.skipped) {
-        alert(ins.error?.message || 'Không lưu được khách hàng.')
-        return
-      }
-      const remote = await fetchCustomersFromSupabase()
-      const local = loadCustomersFromStorage()
-      const merged = mergeCustomerListsDedupe(remote, local)
-      setCustomers(merged)
-      try {
-        localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
-      } catch (e) {
-        console.warn(e)
+      if (!ins.ok) {
+        if (ins.skipped) {
+          const local = loadCustomersFromStorage()
+          const merged = mergeCustomerListsDedupe([], [row, ...local])
+          setCustomers(merged)
+          try {
+            localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+          } catch (err) {
+            console.warn(err)
+          }
+        } else {
+          window.alert(formatPostgrestErrorForUser(ins.error))
+          return
+        }
+      } else {
+        try {
+          const remote = await fetchCustomersFromSupabase()
+          const local = loadCustomersFromStorage()
+          const merged = mergeCustomerListsDedupe(remote, local)
+          setCustomers(merged)
+          try {
+            localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+          } catch (err) {
+            console.warn(err)
+          }
+        } catch (e) {
+          window.alert(
+            'Đã ghi khách trên máy chủ nhưng không tải lại danh sách.\n' + formatPostgrestErrorForUser(e)
+          )
+        }
       }
       setCustomerModalOpen(false)
       window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
-    },
-    []
-  )
+    } catch (e) {
+      window.alert(formatPostgrestErrorForUser(e))
+    } finally {
+      setCustomerSaving(false)
+    }
+  }, [])
 
-  const submitNewEmployeeAdmin = useCallback(
-    async (draft) => {
-      const name = String(draft?.name || '').trim()
-      if (!name) {
-        alert('Nhập họ tên nhân viên.')
-        return
-      }
+  const submitNewEmployeeAdmin = useCallback(async (draft) => {
+    const name = String(draft?.name || '').trim()
+    if (!name) {
+      alert('Nhập họ tên nhân viên.')
+      return
+    }
+    setEmployeeSaving(true)
+    try {
       const row = {
         name,
         phone: String(draft?.phone || '').trim(),
@@ -2829,25 +2863,36 @@ export default function AdminHub({
       }
       const ins = await insertEmployeeSupabase(row)
       if (!ins.ok && !ins.skipped) {
-        alert(ins.error?.message || 'Không lưu được nhân viên.')
+        window.alert(formatPostgrestErrorForUser(ins.error))
         return
       }
-      const remote = await fetchEmployeesFromSupabase()
-      if (remote.length > 0) {
-        setStaffRows(
-          remote.map((r) => ({
-            name: r.name,
-            phone: r.phone || '—',
-            address: r.address || '—',
-            cccd: r.cccd || '—',
-            mail: r.mail || '—',
-          }))
-        )
+      if (!ins.skipped && ins.ok) {
+        try {
+          const remote = await fetchEmployeesFromSupabase()
+          if (remote.length > 0) {
+            setStaffRows(
+              remote.map((r) => ({
+                name: r.name,
+                phone: r.phone || '—',
+                address: r.address || '—',
+                cccd: r.cccd || '—',
+                mail: r.mail || '—',
+              }))
+            )
+          }
+        } catch (e) {
+          window.alert(
+            'Đã ghi nhân viên nhưng không tải lại danh sách.\n' + formatPostgrestErrorForUser(e)
+          )
+        }
       }
       setEmployeeModalOpen(false)
-    },
-    []
-  )
+    } catch (e) {
+      window.alert(formatPostgrestErrorForUser(e))
+    } finally {
+      setEmployeeSaving(false)
+    }
+  }, [])
 
   const buildInboundOrderPayload = useCallback(
     (status) => {
@@ -7435,21 +7480,33 @@ export default function AdminHub({
         open={supplierModalOpen}
         title="Thêm nhà cung cấp"
         saveLabel="Lưu NCC"
-        onClose={() => setSupplierModalOpen(false)}
+        isSaving={supplierSaving}
+        onClose={() => {
+          if (supplierSaving) return
+          setSupplierModalOpen(false)
+        }}
         onSubmit={submitNewSupplier}
       />
       <EntityPersonModal
         open={customerModalOpen}
         title="Thêm khách hàng"
         saveLabel="Lưu"
-        onClose={() => setCustomerModalOpen(false)}
+        isSaving={customerSaving}
+        onClose={() => {
+          if (customerSaving) return
+          setCustomerModalOpen(false)
+        }}
         onSubmit={submitNewCustomerAdmin}
       />
       <EntityPersonModal
         open={employeeModalOpen}
         title="Thêm nhân viên"
         saveLabel="Lưu"
-        onClose={() => setEmployeeModalOpen(false)}
+        isSaving={employeeSaving}
+        onClose={() => {
+          if (employeeSaving) return
+          setEmployeeModalOpen(false)
+        }}
         onSubmit={submitNewEmployeeAdmin}
       />
 

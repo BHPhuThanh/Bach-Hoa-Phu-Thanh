@@ -3951,6 +3951,11 @@
 }
 
 .pos-cust-modal-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.1rem;
   padding: 0.45rem 0.9rem;
   border-radius: 8px;
   border: none;
@@ -3974,6 +3979,29 @@
 .pos-cust-modal-btn--ghost:hover {
   background: #334155;
   color: #f1f5f9;
+}
+
+.pos-cust-modal-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.pos-cust-save-spinner {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pos-cust-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pos-cust-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pos-sidebar--minimal .pos-sidebar-scroll {

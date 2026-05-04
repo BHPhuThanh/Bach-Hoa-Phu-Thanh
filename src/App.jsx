@@ -98,6 +98,7 @@ import {
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
   fetchCustomersFromSupabase,
+  formatPostgrestErrorForUser,
   insertCustomerSupabase,
   mergeCustomerListsDedupe,
 } from './entityContactsRepository.js'
@@ -2439,6 +2440,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [storedCustomers, setStoredCustomers] = useState(() => loadStoredCustomers())
   const [customerAddOpen, setCustomerAddOpen] = useState(false)
+  const [customerAddSaving, setCustomerAddSaving] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [newCustomerPhone, setNewCustomerPhone] = useState('')
   const headerSearchRef = useRef(null)
@@ -4059,40 +4061,51 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       window.alert('Vui lòng nhập họ tên khách.')
       return
     }
-    const entry = {
-      name,
-      phone: phone || '',
-      address: '',
-      cccd: '',
-      mail: '',
-    }
-    if (isSupabaseConfigured()) {
-      const ins = await insertCustomerSupabase(entry)
-      if (!ins.ok && !ins.skipped) {
-        window.alert(ins.error?.message || 'Không lưu được khách hàng trên Supabase.')
-        return
+    setCustomerAddSaving(true)
+    try {
+      const entry = {
+        name,
+        phone: phone || '',
+        address: '',
+        cccd: '',
+        mail: '',
       }
-      await refreshPosCustomers()
-    } else {
-      setStoredCustomers((prev) => {
-        const without = phone
-          ? prev.filter((c) => String(c.phone || '').trim() !== phone)
-          : prev.filter((c) => c.name !== name)
-        const next = [entry, ...without].slice(0, 200)
-        saveStoredCustomers(next)
-        return next
-      })
+      if (isSupabaseConfigured()) {
+        const ins = await insertCustomerSupabase(entry)
+        if (!ins.ok && !ins.skipped) {
+          window.alert(formatPostgrestErrorForUser(ins.error))
+          return
+        }
+        try {
+          await refreshPosCustomers()
+        } catch (e) {
+          window.alert('Đã lưu khách trên máy chủ nhưng không tải lại danh sách.\n' + formatPostgrestErrorForUser(e))
+        }
+      } else {
+        setStoredCustomers((prev) => {
+          const without = phone
+            ? prev.filter((c) => String(c.phone || '').trim() !== phone)
+            : prev.filter((c) => c.name !== name)
+          const next = [entry, ...without].slice(0, 200)
+          saveStoredCustomers(next)
+          return next
+        })
+      }
+      updateActiveOrder((o) => ({
+        ...o,
+        customerName: name,
+        customerPhone: phone,
+        customerQuery: phone ? `${name} · ${phone}` : name,
+      }))
+      setCustomerAddOpen(false)
+      setNewCustomerName('')
+      setNewCustomerPhone('')
+      window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+    } catch (e) {
+      window.alert(formatPostgrestErrorForUser(e))
+    } finally {
+      setCustomerAddSaving(false)
     }
-    updateActiveOrder((o) => ({
-      ...o,
-      customerName: name,
-      customerPhone: phone,
-      customerQuery: phone ? `${name} · ${phone}` : name,
-    }))
-    setCustomerAddOpen(false)
-    setNewCustomerName('')
-    setNewCustomerPhone('')
-    window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
   }, [newCustomerName, newCustomerPhone, refreshPosCustomers, updateActiveOrder])
 
   useEffect(() => {
@@ -5834,7 +5847,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           className="pos-cust-modal-backdrop"
           role="presentation"
           onClick={(e) => {
-            if (e.target === e.currentTarget) {
+            if (e.target === e.currentTarget && !customerAddSaving) {
               setCustomerAddOpen(false)
               setNewCustomerName('')
               setNewCustomerPhone('')
@@ -5846,6 +5859,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="pos-cust-add-title"
+            aria-busy={customerAddSaving}
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="pos-cust-add-title" className="pos-cust-modal-title">
@@ -5860,6 +5874,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 onChange={(e) => setNewCustomerName(e.target.value)}
                 autoComplete="name"
                 autoFocus
+                disabled={customerAddSaving}
               />
             </label>
             <label className="pos-cust-modal-field">
@@ -5870,13 +5885,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 value={newCustomerPhone}
                 onChange={(e) => setNewCustomerPhone(e.target.value)}
                 autoComplete="tel"
+                disabled={customerAddSaving}
               />
             </label>
             <div className="pos-cust-modal-actions">
               <button
                 type="button"
                 className="pos-cust-modal-btn pos-cust-modal-btn--ghost"
+                disabled={customerAddSaving}
                 onClick={() => {
+                  if (customerAddSaving) return
                   setCustomerAddOpen(false)
                   setNewCustomerName('')
                   setNewCustomerPhone('')
@@ -5884,8 +5902,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               >
                 Hủy
               </button>
-              <button type="button" className="pos-cust-modal-btn" onClick={submitNewCustomer}>
-                Lưu
+              <button
+                type="button"
+                className="pos-cust-modal-btn"
+                disabled={customerAddSaving}
+                onClick={() => void submitNewCustomer()}
+              >
+                {customerAddSaving ? (
+                  <>
+                    <span className="pos-cust-save-spinner" aria-hidden />
+                    Đang lưu…
+                  </>
+                ) : (
+                  'Lưu'
+                )}
               </button>
             </div>
           </div>

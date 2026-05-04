@@ -3783,6 +3783,29 @@
   margin-top: 0.75rem;
 }
 
+.ah-entity-save-btn:disabled {
+  opacity: 0.85;
+  cursor: not-allowed;
+}
+
+.ah-entity-spinner {
+  display: inline-block;
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-right: 0.4rem;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  vertical-align: -0.12em;
+  animation: ah-entity-spin 0.7s linear infinite;
+}
+
+@keyframes ah-entity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Toast sau Lưu chi tiết hàng — góc dưới phải, 5s (fade out 1s cuối), không chặn thao tác */
 @keyframes ah-save-toast-fade {
   0% {
