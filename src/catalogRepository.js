@@ -57,6 +57,15 @@ const PRODUCT_AMOUNT_STRING_COLUMNS = new Set([
   'gia_si',
 ])
 
+/** Gửi lên Supabase dạng số JSON — không dùng `""` cho cột numeric trên Postgres. */
+const PRODUCT_PAYLOAD_NUMBER_COLUMNS = new Set(['gia_ban', 'gia_von', 'ton_kho', 'quy_doi'])
+
+function defaultNumberForProductPayloadColumn(column) {
+  if (column === 'quy_doi') return 1
+  if (column === 'ton_kho') return 0
+  return 0
+}
+
 /** Tránh gọi upsert chồng chéo (vòng lặp / double effect). */
 let saveCatalogSnapshotInFlight = false
 /** Bỏ qua lưu trùng cùng nội dung ngay sau lần trước (giảm 500 / spam). */
@@ -151,7 +160,14 @@ export function describeCatalogPersistError(err) {
   }
 }
 
-function notifySupabasePersistFailure(error) {
+function notifySupabasePersistFailure(error, supabaseRowError) {
+  const se =
+    supabaseRowError ??
+    (error && typeof error === 'object' && error.cause ? error.cause : null)
+  if (se && typeof se === 'object') {
+    const { message: m, details: d, hint: h } = se
+    if (m != null || d != null || h != null) console.error(m, d, h)
+  }
   console.error('LỖI SUPABASE THẬT SỰ:', error)
   const msg = describeCatalogPersistError(error)
   try {
@@ -192,8 +208,21 @@ function displayVariantToProductsRow(v) {
 }
 
 /**
- * Giữ đúng cột bảng SQL; mọi giá trị là `String` (PostgREST / cột `text`).
- * Cột trong {@link PRODUCT_AMOUNT_STRING_COLUMNS}: dọn dấu chấm/phẩy kiểu Kiot rồi `String`.
+ * Chỉ giữ các khóa có trong schema `products` — bỏ mọi trường UI (isEditing, tempId…).
+ * @param {Record<string, unknown>} row
+ */
+function pickProductRowDbColumns(row) {
+  const o = {}
+  if (!row || typeof row !== 'object') return o
+  for (const k of CATALOG_PRODUCT_DB_COLUMNS) {
+    if (Object.prototype.hasOwnProperty.call(row, k)) o[k] = row[k]
+  }
+  return o
+}
+
+/**
+ * Giữ đúng cột bảng SQL. `gia_ban`, `gia_von`, `ton_kho`, `quy_doi` → `Number` (mặc định hợp lệ nếu trống/sai).
+ * Các cột amount còn lại: chuỗi đã dọn Kiot; cột text: {@link dbTextCell}.
  * @param {Record<string, unknown>} row
  * @param {Set<string>} allow
  */
@@ -202,13 +231,22 @@ function finalizeProductRowForSupabase(row, allow) {
   for (const k of allow) {
     let raw = row[k]
     if (raw === undefined || raw === null) raw = ''
+
+    if (PRODUCT_PAYLOAD_NUMBER_COLUMNS.has(k)) {
+      const dec = cleanKiotAmountToDecimalString(raw)
+      let n = dec === '' ? NaN : Number(dec)
+      if (!Number.isFinite(n)) n = defaultNumberForProductPayloadColumn(k)
+      o[k] = n
+      continue
+    }
+
     let out
     if (PRODUCT_AMOUNT_STRING_COLUMNS.has(k)) {
       out = cleanKiotAmountToDecimalString(raw)
+      o[k] = String(out)
     } else {
-      out = dbTextCell(raw)
+      o[k] = dbTextCell(raw)
     }
-    o[k] = String(out)
   }
   return o
 }
@@ -254,7 +292,9 @@ export async function saveProductsTonKhoPatchToSupabase(flatDisplayVariants) {
     const ma = String(v?.code ?? '').trim()
     if (!ma) continue
     const tonStr = cleanKiotAmountToDecimalString(v?.stockQty)
-    rows.push({ [PRODUCT_PK_COLUMN]: ma, ton_kho: String(tonStr) })
+    let tonNum = tonStr === '' ? 0 : Number(tonStr)
+    if (!Number.isFinite(tonNum)) tonNum = 0
+    rows.push({ [PRODUCT_PK_COLUMN]: ma, ton_kho: tonNum })
   }
   if (rows.length === 0) {
     const err = new Error('Cập nhật tồn: không có «Mã hàng» hợp lệ.')
@@ -316,30 +356,32 @@ function catalogSnapshotDedupeKey(products, fileName) {
 /**
  * Upsert một đợt; nếu cả đợt lỗi thì thử từng dòng — bỏ qua dòng lỗi, các dòng khác vẫn lưu.
  * PostgREST không có cờ “bỏ qua một dòng” trên bulk; xử lý phía client.
- * @returns {{ written: number, skipped: number }}
+ * @returns {{ written: number, skipped: number, lastError?: object }}
  */
 async function upsertProductChunkResilient(sb, part) {
-  const { error } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: PRODUCT_PK_COLUMN })
-  if (!error) return { written: part.length, skipped: 0 }
+  const { error: bulkError } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: PRODUCT_PK_COLUMN })
+  if (!bulkError) return { written: part.length, skipped: 0, lastError: null }
   if (part.length <= 1) {
     const row = part[0]
     console.warn('[saveProductsToSupabase] Bỏ qua 1 dòng lỗi', {
       [PRODUCT_PK_COLUMN]: row?.[PRODUCT_PK_COLUMN],
       ten_hang: row?.ten_hang,
-      supabase: formatSupabaseWriteError(error),
+      supabase: formatSupabaseWriteError(bulkError),
     })
-    return { written: 0, skipped: 1 }
+    return { written: 0, skipped: 1, lastError: bulkError }
   }
   console.warn(
     `[saveProductsToSupabase] Đợt ${part.length} dòng lỗi — thử upsert từng dòng (${PRODUCT_PK_COLUMN} "${part[0]?.[PRODUCT_PK_COLUMN]}" … "${part[part.length - 1]?.[PRODUCT_PK_COLUMN]}")`,
-    formatSupabaseWriteError(error)
+    formatSupabaseWriteError(bulkError)
   )
   let written = 0
   let skipped = 0
+  let firstRowError = null
   for (const row of part) {
     const r = await sb.from(PRODUCTS_TABLE).upsert([row], { onConflict: PRODUCT_PK_COLUMN })
     if (r.error) {
       skipped += 1
+      if (!firstRowError) firstRowError = r.error
       console.warn(
         '[saveProductsToSupabase] Bỏ qua dòng',
         String(row?.[PRODUCT_PK_COLUMN] ?? ''),
@@ -349,7 +391,7 @@ async function upsertProductChunkResilient(sb, part) {
       written += 1
     }
   }
-  return { written, skipped }
+  return { written, skipped, lastError: firstRowError || bulkError }
 }
 
 /**
@@ -360,7 +402,7 @@ const PRODUCT_ROW_KEYS_FOR_DB = new Set(CATALOG_PRODUCT_DB_COLUMNS)
 
 /**
  * Upsert các dòng đã map {@link displayVariantToProductsRow} (chunk + dedupe theo Mã hàng).
- * @returns {{ written: number, skippedUpsert: number }}
+ * @returns {{ written: number, skippedUpsert: number, lastSupabaseError?: object }}
  */
 async function upsertRawProductRows(sb, rawRows) {
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
@@ -377,11 +419,12 @@ async function upsertRawProductRows(sb, rawRows) {
     )
   }
   const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
-  const rows = deduped.map((row) => finalizeProductRowForSupabase(row, allow))
-  if (rows.length === 0) return { written: 0, skippedUpsert: 0 }
+  const rows = deduped.map((row) => finalizeProductRowForSupabase(pickProductRowDbColumns(row), allow))
+  if (rows.length === 0) return { written: 0, skippedUpsert: 0, lastSupabaseError: null }
   const total = rows.length
   let written = 0
   let skippedUpsert = 0
+  let lastSupabaseError = null
   for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
     const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK)
     const batchEnd = Math.min(i + part.length, total)
@@ -391,18 +434,19 @@ async function upsertRawProductRows(sb, rawRows) {
     const r = await upsertProductChunkResilient(sb, part)
     written += r.written
     skippedUpsert += r.skipped
+    if (r.lastError != null && lastSupabaseError == null) lastSupabaseError = r.lastError
   }
   if (skippedUpsert > 0) {
     console.warn(
       `[saveProductsToSupabase] Đồng bộ xong: đã ghi ${written}/${total} dòng; ${skippedUpsert} dòng bị bỏ qua do lỗi API.`
     )
   }
-  return { written, skippedUpsert }
+  return { written, skippedUpsert, lastSupabaseError }
 }
 
 async function upsertProductRowsFromDisplayCatalog(sb, products) {
   const flat = flattenDisplayCatalogToVariants(products || [])
-  const rawRows = flat.map(displayVariantToProductsRow)
+  const rawRows = flat.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
   return upsertRawProductRows(sb, rawRows)
 }
 
@@ -436,19 +480,33 @@ export async function saveProductsToSupabase(products) {
     }
     console.log(
       `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (${PRODUCT_PK_COLUMN} hợp lệ, đã gộp trùng), ` +
-        `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; payload toàn chuỗi; đợt lỗi sẽ thử từng dòng.`
+        `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; giá/tồn/quy đổi là số JSON; đợt lỗi sẽ thử từng dòng.`
     )
-    const { written, skippedUpsert } = await upsertProductRowsFromDisplayCatalog(sb, products || [])
+    const { written, skippedUpsert, lastSupabaseError } = await upsertProductRowsFromDisplayCatalog(
+      sb,
+      products || []
+    )
     if (toSend.length > 0 && written === 0) {
+      const fromApi =
+        lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
       const err = new Error(
-        `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${toSend.length} bị bỏ qua). Kiểm tra RLS, quyền ghi API, và log phía Supabase.`
+        fromApi ||
+          `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${toSend.length} bị bỏ qua).`
       )
-      notifySupabasePersistFailure(err)
+      if (lastSupabaseError) err.cause = lastSupabaseError
+      notifySupabasePersistFailure(err, lastSupabaseError)
       return { ok: false, error: err, written, skippedUpsert }
     }
     console.log('[saveProductsToSupabase] Hoàn tất.', { written, skippedUpsert })
     return { ok: true, written, skippedUpsert }
   } catch (error) {
+    if (error && typeof error === 'object') {
+      const { message: m, details: d, hint: h } = error
+      if (m != null || d != null || h != null) console.error(m, d, h)
+      else console.error(error)
+    } else {
+      console.error(error)
+    }
     notifySupabasePersistFailure(error)
     return { ok: false, error }
   }
@@ -463,7 +521,7 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const sb = getSupabaseClient()
   if (!sb || !flatDisplayVariants?.length) return { ok: true }
-  const rawRows = flatDisplayVariants.map(displayVariantToProductsRow)
+  const rawRows = flatDisplayVariants.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
   const eligible = dedupeRowsByProductCode(
     rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   )
@@ -478,16 +536,27 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
     console.log(
       `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
     )
-    const { written, skippedUpsert } = await upsertRawProductRows(sb, rawRows)
+    const { written, skippedUpsert, lastSupabaseError } = await upsertRawProductRows(sb, rawRows)
     if (written === 0) {
+      const fromApi =
+        lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
       const err = new Error(
-        `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${eligible.length} bị bỏ qua). Kiểm tra RLS, quyền ghi API, và log phía Supabase.`
+        fromApi ||
+          `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${eligible.length} bị bỏ qua).`
       )
-      notifySupabasePersistFailure(err)
+      if (lastSupabaseError) err.cause = lastSupabaseError
+      notifySupabasePersistFailure(err, lastSupabaseError)
       return { ok: false, error: err, written, skippedUpsert }
     }
     return { ok: true, written, skippedUpsert }
   } catch (error) {
+    if (error && typeof error === 'object') {
+      const { message: m, details: d, hint: h } = error
+      if (m != null || d != null || h != null) console.error(m, d, h)
+      else console.error(error)
+    } else {
+      console.error(error)
+    }
     notifySupabasePersistFailure(error)
     return { ok: false, error }
   }
