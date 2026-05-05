@@ -2601,6 +2601,13 @@ export default function AdminHub({
   const [customerModalOpen, setCustomerModalOpen] = useState(false)
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
   const [supplierSaving, setSupplierSaving] = useState(false)
+  const [supplierSavedToastGen, setSupplierSavedToastGen] = useState(0)
+  const triggerSupplierSavedToast = useCallback(() => {
+    setSupplierSavedToastGen((g) => g + 1)
+  }, [])
+  const openGoodsBrandSupplierModal = useCallback(() => {
+    setSupplierModalOpen(true)
+  }, [])
   const [customerSaving, setCustomerSaving] = useState(false)
   const [employeeSaving, setEmployeeSaving] = useState(false)
   /** Đang sửa phiếu nhập có sẵn (id đơn). */
@@ -2845,13 +2852,14 @@ export default function AdminHub({
         setInboundFormSupplierName(name)
         setInboundFormSupplierQ(name)
         setSupplierModalOpen(false)
+        triggerSupplierSavedToast()
       } catch (e) {
         window.alert(formatPostgrestErrorForUser(e))
       } finally {
         setSupplierSaving(false)
       }
     },
-    [suppliers, persistSuppliers]
+    [suppliers, persistSuppliers, triggerSupplierSavedToast]
   )
 
   const submitNewCustomerAdmin = useCallback(async (draft) => {
@@ -4030,6 +4038,8 @@ export default function AdminHub({
             setComboModal({ mode: 'edit', product: goodsDetailCtx.product })
           }
         }}
+        goodsBrandAutocompleteOptions={inboundNccAutocompleteOptions}
+        onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
       />
     )
   }, [
@@ -4049,6 +4059,9 @@ export default function AdminHub({
     deleteGoodsDetailVariant,
     openGoodsUnitModal,
     catalogList,
+    inboundNccAutocompleteOptions,
+    revenueReadOnly,
+    openGoodsBrandSupplierModal,
   ])
 
   const openPosReturnModal = useCallback(
@@ -5199,6 +5212,7 @@ export default function AdminHub({
                         }}
                         options={brandOptions}
                         placeholder="Tất cả thương hiệu…"
+                        listMaxHeight={248}
                       />
                     </div>
                   </div>
@@ -7396,6 +7410,7 @@ export default function AdminHub({
                       }}
                       options={inboundNccAutocompleteOptions}
                       filterDebounceMs={500}
+                      listMaxHeight={280}
                       placeholder="Chọn hoặc gõ tên NCC (bảng suppliers)…"
                     />
                   </div>
@@ -8159,7 +8174,8 @@ export default function AdminHub({
         open={goodsNewModalOpen}
         onClose={() => setGoodsNewModalOpen(false)}
         catalogList={catalogList}
-        brandOptions={brandOptions}
+        brandAutocompleteOptions={inboundNccAutocompleteOptions}
+        onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
         revenueReadOnly={revenueReadOnly}
         onAppendCatalogVariants={onAppendCatalogVariants}
         persistStandaloneProducts={persistStandaloneProducts}
@@ -8419,6 +8435,21 @@ export default function AdminHub({
           }}
         >
           Cập nhật thành công
+        </div>
+      )}
+
+      {supplierSavedToastGen > 0 && (
+        <div
+          key={`ncc-toast-${supplierSavedToastGen}`}
+          className="ah-save-toast ah-save-toast--supplier"
+          role="status"
+          aria-live="polite"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return
+            setSupplierSavedToastGen(0)
+          }}
+        >
+          Đã lưu nhà cung cấp
         </div>
       )}
     </div>

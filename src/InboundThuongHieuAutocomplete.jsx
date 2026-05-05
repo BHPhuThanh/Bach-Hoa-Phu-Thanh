@@ -21,7 +21,8 @@ export function collectUniqueThuongHieuFromCatalog(catalogList) {
 
 const ROW_H = 36
 const MAX_VISIBLE = 50
-const DROPDOWN_MAX_H = 280
+/** Chiều cao tối đa vùng cuộn danh sách gợi ý (px) — modal Tạo HH / chi tiết dùng ~220–240. */
+const DEFAULT_LIST_MAX_H = 228
 
 const NccSuggestRow = memo(function NccSuggestRow({ index, style, items, onPick }) {
   const label = items[index]
@@ -55,7 +56,7 @@ function useDebouncedFilterQuery(raw, debounceMs) {
 
 /**
  * Ô Nhà cung cấp / thương hiệu phiếu nhập: nhập + lọc + tối đa 50 gợi ý (virtual list).
- * @param {{ value: string, onValueChange: (s: string) => void, options: string[], placeholder?: string, id?: string, filterDebounceMs?: number }} props
+ * @param {{ value: string, onValueChange: (s: string) => void, options: string[], placeholder?: string, id?: string, filterDebounceMs?: number, listMaxHeight?: number, showAddSupplierEntry?: boolean, onRequestAddSupplier?: () => void }} props
  */
 export default function InboundThuongHieuAutocomplete({
   value,
@@ -64,6 +65,9 @@ export default function InboundThuongHieuAutocomplete({
   placeholder = 'Chọn hoặc gõ thương hiệu…',
   id = 'ah-inbound-ncc-combo',
   filterDebounceMs = 0,
+  listMaxHeight = DEFAULT_LIST_MAX_H,
+  showAddSupplierEntry = false,
+  onRequestAddSupplier,
 }) {
   const wrapRef = useRef(null)
   const inputRef = useRef(null)
@@ -87,7 +91,9 @@ export default function InboundThuongHieuAutocomplete({
     return out
   }, [all, filterQ])
 
-  const listHeight = Math.min(filtered.length * ROW_H, DROPDOWN_MAX_H)
+  const listCap = Math.max(120, Math.min(280, Number(listMaxHeight) || DEFAULT_LIST_MAX_H))
+  const listHeight = Math.min(filtered.length * ROW_H, listCap)
+  const showAddRow = Boolean(showAddSupplierEntry && typeof onRequestAddSupplier === 'function')
 
   useLayoutEffect(() => {
     const el = wrapRef.current
@@ -122,7 +128,12 @@ export default function InboundThuongHieuAutocomplete({
   const showEmptyHint =
     filtered.length === 0 && all.length > 0 && String(filterQ ?? '').trim().length > 0
   const showNoCatalogHint = all.length === 0
-  const showDropdownPanel = open && (showList || showEmptyHint || showNoCatalogHint)
+  const showDropdownPanel = open && (showAddRow || showList || showEmptyHint || showNoCatalogHint)
+
+  const fireAddSupplier = useCallback(() => {
+    setOpen(false)
+    onRequestAddSupplier?.()
+  }, [onRequestAddSupplier])
 
   return (
     <div className="ah-inbound-ncc-combo-wrap" ref={wrapRef}>
@@ -152,15 +163,31 @@ export default function InboundThuongHieuAutocomplete({
         <div
           id={`${id}-listbox`}
           role="listbox"
+          aria-label="Gợi ý"
           className={`ah-inbound-ncc-combo-dropdown${showList ? ' is-open' : ''}`}
         >
+          {showAddRow ? (
+            <div className="ah-inbound-ncc-combo-add-supplier">
+              <button
+                type="button"
+                className="ah-inbound-ncc-combo-add-supplier-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => fireAddSupplier()}
+              >
+                <span className="ah-inbound-ncc-combo-add-supplier-plus" aria-hidden>
+                  +
+                </span>
+                Thêm NCC
+              </button>
+            </div>
+          ) : null}
           {showNoCatalogHint ? (
             <div className="ah-inbound-ncc-combo-hint">
               Chưa có thương hiệu trong danh mục — nhập tay hoặc tải CSV có cột <strong>thuong_hieu</strong>.
             </div>
           ) : showEmptyHint ? (
             <div className="ah-inbound-ncc-combo-hint">Không khớp danh sách — giữ nội dung đã gõ (nhà cung cấp tùy chọn).</div>
-          ) : (
+          ) : showList ? (
             <div className="ah-inbound-ncc-combo-list-inner" style={{ height: listHeight }}>
               <List
                 listRef={listRef}
@@ -175,7 +202,7 @@ export default function InboundThuongHieuAutocomplete({
                 }}
               />
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>

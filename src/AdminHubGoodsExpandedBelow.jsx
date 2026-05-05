@@ -2,6 +2,7 @@
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 import { sortVariantsSmallestUnitFirst } from './goodsUnitSetupModalLogic.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
+import InboundThuongHieuAutocomplete from './InboundThuongHieuAutocomplete.jsx'
 
 /** Chi tiết hàng — hiển thị trong ô danh sách ảo (cùng markup tab Hàng hóa). */
 export function AdminHubGoodsExpandedBelow(props) {
@@ -30,6 +31,8 @@ export function AdminHubGoodsExpandedBelow(props) {
     isComboDetail,
     comboDetailProduct,
     onEditComboProduct,
+    goodsBrandAutocompleteOptions = [],
+    onRequestAddSupplier,
   } = props
   return (
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
@@ -495,17 +498,26 @@ export function AdminHubGoodsExpandedBelow(props) {
                                               >
                                                 Thương hiệu
                                               </label>
-                                              <input
-                                                id={`gd-brand-${v.id}`}
-                                                className="ah-goods-card-input"
-                                                value={d.brand}
-                                                onChange={(e) =>
-                                                  setGoodsDetailDraft((x) =>
-                                                    x ? { ...x, brand: e.target.value } : x
-                                                  )
-                                                }
-                                                aria-label="Thương hiệu"
-                                              />
+                                              <div
+                                                className="ah-goods-detail-brand-wrap"
+                                                onClick={(e) => e.stopPropagation()}
+                                              >
+                                                <InboundThuongHieuAutocomplete
+                                                  id={`gd-brand-${v.id}`}
+                                                  value={d.brand ?? ''}
+                                                  onValueChange={(s) =>
+                                                    setGoodsDetailDraft((x) =>
+                                                      x ? { ...x, brand: s } : x
+                                                    )
+                                                  }
+                                                  options={goodsBrandAutocompleteOptions}
+                                                  placeholder="Chọn hoặc gõ…"
+                                                  filterDebounceMs={280}
+                                                  listMaxHeight={228}
+                                                  showAddSupplierEntry={Boolean(onRequestAddSupplier)}
+                                                  onRequestAddSupplier={onRequestAddSupplier}
+                                                />
+                                              </div>
                                             </div>
                                             <div className="ah-goods-card-field">
                                               <label

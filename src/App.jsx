@@ -5081,7 +5081,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           open={posGoodsCreateModalOpen}
           onClose={() => setPosGoodsCreateModalOpen(false)}
           catalogList={products}
-          brandOptions={posGoodsBrandOptions}
+          brandAutocompleteOptions={posGoodsBrandOptions}
           revenueReadOnly={activeSellerId !== 'admin'}
           onAppendCatalogVariants={handleAppendCatalogVariants}
           fileNameHint={fileName || 'hang-hoa-thu-cong'}

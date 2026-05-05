@@ -3501,7 +3501,59 @@
   border: 1px solid rgba(56, 189, 248, 0.35);
   background: #121820;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  max-height: min(280px, 42vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.ah-goods-create-dialog .ah-inbound-ncc-combo-dropdown,
+.ah-goods-card-body .ah-inbound-ncc-combo-dropdown {
+  z-index: 60;
+}
+
+.ah-inbound-ncc-combo-add-supplier {
+  padding: 0.35rem 0.45rem 0.3rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.ah-inbound-ncc-combo-add-supplier-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0.32rem 0.48rem;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  border-radius: 7px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #a7f3d0;
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.ah-inbound-ncc-combo-add-supplier-btn:hover {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(52, 211, 153, 0.52);
+}
+
+.ah-inbound-ncc-combo-add-supplier-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.22);
+  color: #ecfdf5;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .ah-inbound-ncc-combo-dropdown.is-open .ah-inbound-ncc-combo-list-inner {
@@ -3824,6 +3876,10 @@
     opacity: 0;
     transform: translateY(10px);
   }
+}
+
+.ah-save-toast--supplier {
+  background: linear-gradient(135deg, #047857 0%, #059669 45%, #10b981 100%);
 }
 
 .ah-save-toast {
@@ -5277,6 +5333,25 @@ li.ah-inbound-suggest-empty {
 
 .ah-goods-create-field--full {
   grid-column: 1 / -1;
+}
+
+.ah-goods-create-brand-autocomplete {
+  width: 100%;
+  min-width: 0;
+}
+
+.ah-goods-create-brand-autocomplete .ah-inbound-form-input {
+  border-radius: 8px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.ah-goods-detail-brand-wrap {
+  min-width: 0;
+}
+
+.ah-goods-detail-brand-wrap .ah-inbound-form-input {
+  border-radius: 8px;
 }
 
 .ah-goods-create-label {

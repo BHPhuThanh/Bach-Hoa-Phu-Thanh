@@ -15,6 +15,7 @@ import {
   sortVariantsSmallestUnitFirst,
   validateUnitModalLines,
 } from './goodsUnitSetupModalLogic.js'
+import InboundThuongHieuAutocomplete from './InboundThuongHieuAutocomplete.jsx'
 import './adminHub.css'
 
 /** Giá trong ô chỉnh sửa: phân tách hàng nghìn bằng dấu phẩy (vd. 132,000). */
@@ -85,7 +86,9 @@ export default function AdminHubGoodsCreateModal({
   open,
   onClose,
   catalogList,
-  brandOptions = [],
+  /** Gợi ý thương hiệu: nên trùng nguồn phiếu nhập (suppliers + thuong_hieu trong danh mục). */
+  brandAutocompleteOptions = [],
+  onRequestAddSupplier,
   revenueReadOnly,
   onAppendCatalogVariants,
   persistStandaloneProducts,
@@ -723,21 +726,19 @@ export default function AdminHubGoodsCreateModal({
                 </label>
                 <label className="ah-goods-create-field ah-goods-create-field--full">
                   <span className="ah-goods-create-label">Thương hiệu</span>
-                  <input
-                    className="ah-goods-create-input"
-                    type="text"
-                    value={goodsNewBrand}
-                    onChange={(e) => setGoodsNewBrand(e.target.value)}
-                    list="ah-goods-new-brand-datalist"
-                    placeholder="Nhập hoặc chọn từ gợi ý"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <datalist id="ah-goods-new-brand-datalist">
-                    {brandOptions.map((b) => (
-                      <option key={b} value={b} />
-                    ))}
-                  </datalist>
+                  <div className="ah-goods-create-brand-autocomplete">
+                    <InboundThuongHieuAutocomplete
+                      id={`ah-goods-create-brand-${goodsCreateFieldsKey}`}
+                      value={goodsNewBrand}
+                      onValueChange={setGoodsNewBrand}
+                      options={brandAutocompleteOptions}
+                      placeholder="Chọn hoặc gõ thương hiệu (gợi ý từ NCC + danh mục)…"
+                      filterDebounceMs={280}
+                      listMaxHeight={228}
+                      showAddSupplierEntry={Boolean(onRequestAddSupplier)}
+                      onRequestAddSupplier={onRequestAddSupplier}
+                    />
+                  </div>
                 </label>
                 <label className="ah-goods-create-field">
                   <span className="ah-goods-create-label">ĐVT (Đơn vị tính cơ bản)</span>
