@@ -513,6 +513,67 @@ export async function saveProductsToSupabase(products) {
 }
 
 /**
+ * `ma_hang` không trùng của các biến thể đang xóa khỏi catalog — dùng cho DELETE `public.products`.
+ * @param {Array<object>} products — catalog nhóm + groupVariants
+ * @param {Array<string|number>} variantIds — `variant.id`
+ */
+export function collectMaHangCodesForVariantIds(products, variantIds) {
+  if (!Array.isArray(products) || !Array.isArray(variantIds) || variantIds.length === 0) return []
+  const idSet = new Set(variantIds.map((x) => String(x)))
+  const codes = []
+  for (const p of products) {
+    for (const gv of p.groupVariants || [p]) {
+      if (!gv || !idSet.has(String(gv.id))) continue
+      const code = String(gv.code ?? '').trim()
+      if (code) codes.push(code)
+    }
+  }
+  return [...new Set(codes)]
+}
+
+/**
+ * Xóa dòng trên `public.products` theo `ma_hang` (PostgREST: `.delete().in('ma_hang', …)` — tương đương `.eq` khi chỉ một mã).
+ * Lỗi thường gặp: RLS không có policy DELETE → báo qua {@link notifySupabasePersistFailure}.
+ * @param {Iterable<string>} maHangList
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, deleted?: number, error?: unknown }>}
+ */
+export async function deleteProductsFromSupabaseByMaHang(maHangList) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    const err = new Error(
+      '[deleteProductsFromSupabaseByMaHang] Không tạo được Supabase client (thiếu env hoặc cấu hình).'
+    )
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err }
+  }
+  const uniq = [...new Set([...maHangList].map((x) => String(x ?? '').trim()).filter(Boolean))]
+  if (uniq.length === 0) return { ok: true, deleted: 0 }
+  try {
+    let deleted = 0
+    for (let i = 0; i < uniq.length; i += PRODUCTS_UPSERT_CHUNK) {
+      const chunk = uniq.slice(i, i + PRODUCTS_UPSERT_CHUNK)
+      const { error } = await sb.from(PRODUCTS_TABLE).delete().in(PRODUCT_PK_COLUMN, chunk)
+      if (error) {
+        const err = new Error(
+          describeCatalogPersistError(error) ||
+            `Xóa bảng «products»: lỗi (${PRODUCT_PK_COLUMN}). Kiểm tra RLS policy DELETE.`
+        )
+        err.cause = error
+        notifySupabasePersistFailure(err, error)
+        return { ok: false, error, deleted }
+      }
+      deleted += chunk.length
+    }
+    console.log(`[deleteProductsFromSupabaseByMaHang] Đã xóa ${deleted} dòng (${PRODUCT_PK_COLUMN}).`)
+    return { ok: true, deleted }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
+  }
+}
+
+/**
  * Chỉ upsert các biến thể vừa thêm/sửa — không gửi lại cả danh mục (thousands rows).
  * @param {Array<object>} flatDisplayVariants — dòng phẳng POS (giống phần tử trong groupVariants).
  * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}

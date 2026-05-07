@@ -5359,7 +5359,7 @@ export default function AdminHub({
                           toggleGoodsRowExpand={toggleGoodsRowExpand}
                           toggleGoodsSelect={toggleGoodsSelect}
                           expandedSlot={goodsExpandedBelowSlot}
-                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsRowsFiltered.length}|${goodsExpandedId ?? ''}`}
+                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsRowsFiltered.length}`}
                         />
                       )
                     }}

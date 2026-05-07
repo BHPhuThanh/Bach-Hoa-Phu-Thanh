@@ -94,6 +94,8 @@ import {
   readCatalogSnapshotSync,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
+  collectMaHangCodesForVariantIds,
+  deleteProductsFromSupabaseByMaHang,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
@@ -2438,6 +2440,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     () => readStoredSellerId() ?? 'admin'
   )
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
+  const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [storedCustomers, setStoredCustomers] = useState(() => loadStoredCustomers())
   const [customerAddOpen, setCustomerAddOpen] = useState(false)
   const [customerAddSaving, setCustomerAddSaving] = useState(false)
@@ -2446,6 +2449,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const headerSearchRef = useRef(null)
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
+  const lowStockAlertWrapRef = useRef(null)
   const headerSuggestWrapRef = useRef(null)
   const scannerMenuRef = useRef(null)
   const posScanToastClearRef = useRef(null)
@@ -2487,6 +2491,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   fileNameRef.current = fileName
 
   const catalogBarcodeCaches = useMemo(() => buildCatalogBarcodeCaches(products), [products])
+
+  const lowStockProducts = useMemo(() => {
+    const variants = flattenDisplayCatalogToVariants(products)
+    return variants.filter((v) => {
+      const tnRaw = v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
+      if (tnRaw == null) return false
+      if (typeof tnRaw === 'string' && tnRaw.trim() === '') return false
+      const tn = Number(tnRaw)
+      if (!Number.isFinite(tn) || tn <= 0) return false
+      const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
+      return Number(tkRaw) < Number(tnRaw)
+    })
+  }, [products])
   const catalogBarcodeCachesRef = useRef(catalogBarcodeCaches)
   catalogBarcodeCachesRef.current = catalogBarcodeCaches
 
@@ -2586,11 +2603,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleRemoveCatalogVariants = useCallback((variantIds) => {
     if (!variantIds?.length) return
-      setProducts((prev) => {
+    setProducts((prev) => {
+      const codesToDelete = collectMaHangCodesForVariantIds(prev, variantIds)
       const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
+          if (isSupabaseConfigured() && codesToDelete.length > 0) {
+            const dr = await deleteProductsFromSupabaseByMaHang(codesToDelete)
+            if (!dr.ok && !dr.skipped) {
+              await applyServerCatalogAfterPersist()
+              return
+            }
+          }
           if (next.length === 0) {
             catalogFileNameRef.current = ''
             const persistEmpty = await persistCatalogSnapshotAndProducts([], '')
@@ -3103,6 +3128,26 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
   }, [sellerMenuOpen])
+
+  useEffect(() => {
+    if (!lowStockAlertOpen) return
+    const onDoc = (e) => {
+      if (lowStockAlertWrapRef.current?.contains(e.target)) return
+      setLowStockAlertOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [lowStockAlertOpen])
+
+  useEffect(() => {
+    if (!lowStockAlertOpen) return
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return
+      setLowStockAlertOpen(false)
+    }
+    window.addEventListener('keydown', onEsc, true)
+    return () => window.removeEventListener('keydown', onEsc, true)
+  }, [lowStockAlertOpen])
 
   useEffect(() => {
     if (activeView !== 'sell') setShortcutsHelpOpen(false)
@@ -4400,33 +4445,81 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       </button>
     )
 
+    const lowStockCount = lowStockProducts.length
     const bellBtn = (
-      <button
-        key="notifications"
-        type="button"
-        className="app-header-icon-btn"
-        aria-label="Thông báo"
-        title="Thông báo"
-        onClick={() => {
-          /* Giữ chỗ tính năng thông báo — giao diện đồng bộ thanh icon */
-        }}
-      >
-        <svg
-          className="app-header-icon-svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
+      <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
+        <button
+          type="button"
+          className="app-header-icon-btn"
+          aria-label={
+            lowStockCount > 0
+              ? `Thông báo — ${lowStockCount} sản phẩm sắp hết hàng`
+              : 'Thông báo'
+          }
+          aria-expanded={lowStockAlertOpen}
+          title={
+            lowStockCount > 0
+              ? `${lowStockCount} sản phẩm sắp hết hàng`
+              : 'Thông báo'
+          }
+          onClick={() => setLowStockAlertOpen((open) => !open)}
         >
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
-      </button>
+          <svg
+            className="app-header-icon-svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          {lowStockCount > 0 ? (
+            <span className="app-header-notify-badge" aria-hidden>
+              {lowStockCount > 99 ? '99+' : lowStockCount}
+            </span>
+          ) : null}
+        </button>
+        {lowStockAlertOpen ? (
+          <div
+            className="app-header-low-stock-popover"
+            role="dialog"
+            aria-label="Cảnh báo hàng sắp hết"
+          >
+            <div className="app-header-low-stock-popover-title">Hàng sắp hết</div>
+            <div className="app-header-low-stock-scroll">
+              {lowStockProducts.length === 0 ? (
+                <p className="app-header-low-stock-empty">
+                  Không có sản phẩm nào sắp hết hàng
+                </p>
+              ) : (
+                <ul className="app-header-low-stock-list">
+                  {lowStockProducts.map((v) => {
+                    const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
+                    const tnRaw = v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
+                    const code = String(v.code ?? '').trim()
+                    const name = String(v.name ?? v.nameRaw ?? code ?? '').trim() || code
+                    return (
+                      <li key={v.id ?? code} className="app-header-low-stock-item">
+                        <div className="app-header-low-stock-name">{name}</div>
+                        <div className="app-header-low-stock-code">Mã hàng: {code || '—'}</div>
+                        <div className="app-header-low-stock-warn">
+                          Tồn kho: {Number(tkRaw)} / Tối thiểu: {Number(tnRaw)}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
     )
 
     const cartBtn = (
