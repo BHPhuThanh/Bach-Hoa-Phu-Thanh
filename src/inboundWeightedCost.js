@@ -83,6 +83,31 @@ function conversionToBaseForVariant(v, serverRow) {
   )
 }
 
+function parseGroupServerSnapshot(members, serverByMaHang) {
+  let totalBaseQty = 0
+  let totalValue = 0
+  let seenAnyServer = false
+  for (const member of members || []) {
+    const code = String(member?.code || '').trim()
+    if (!code) continue
+    const srv = serverByMaHang?.get(code)
+    if (!srv) continue
+    seenAnyServer = true
+    const { ton, giaVon } = parseServerTonAndCost(srv)
+    const conv = conversionToBaseForVariant(member, srv)
+    const qtyAtThisUnit = Math.max(0, Number(ton) || 0)
+    const costAtThisUnit = Math.max(0, Number(giaVon) || 0)
+    totalBaseQty += qtyAtThisUnit * conv
+    totalValue += qtyAtThisUnit * costAtThisUnit
+  }
+  if (!seenAnyServer || totalBaseQty <= 0) return { hasServer: false, baseQty: 0, baseCost: 0 }
+  return {
+    hasServer: true,
+    baseQty: totalBaseQty,
+    baseCost: totalValue / totalBaseQty,
+  }
+}
+
 function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
   const m = new Map()
   for (const raw of lines || []) {
@@ -197,31 +222,40 @@ export function computeInboundFulfillmentPlan(
 
     if (deltaQ === 0 && Math.abs(moneyDelta) < 1e-6) continue
 
-    const srv = serverByMaHang?.get(repCode)
-    const serverParsed = srv ? parseServerTonAndCost(srv) : { ton: 0, giaVon: 0 }
-    const fallbackTon = members.reduce((acc, v) => {
+    const srvGroup = parseGroupServerSnapshot(members, serverByMaHang)
+    const fallbackBaseTon = members.reduce((acc, v) => {
       const n = Number(v?.stockQty)
       return Number.isFinite(n) && n > acc ? n : acc
     }, 0)
-    const fallbackCost = members.reduce((acc, v) => {
+    const fallbackBaseCost = members.reduce((acc, v) => {
+      const conv = conversionToBaseForVariant(v, null)
       const n = Number(v?.cost)
-      return Number.isFinite(n) && n > acc ? n : acc
+      if (!Number.isFinite(n) || n < 0) return acc
+      const baseCost = n / conv
+      return Number.isFinite(baseCost) && baseCost > 0 ? Math.max(acc, baseCost) : acc
     }, 0)
 
-    const baseTon = srv != null ? serverParsed.ton : fallbackTon
-    const oldGiaVon = srv != null ? serverParsed.giaVon : fallbackCost
-    const newTonKho = Math.max(0, baseTon + deltaQ)
-    if (newTonKho <= 0) continue
+    const oldBaseQty = srvGroup.hasServer ? srvGroup.baseQty : fallbackBaseTon
+    const oldBaseCost = srvGroup.hasServer ? srvGroup.baseCost : fallbackBaseCost
+    const newBaseQty = Math.max(0, oldBaseQty + deltaQ)
+    if (newBaseQty <= 0) continue
 
-    const inboundUnitCost = deltaQ !== 0 ? moneyDelta / deltaQ : 0
-    const newGiaVon = calculateWeightedAverage(baseTon, oldGiaVon, deltaQ, inboundUnitCost)
+    const inboundBaseUnitCost = deltaQ !== 0 ? moneyDelta / deltaQ : 0
+    const newBaseCost = calculateWeightedAverage(
+      oldBaseQty,
+      oldBaseCost,
+      deltaQ,
+      inboundBaseUnitCost
+    )
     for (const member of members) {
       if (!member?.id) continue
+      const memberSrv = serverByMaHang?.get(String(member.code || '').trim())
+      const conv = conversionToBaseForVariant(member, memberSrv)
       patches.push({
         variantId: member.id,
         patch: {
-          stockQty: newTonKho,
-          cost: newGiaVon,
+          stockQty: newBaseQty,
+          cost: round4(newBaseCost * conv),
         },
       })
     }
@@ -229,17 +263,21 @@ export function computeInboundFulfillmentPlan(
     const displayInboundUnit =
       deltaQ !== 0 ? moneyDelta / deltaQ : an.qty > 0 ? an.net / an.qty : 0
 
-    if (round4(oldGiaVon) !== round4(newGiaVon)) {
+    const repSrv = serverByMaHang?.get(repCode)
+    const repConv = conversionToBaseForVariant(rep, repSrv)
+    const oldRepCost = round4(oldBaseCost * repConv)
+    const newRepCost = round4(newBaseCost * repConv)
+    if (oldRepCost !== newRepCost) {
       diffs.push({
         variantId: rep.id,
         ma_hang: repCode,
         code: repCode,
         name: String(rep.name || '').trim() || '—',
-        oldCost: round4(oldGiaVon),
+        oldCost: oldRepCost,
         inboundPrice: round4(displayInboundUnit),
         inboundQuantity: deltaQ,
-        currentTonKho: baseTon,
-        newCost: round4(newGiaVon),
+        currentTonKho: oldBaseQty,
+        newCost: newRepCost,
       })
     }
   }
