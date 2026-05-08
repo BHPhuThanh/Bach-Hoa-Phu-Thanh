@@ -876,11 +876,23 @@ export function parsePrice(raw) {
       normalized = cleaned.replace(/,/g, '')
     }
   } else if (lastDot >= 0) {
-    const after = cleaned.slice(lastDot + 1)
-    if (/^\d{1,2}$/.test(after)) {
-      normalized = cleaned
+    const parts = cleaned.split('.')
+    if (parts.length === 2) {
+      const after = parts[1] || ''
+      // 1.234 thường là phân nghìn; 5.2083 là số thập phân thực.
+      if (/^\d{3}$/.test(after)) normalized = cleaned.replace(/\./g, '')
+      else normalized = cleaned
     } else {
-      normalized = cleaned.replace(/\./g, '')
+      // Nhiều dấu chấm: nếu toàn nhóm 3 chữ số thì coi là phân nghìn, ngược lại giữ dấu chấm cuối làm thập phân.
+      const tails = parts.slice(1)
+      const allThousandGroups = tails.every((p) => /^\d{3}$/.test(p))
+      if (allThousandGroups) {
+        normalized = cleaned.replace(/\./g, '')
+      } else {
+        const head = parts.slice(0, -1).join('').replace(/\./g, '')
+        const tail = parts[parts.length - 1]
+        normalized = `${head}.${tail}`
+      }
     }
   }
 

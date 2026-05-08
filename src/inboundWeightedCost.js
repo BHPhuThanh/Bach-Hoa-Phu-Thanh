@@ -80,7 +80,6 @@ export function inboundLineNetPurchaseTotal(line) {
   return Math.max(0, gross - discPortion)
 }
 
-const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
 const fixed4Number = (value) => {
   const n = Number(value)
   if (!Number.isFinite(n)) return 0
@@ -324,7 +323,7 @@ export function computeInboundFulfillmentPlan(
         variantId: member.id,
         patch: {
           stockQty: newBaseQty,
-          cost: round4(keep != null ? keep : newBaseCost * conv),
+          cost: fixed4Number(keep != null ? keep : newBaseCost * conv),
         },
       })
     }
@@ -334,8 +333,8 @@ export function computeInboundFulfillmentPlan(
 
     const repSrv = serverByMaHang?.get(repCode)
     const repConv = conversionToBaseForVariant(rep, repSrv)
-    const oldRepCost = round4(oldBaseCost * repConv)
-    const newRepCost = round4(newBaseCost * repConv)
+    const oldRepCost = fixed4Number(oldBaseCost * repConv)
+    const newRepCost = fixed4Number(newBaseCost * repConv)
     if (oldRepCost !== newRepCost) {
       diffs.push({
         variantId: rep.id,
@@ -343,7 +342,7 @@ export function computeInboundFulfillmentPlan(
         code: repCode,
         name: String(rep.name || '').trim() || '—',
         oldCost: oldRepCost,
-        inboundPrice: round4(displayInboundUnit),
+        inboundPrice: fixed4Number(displayInboundUnit),
         inboundQuantity: deltaQ,
         currentTonKho: oldBaseQty,
         newCost: newRepCost,
