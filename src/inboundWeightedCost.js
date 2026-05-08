@@ -81,6 +81,11 @@ export function inboundLineNetPurchaseTotal(line) {
 }
 
 const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
+const fixed4Number = (value) => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Number(parseFloat(String(n)).toFixed(4))
+}
 
 function resolvePositiveNumber(...vals) {
   for (const v of vals) {
@@ -96,9 +101,9 @@ export function calculateWeightedAverage(oldQty, oldCost, inboundQty, inboundUni
   const inboundQtyNum = Math.max(0, parseNumberVi(inboundQty))
   const inboundUnitCostNum = Math.max(0, parseNumberVi(inboundUnitCost))
   const totalQty = oldQtyNum + inboundQtyNum
-  if (totalQty <= 0) return round4(oldCostNum)
+  if (totalQty <= 0) return fixed4Number(oldCostNum)
   const weighted = (oldQtyNum * oldCostNum + inboundQtyNum * inboundUnitCostNum) / totalQty
-  return round4(weighted)
+  return fixed4Number(weighted)
 }
 
 function lineGroupRootOfVariant(v, fallbackCode = '') {

@@ -127,10 +127,25 @@ function cleanKiotAmountToDecimalString(raw) {
   s = s.replace(/^-/, '')
   s = s.replace(/[^\d.,]/g, '')
   if (!s) return ''
-  s = s.replace(/\./g, '').replace(',', '.')
+  const lastDot = s.lastIndexOf('.')
+  const lastComma = s.lastIndexOf(',')
+  if (lastDot >= 0 && lastComma >= 0) {
+    // Có cả hai dấu: ưu tiên chuẩn VN 1.234,56 -> 1234.56
+    s = s.replace(/\./g, '').replace(/,/g, '.')
+  } else if (lastComma >= 0) {
+    // Chỉ có dấu phẩy: thập phân hoặc phân nghìn
+    const tail = s.slice(lastComma + 1)
+    s = tail.length === 3 ? s.replace(/,/g, '') : s.replace(/,/g, '.')
+  } else if (lastDot >= 0) {
+    // Chỉ có dấu chấm: có thể là thập phân JS (5208.3) hoặc phân nghìn (5.208)
+    const tail = s.slice(lastDot + 1)
+    s = tail.length === 3 ? s.replace(/\./g, '') : s
+  }
   const n = Number(s)
   if (!Number.isFinite(n)) return ''
-  return String(neg ? -n : n)
+  const fixed4 = Number(parseFloat(String(neg ? -n : n)).toFixed(4))
+  if (!Number.isFinite(fixed4)) return ''
+  return String(fixed4)
 }
 
 function formatSupabaseWriteError(err) {
@@ -236,7 +251,7 @@ function finalizeProductRowForSupabase(row, allow) {
       const dec = cleanKiotAmountToDecimalString(raw)
       let n = dec === '' ? NaN : Number(dec)
       if (!Number.isFinite(n)) n = defaultNumberForProductPayloadColumn(k)
-      o[k] = n
+      o[k] = Number(parseFloat(String(n)).toFixed(4))
       continue
     }
 

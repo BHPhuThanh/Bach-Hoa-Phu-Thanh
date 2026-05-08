@@ -132,7 +132,7 @@ import {
   revalidateCatalogFromStore,
   describeCatalogPersistError,
 } from './catalogRepository.js'
-import { insertInboundHistoryEntry } from './supabaseInboundHistory.js'
+import { fetchInboundInvoices, insertInboundHistoryEntry } from './supabaseInboundHistory.js'
 import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
@@ -2485,6 +2485,7 @@ export default function AdminHub({
 
   /* —— Nhập hàng —— */
   const [inboundOrders, setInboundOrders] = useState(() => loadInboundOrdersFromStorage())
+  const [inboundRemoteLoading, setInboundRemoteLoading] = useState(false)
   const [inboundQ, setInboundQ] = useState('')
   const inboundDebounced = useDebounced(inboundQ, 180)
   const [inboundSelected, setInboundSelected] = useState(() => ({}))
@@ -2502,6 +2503,29 @@ export default function AdminHub({
       console.warn(e)
     }
   }, [inboundOrders])
+
+  const refreshInboundInvoices = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setInboundOrders(loadInboundOrdersFromStorage())
+      return
+    }
+    setInboundRemoteLoading(true)
+    try {
+      const r = await fetchInboundInvoices()
+      if (!r.ok) {
+        console.warn('[AdminHub] Không tải được inbound_history', r.error)
+        return
+      }
+      const rows = Array.isArray(r.rows) ? r.rows.map((x) => normalizeInboundRow(x)) : []
+      setInboundOrders(rows.filter((x) => x.id && x.code))
+    } finally {
+      setInboundRemoteLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshInboundInvoices()
+  }, [refreshInboundInvoices])
 
   const inboundRowsFiltered = useMemo(() => {
     const q = inboundDebounced.trim().toLowerCase()
@@ -5402,7 +5426,7 @@ export default function AdminHub({
               Nhập hàng
             </h2>
             <p className="admin-hub-muted ah-inbound-meta">
-              Danh sách phiếu nhập — lưu cục bộ trên trình duyệt này (có thể xuất CSV để đối chiếu).
+              Danh sách phiếu nhập — ưu tiên đồng bộ trực tiếp từ Supabase.
             </p>
 
             <input
@@ -5447,6 +5471,15 @@ export default function AdminHub({
               <div className="ah-inbound-toolbar-right">
                 <button type="button" className="ah-inbound-btn-create" onClick={openInboundCreateForm}>
                   + Tạo đơn nhập hàng
+                </button>
+                <button
+                  type="button"
+                  className="ah-goods-io-btn"
+                  onClick={() => void refreshInboundInvoices()}
+                  disabled={inboundRemoteLoading}
+                  title="Tải lại danh sách phiếu nhập từ Supabase"
+                >
+                  {inboundRemoteLoading ? 'Đang làm mới…' : 'Làm mới'}
                 </button>
                 <button
                   type="button"

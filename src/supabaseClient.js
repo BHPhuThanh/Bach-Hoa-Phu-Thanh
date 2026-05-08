@@ -4,11 +4,13 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// In ra để sếp tự kiểm tra (Sếp nhìn Console thấy chữ này là OK)
-console.log("APP ĐANG DÙNG URL:", supabaseUrl);
-console.log("APP ĐANG DÙNG KEY (5 ký tự đầu):", supabaseAnonKey?.substring(0, 5));
+const supabaseReady =
+  typeof supabaseUrl === 'string' &&
+  supabaseUrl.trim().length > 0 &&
+  typeof supabaseAnonKey === 'string' &&
+  supabaseAnonKey.trim().length > 0
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = supabaseReady ? createClient(supabaseUrl, supabaseAnonKey) : null
 
 export const getSupabaseClient = () => supabase
-export const isSupabaseConfigured = () => !!supabaseUrl && !!supabaseAnonKey
+export const isSupabaseConfigured = () => supabaseReady

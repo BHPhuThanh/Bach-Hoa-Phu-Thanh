@@ -47,3 +47,27 @@ export async function insertInboundHistoryEntry(order) {
     return { ok: false, error }
   }
 }
+
+/**
+ * Đọc danh sách phiếu nhập trực tiếp từ Supabase.
+ * @returns {Promise<{ ok: boolean, rows?: Array<object>, skipped?: boolean, error?: unknown }>}
+ */
+export async function fetchInboundInvoices() {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true, rows: [] }
+  const sb = getSupabaseClient()
+  if (!sb) return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  try {
+    const { data, error } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .select('payload, created_at')
+      .order('created_at', { ascending: false })
+      .limit(2000)
+    if (error) return { ok: false, error }
+    const rows = (data || [])
+      .map((r) => (r && typeof r.payload === 'object' ? r.payload : null))
+      .filter(Boolean)
+    return { ok: true, rows }
+  } catch (error) {
+    return { ok: false, error }
+  }
+}
