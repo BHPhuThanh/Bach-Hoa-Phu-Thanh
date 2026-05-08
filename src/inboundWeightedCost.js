@@ -4,6 +4,7 @@
  */
 
 import { parsePrice, parseStockQty } from './catalogCsv.js'
+import { normalizeGroupRoot } from './productUnits.js'
 
 function createInboundLineId() {
   return `il-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
@@ -45,15 +46,59 @@ export function inboundLineNetPurchaseTotal(line) {
 
 const round4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000
 
-function aggregateInboundPurchaseByVariantId(lines) {
+function resolvePositiveNumber(...vals) {
+  for (const v of vals) {
+    const n = Number(v)
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return 1
+}
+
+export function calculateWeightedAverage(oldQty, oldCost, inboundQty, inboundUnitCost) {
+  const oldQtyNum = Math.max(0, Number(oldQty) || 0)
+  const oldCostNum = Math.max(0, Number(oldCost) || 0)
+  const inboundQtyNum = Math.max(0, Number(inboundQty) || 0)
+  const inboundUnitCostNum = Math.max(0, Number(inboundUnitCost) || 0)
+  const totalQty = oldQtyNum + inboundQtyNum
+  if (totalQty <= 0) return round4(oldCostNum)
+  const weighted = (oldQtyNum * oldCostNum + inboundQtyNum * inboundUnitCostNum) / totalQty
+  return round4(weighted)
+}
+
+function lineGroupRootOfVariant(v, fallbackCode = '') {
+  const code = String(v?.code || fallbackCode || '').trim()
+  const linked = String(v?.linkedMasterCode || '').trim()
+  if (!code) return ''
+  return normalizeGroupRoot(code, linked)
+}
+
+function conversionToBaseForVariant(v, serverRow) {
+  return resolvePositiveNumber(
+    v?.conversionValue,
+    v?.conversion,
+    v?.quy_doi,
+    v?.raw?.quy_doi,
+    serverRow?.quy_doi,
+    1
+  )
+}
+
+function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
   const m = new Map()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
     const q = inboundLineReturnableQtyForCost(ln)
     if (q <= 0 || !ln.variantId) continue
+    const v = byVid.get(ln.variantId)
+    if (!v) continue
+    const root = lineGroupRootOfVariant(v, ln.code)
+    if (!root) continue
     const net = inboundLineNetPurchaseTotal(ln)
-    const prev = m.get(ln.variantId) || { qty: 0, net: 0 }
-    m.set(ln.variantId, { qty: prev.qty + q, net: prev.net + net })
+    const srv = serverByMaHang?.get(String(v.code || '').trim())
+    const conv = conversionToBaseForVariant(v, srv)
+    const baseQty = q * conv
+    const prev = m.get(root) || { qty: 0, net: 0 }
+    m.set(root, { qty: prev.qty + baseQty, net: prev.net + net })
   }
   return m
 }
@@ -80,12 +125,28 @@ export function parseServerTonAndCost(row) {
 export function collectInboundMaHangCodes(catalogList, lines) {
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
   const byId = new Map(flat.map((v) => [v.id, v]))
+  const byRoot = new Map()
+  for (const v of flat) {
+    const root = lineGroupRootOfVariant(v)
+    if (!root) continue
+    const prev = byRoot.get(root) || []
+    prev.push(v)
+    byRoot.set(root, prev)
+  }
   const s = new Set()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
     const v = byId.get(ln.variantId)
-    const c = String(v?.code || ln.code || '').trim()
-    if (c) s.add(c)
+    const root = v ? lineGroupRootOfVariant(v, ln.code) : ''
+    if (!root) {
+      const c = String(v?.code || ln.code || '').trim()
+      if (c) s.add(c)
+      continue
+    }
+    for (const member of byRoot.get(root) || []) {
+      const c = String(member?.code || '').trim()
+      if (c) s.add(c)
+    }
   }
   return [...s]
 }
@@ -98,65 +159,82 @@ export function computeInboundFulfillmentPlan(
 ) {
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
   const byVid = new Map(flat.map((v) => [v.id, v]))
+  const groupMembers = new Map()
+  for (const v of flat) {
+    const root = lineGroupRootOfVariant(v)
+    if (!root) continue
+    const prev = groupMembers.get(root) || []
+    prev.push(v)
+    groupMembers.set(root, prev)
+  }
 
-  const aggNew = aggregateInboundPurchaseByVariantId(inboundFormLines)
-  const aggOld = priorOrderLines?.length ? aggregateInboundPurchaseByVariantId(priorOrderLines) : new Map()
+  const aggNew = aggregateInboundPurchaseByGroupRoot(inboundFormLines, byVid, serverByMaHang)
+  const aggOld = priorOrderLines?.length
+    ? aggregateInboundPurchaseByGroupRoot(priorOrderLines, byVid, serverByMaHang)
+    : new Map()
 
   const keys = new Set([...aggNew.keys(), ...aggOld.keys()])
   const diffs = []
   const patches = []
 
-  for (const variantId of keys) {
-    const v = byVid.get(variantId)
-    if (!v) continue
-    const code = String(v.code || '').trim()
-    if (!code) continue
+  for (const root of keys) {
+    const members = groupMembers.get(root) || []
+    if (!members.length) continue
+    const rep = [...members].sort((a, b) => {
+      const ac = conversionToBaseForVariant(a, serverByMaHang?.get(String(a?.code || '').trim()))
+      const bc = conversionToBaseForVariant(b, serverByMaHang?.get(String(b?.code || '').trim()))
+      if (ac !== bc) return ac - bc
+      return String(a?.code || '').localeCompare(String(b?.code || ''), 'vi')
+    })[0]
+    if (!rep) continue
+    const repCode = String(rep.code || '').trim()
+    if (!repCode) continue
 
-    const an = aggNew.get(variantId) || { qty: 0, net: 0 }
-    const ao = aggOld.get(variantId) || { qty: 0, net: 0 }
+    const an = aggNew.get(root) || { qty: 0, net: 0 }
+    const ao = aggOld.get(root) || { qty: 0, net: 0 }
     const deltaQ = an.qty - ao.qty
     const moneyDelta = an.net - ao.net
 
     if (deltaQ === 0 && Math.abs(moneyDelta) < 1e-6) continue
 
-    const srv = serverByMaHang?.get(code)
+    const srv = serverByMaHang?.get(repCode)
     const serverParsed = srv ? parseServerTonAndCost(srv) : { ton: 0, giaVon: 0 }
-    const fallbackTon =
-      v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Math.max(0, Number(v.stockQty)) : 0
-    const fallbackCost = Math.max(0, Number(v.cost) || 0)
+    const fallbackTon = members.reduce((acc, v) => {
+      const n = Number(v?.stockQty)
+      return Number.isFinite(n) && n > acc ? n : acc
+    }, 0)
+    const fallbackCost = members.reduce((acc, v) => {
+      const n = Number(v?.cost)
+      return Number.isFinite(n) && n > acc ? n : acc
+    }, 0)
 
     const baseTon = srv != null ? serverParsed.ton : fallbackTon
     const oldGiaVon = srv != null ? serverParsed.giaVon : fallbackCost
-
     const newTonKho = Math.max(0, baseTon + deltaQ)
     if (newTonKho <= 0) continue
 
-    let newGiaVon
-    if (baseTon <= 0) {
-      if (deltaQ !== 0) newGiaVon = round4(moneyDelta / deltaQ)
-      else if (an.qty > 0) newGiaVon = round4(an.net / an.qty)
-      else newGiaVon = round4(oldGiaVon)
-    } else {
-      newGiaVon = round4((oldGiaVon * baseTon + moneyDelta) / newTonKho)
+    const inboundUnitCost = deltaQ !== 0 ? moneyDelta / deltaQ : 0
+    const newGiaVon = calculateWeightedAverage(baseTon, oldGiaVon, deltaQ, inboundUnitCost)
+    for (const member of members) {
+      if (!member?.id) continue
+      patches.push({
+        variantId: member.id,
+        patch: {
+          stockQty: newTonKho,
+          cost: newGiaVon,
+        },
+      })
     }
-
-    patches.push({
-      variantId,
-      patch: {
-        stockQty: newTonKho,
-        cost: newGiaVon,
-      },
-    })
 
     const displayInboundUnit =
       deltaQ !== 0 ? moneyDelta / deltaQ : an.qty > 0 ? an.net / an.qty : 0
 
     if (round4(oldGiaVon) !== round4(newGiaVon)) {
       diffs.push({
-        variantId,
-        ma_hang: code,
-        code,
-        name: String(v.name || '').trim() || '—',
+        variantId: rep.id,
+        ma_hang: repCode,
+        code: repCode,
+        name: String(rep.name || '').trim() || '—',
         oldCost: round4(oldGiaVon),
         inboundPrice: round4(displayInboundUnit),
         inboundQuantity: deltaQ,

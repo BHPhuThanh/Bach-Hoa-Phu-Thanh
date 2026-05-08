@@ -3226,6 +3226,7 @@ export default function AdminHub({
         }
         await recordInboundCompletionHistory(row)
         setInboundOrders((prev) => [row, ...prev])
+        setActiveTab(TAB_INBOUND)
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
@@ -3259,6 +3260,7 @@ export default function AdminHub({
         await recordInboundCompletionHistory(merged)
         setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
         setInboundFormEditOrderId(null)
+        setActiveTab(TAB_INBOUND)
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
@@ -3365,6 +3367,7 @@ export default function AdminHub({
       inboundCompletePendingRef.current = null
       setInboundCostDiffModal(null)
       appendInboundCostChangeNotifications(diffs)
+      setActiveTab(TAB_INBOUND)
       triggerInboundSaveToast()
     }
 
@@ -3543,6 +3546,7 @@ export default function AdminHub({
         const row = buildInboundOrderPayload('saved_temp')
         setInboundOrders((p) => p.map((o) => (o.id === inboundFormEditOrderId ? row : o)))
         setInboundFormEditOrderId(null)
+        setActiveTab(TAB_INBOUND)
         triggerInboundSaveToast()
         return
       }
@@ -3552,6 +3556,7 @@ export default function AdminHub({
       }
       const row = buildInboundOrderPayload(status)
       setInboundOrders((prev) => [row, ...prev])
+      setActiveTab(TAB_INBOUND)
       triggerInboundSaveToast()
     },
     [
@@ -3824,6 +3829,7 @@ export default function AdminHub({
           delete n[oid]
           return n
         })
+        setActiveTab(TAB_INBOUND)
       } finally {
         setInboundCatalogBulkSaving(false)
       }
