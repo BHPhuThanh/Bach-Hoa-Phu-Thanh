@@ -25,19 +25,6 @@ export function findVariantContext(products, variantId) {
   return null
 }
 
-/**
- * Variant đơn vị cơ bản (conversion nhỏ nhất trong nhóm) — mặc định khi thêm dòng phiếu nhập.
- * @param {object} product — dòng danh mục (có groupVariants)
- * @param {object} clickedVariant — variant user chọn / gợi ý
- */
-export function pickInboundBaseVariant(product, clickedVariant) {
-  const gv = product?.groupVariants
-  if (Array.isArray(gv) && gv.length > 0) {
-    return sortVariantsSmallestUnitFirst(gv)[0] || clickedVariant
-  }
-  return clickedVariant
-}
-
 /** Chỉ các ĐƠN VỊ TÍNH thực sự có trong danh mục (KiotViet) cho mặt hàng của dòng — không gợi ý Gói/Hộp giả. */
 export function buildInboundDvtSelectOptions(catalogList, line) {
   const cur = normalizeCatalogUnitLabel(line.unitLabel)

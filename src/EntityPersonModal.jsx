@@ -21,6 +21,10 @@ export default function EntityPersonModal({
 
   if (!open) return null
 
+  const stopKeyFromReachingAncestors = (e) => {
+    e.stopPropagation()
+  }
+
   const submit = () => {
     if (isSaving) return
     onSubmit({ ...draft })
@@ -52,6 +56,7 @@ export default function EntityPersonModal({
             className="ah-inbound-form-input"
             value={draft.name}
             onChange={(e) => setDraft((s) => ({ ...s, name: e.target.value }))}
+            onKeyDown={stopKeyFromReachingAncestors}
             autoComplete="name"
             autoFocus
             disabled={isSaving}
@@ -64,6 +69,7 @@ export default function EntityPersonModal({
             className="ah-inbound-form-input"
             value={draft.phone}
             onChange={(e) => setDraft((s) => ({ ...s, phone: e.target.value }))}
+            onKeyDown={stopKeyFromReachingAncestors}
             autoComplete="tel"
             disabled={isSaving}
           />
@@ -75,6 +81,7 @@ export default function EntityPersonModal({
             className="ah-inbound-form-input"
             value={draft.address}
             onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
+            onKeyDown={stopKeyFromReachingAncestors}
             autoComplete="street-address"
             disabled={isSaving}
           />
@@ -86,6 +93,7 @@ export default function EntityPersonModal({
             className="ah-inbound-form-input"
             value={draft.cccd}
             onChange={(e) => setDraft((s) => ({ ...s, cccd: e.target.value }))}
+            onKeyDown={stopKeyFromReachingAncestors}
             autoComplete="off"
             disabled={isSaving}
           />
@@ -97,6 +105,7 @@ export default function EntityPersonModal({
             className="ah-inbound-form-input"
             value={draft.mail}
             onChange={(e) => setDraft((s) => ({ ...s, mail: e.target.value }))}
+            onKeyDown={stopKeyFromReachingAncestors}
             autoComplete="email"
             disabled={isSaving}
           />

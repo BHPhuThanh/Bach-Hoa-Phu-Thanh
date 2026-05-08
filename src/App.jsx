@@ -99,6 +99,11 @@ import {
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
+  APP_NOTIFICATIONS_BUMP_EVENT,
+  clearAppNotificationById,
+  loadAppNotifications,
+} from './appNotificationsStorage.js'
+import {
   fetchCustomersFromSupabase,
   formatPostgrestErrorForUser,
   insertCustomerSupabase,
@@ -2504,6 +2509,39 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return Number(tkRaw) < Number(tnRaw)
     })
   }, [products])
+
+  const [appCostChangeNotifications, setAppCostChangeNotifications] = useState(() =>
+    loadAppNotifications()
+  )
+
+  useEffect(() => {
+    const sync = () => setAppCostChangeNotifications(loadAppNotifications())
+    window.addEventListener(APP_NOTIFICATIONS_BUMP_EVENT, sync)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(APP_NOTIFICATIONS_BUMP_EVENT, sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [])
+
+  const openHangHoaFromCostNotification = useCallback(
+    (n) => {
+      const rawId = String(n?.variantId || n?.code || '').trim()
+      if (!rawId) return
+      setLowStockAlertOpen(false)
+      clearAppNotificationById(n.id)
+      setAppCostChangeNotifications(loadAppNotifications())
+      setActiveView('dashboard')
+      setPendingHangHoaGoodsOpen({ rawId })
+      try {
+        sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
+      } catch {
+        /* ignore */
+      }
+      navigate(`/hang-hoa/${encodeURIComponent(rawId)}`, { replace: true })
+    },
+    [navigate]
+  )
   const catalogBarcodeCachesRef = useRef(catalogBarcodeCaches)
   catalogBarcodeCachesRef.current = catalogBarcodeCaches
 
@@ -4446,20 +4484,22 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     )
 
     const lowStockCount = lowStockProducts.length
+    const costNotifyCount = appCostChangeNotifications.length
+    const totalNotifyCount = lowStockCount + costNotifyCount
     const bellBtn = (
       <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
         <button
           type="button"
           className="app-header-icon-btn"
           aria-label={
-            lowStockCount > 0
-              ? `Thông báo — ${lowStockCount} sản phẩm sắp hết hàng`
+            totalNotifyCount > 0
+              ? `Thông báo — ${totalNotifyCount} mục`
               : 'Thông báo'
           }
           aria-expanded={lowStockAlertOpen}
           title={
-            lowStockCount > 0
-              ? `${lowStockCount} sản phẩm sắp hết hàng`
+            totalNotifyCount > 0
+              ? `${totalNotifyCount} thông báo (hết hàng: ${lowStockCount}, giá vốn: ${costNotifyCount})`
               : 'Thông báo'
           }
           onClick={() => setLowStockAlertOpen((open) => !open)}
@@ -4479,9 +4519,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 0 1-3.46 0" />
           </svg>
-          {lowStockCount > 0 ? (
+          {totalNotifyCount > 0 ? (
             <span className="app-header-notify-badge" aria-hidden>
-              {lowStockCount > 99 ? '99+' : lowStockCount}
+              {totalNotifyCount > 99 ? '99+' : totalNotifyCount}
             </span>
           ) : null}
         </button>
@@ -4489,32 +4529,59 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           <div
             className="app-header-low-stock-popover"
             role="dialog"
-            aria-label="Cảnh báo hàng sắp hết"
+            aria-label="Thông báo"
           >
-            <div className="app-header-low-stock-popover-title">Hàng sắp hết</div>
+            <div className="app-header-low-stock-popover-title">Thông báo</div>
             <div className="app-header-low-stock-scroll">
-              {lowStockProducts.length === 0 ? (
-                <p className="app-header-low-stock-empty">
-                  Không có sản phẩm nào sắp hết hàng
-                </p>
+              {totalNotifyCount === 0 ? (
+                <p className="app-header-low-stock-empty">Chưa có thông báo</p>
               ) : (
-                <ul className="app-header-low-stock-list">
-                  {lowStockProducts.map((v) => {
-                    const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
-                    const tnRaw = v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
-                    const code = String(v.code ?? '').trim()
-                    const name = String(v.name ?? v.nameRaw ?? code ?? '').trim() || code
-                    return (
-                      <li key={v.id ?? code} className="app-header-low-stock-item">
-                        <div className="app-header-low-stock-name">{name}</div>
-                        <div className="app-header-low-stock-code">Mã hàng: {code || '—'}</div>
-                        <div className="app-header-low-stock-warn">
-                          Tồn kho: {Number(tkRaw)} / Tối thiểu: {Number(tnRaw)}
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <>
+                  {lowStockCount > 0 ? (
+                    <>
+                      <div className="app-header-notify-section-h">Hàng sắp hết</div>
+                      <ul className="app-header-low-stock-list">
+                        {lowStockProducts.map((v) => {
+                          const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
+                          const tnRaw =
+                            v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
+                          const code = String(v.code ?? '').trim()
+                          const name =
+                            String(v.name ?? v.nameRaw ?? code ?? '').trim() || code
+                          return (
+                            <li key={v.id ?? code} className="app-header-low-stock-item">
+                              <div className="app-header-low-stock-name">{name}</div>
+                              <div className="app-header-low-stock-code">
+                                Mã hàng: {code || '—'}
+                              </div>
+                              <div className="app-header-low-stock-warn">
+                                Tồn kho: {Number(tkRaw)} / Tối thiểu: {Number(tnRaw)}
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </>
+                  ) : null}
+                  {costNotifyCount > 0 ? (
+                    <>
+                      <div className="app-header-notify-section-h">Giá vốn thay đổi</div>
+                      <ul className="app-header-cost-notif-list">
+                        {appCostChangeNotifications.map((n) => (
+                          <li key={n.id} className="app-header-cost-notif-item">
+                            <button
+                              type="button"
+                              className="app-header-cost-notif-btn"
+                              onClick={() => openHangHoaFromCostNotification(n)}
+                            >
+                              {n.message}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                </>
               )}
             </div>
           </div>

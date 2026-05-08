@@ -94,6 +94,11 @@ export default function AdminHubGoodsCreateModal({
   persistStandaloneProducts,
   fileNameHint = 'hang-hoa-thu-cong',
   onSaved,
+  /**
+   * Khi modal con (vd. «Thêm NCC» — EntityPersonModal) đang mở: tắt auto-focus mã vạch và
+   * tạm dừng bắt phím quét ở capture để không xung đột modal lồng nhau.
+   */
+  disableEnforceFocus = false,
 }) {
   const catalogListRef = useRef(catalogList)
   catalogListRef.current = catalogList
@@ -577,12 +582,12 @@ export default function AdminHubGoodsCreateModal({
   )
 
   useLayoutEffect(() => {
-    if (!open) return
+    if (!open || disableEnforceFocus) return
     const id = window.requestAnimationFrame(() => {
       goodsNewBarcodeRef.current?.focus()
     })
     return () => window.cancelAnimationFrame(id)
-  }, [open])
+  }, [open, disableEnforceFocus])
 
   useEffect(() => {
     if (!open) return
@@ -590,9 +595,12 @@ export default function AdminHubGoodsCreateModal({
       goodsCreateScanBufferRef.current = { buf: '', times: [] }
     }
     const shouldPauseWedge = () => {
+      if (disableEnforceFocus) return true
       if (gcUnitModal) return true
       const ae = document.activeElement
       if (!ae) return false
+      /* EntityPersonModal (Thêm NCC / KH / NV): dialog không nằm trong `.ah-goods-create-dialog` */
+      if (ae.closest?.('.ah-inbound-sup-modal')) return true
       if (ae === goodsNewBarcodeRef.current) return true
       if (ae.closest?.('.ah-goods-create-dialog') && ahIsEditableFieldElement(ae)) return true
       return false
@@ -639,7 +647,7 @@ export default function AdminHubGoodsCreateModal({
       window.removeEventListener('keydown', onKeyDownCapture, true)
       flush()
     }
-  }, [open, gcUnitModal, revalidateGoodsNewBarcode])
+  }, [open, gcUnitModal, disableEnforceFocus, revalidateGoodsNewBarcode])
 
   if (!open) return null
 

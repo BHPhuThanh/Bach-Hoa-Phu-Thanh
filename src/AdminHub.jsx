@@ -22,7 +22,6 @@ import {
   applyInboundLineUnitChange,
   buildInboundDvtSelectOptions,
   findVariantContext,
-  pickInboundBaseVariant,
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
@@ -99,6 +98,7 @@ import {
   loadPosReturnDayLedger,
   sumPosReturnAdjustmentsInRange,
 } from './posReturnDayLedger.js'
+import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
 import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
@@ -634,8 +634,8 @@ function inboundLineTotal(line) {
 
 /** Thương hiệu — CSV `thuong_hieu` (cột D) được map vào `brand` trên biến thể. */
 function brandThuongHieuFromProductVariant(product, variant) {
-  const v = pickInboundBaseVariant(product, variant)
-  return String(v.brand ?? product?.brand ?? '').trim()
+  const v = variant || product
+  return String(v?.brand ?? product?.brand ?? '').trim()
 }
 
 /** Dòng cũ có thể thiếu `thuong_hieu` — hiển thị fallback theo danh mục. */
@@ -649,9 +649,9 @@ function inboundLineThuongHieuResolved(line, catalogList) {
   return String(v?.brand ?? '').trim()
 }
 
-/** Một dòng phiếu nhập mới (SL mặc định 1 — đồng bộ với `addInboundFormLine`). */
+/** Một dòng phiếu nhập mới (SL mặc định 1 — đồng bộ với `addInboundFormLine`). Giữ đúng ĐVT / variant đã chọn (Thùng, Lốc…), không ép về đơn vị cơ bản. */
 function createInboundFormLineFromProductVariant(product, variant) {
-  const v = pickInboundBaseVariant(product, variant)
+  const v = variant || product
   const unit = normalizeCatalogUnitLabel(v.unitLabel)
   const price = Number(v.cost) > 0 ? Number(v.cost) : Number(v.price) || 0
   const thuong_hieu = brandThuongHieuFromProductVariant(product, variant)
@@ -2444,6 +2444,45 @@ export default function AdminHub({
     setGoodsSelected({})
   }
 
+  const handleGoodsMobileCardDelete = useCallback(
+    (variantId) => {
+      const id = String(variantId ?? '').trim()
+      if (!id) return
+      const row = goodsRowsAll.find((r) => r.id === id)
+      if (!row) return
+      if (!window.confirm(`Xóa mặt hàng "${row.name || row.code}" khỏi danh sách?`)) return
+      if (goodsExpandedId === id) closeGoodsDetail()
+      if (onRemoveCatalogVariants) {
+        onRemoveCatalogVariants([id])
+      } else {
+        const idSet = new Set([id])
+        const remaining = []
+        for (const p of standaloneCatalog?.products ?? []) {
+          for (const v of p.groupVariants || [p]) {
+            if (!idSet.has(v.id)) remaining.push(v)
+          }
+        }
+        const nextProducts = buildDisplayCatalog(remaining)
+        const fn = standaloneCatalog?.fileName || ''
+        void persistStandaloneProducts(nextProducts, fn)
+      }
+      setGoodsSelected((prev) => {
+        if (!prev[id]) return prev
+        const n = { ...prev }
+        delete n[id]
+        return n
+      })
+    },
+    [
+      goodsRowsAll,
+      goodsExpandedId,
+      closeGoodsDetail,
+      onRemoveCatalogVariants,
+      standaloneCatalog,
+      persistStandaloneProducts,
+    ]
+  )
+
   /* —— Nhập hàng —— */
   const [inboundOrders, setInboundOrders] = useState(() => loadInboundOrdersFromStorage())
   const [inboundQ, setInboundQ] = useState('')
@@ -2581,9 +2620,6 @@ export default function AdminHub({
   const [inboundCostDiffModal, setInboundCostDiffModal] = useState(null)
   /** Đang ghi danh mục sau nhập hàng (Supabase / standalone) — chặn đóng tab cho đến khi xong. */
   const [inboundCatalogBulkSaving, setInboundCatalogBulkSaving] = useState(false)
-  /** Modal kết quả sau khi cập nhật giá nhập. */
-  const [inboundCostResultModal, setInboundCostResultModal] = useState(null)
-  const [inboundCostResultDetailsOpen, setInboundCostResultDetailsOpen] = useState(true)
   const [inboundFormLines, setInboundFormLines] = useState([])
   const [inboundFormProductQ, setInboundFormProductQ] = useState('')
   const [inboundProductSuggestIdx, setInboundProductSuggestIdx] = useState(0)
@@ -2604,6 +2640,11 @@ export default function AdminHub({
   const [supplierSavedToastGen, setSupplierSavedToastGen] = useState(0)
   const triggerSupplierSavedToast = useCallback(() => {
     setSupplierSavedToastGen((g) => g + 1)
+  }, [])
+  /** Toast ngắn sau Lưu phiếu / Hoàn thành (thay cho alert). */
+  const [inboundSaveToastGen, setInboundSaveToastGen] = useState(0)
+  const triggerInboundSaveToast = useCallback(() => {
+    setInboundSaveToastGen((g) => g + 1)
   }, [])
   const openGoodsBrandSupplierModal = useCallback(() => {
     setSupplierModalOpen(true)
@@ -3184,15 +3225,13 @@ export default function AdminHub({
           return false
         }
         await recordInboundCompletionHistory(row)
-        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((prev) => [row, ...prev])
-        closeInboundForm()
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
       }
     },
-    [buildInboundOrderPayload, applyInboundFulfillmentPatches, closeInboundForm, recordInboundCompletionHistory]
+    [buildInboundOrderPayload, applyInboundFulfillmentPatches, recordInboundCompletionHistory]
   )
 
   /** @returns {Promise<boolean>} */
@@ -3218,10 +3257,8 @@ export default function AdminHub({
           return false
         }
         await recordInboundCompletionHistory(merged)
-        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
         setInboundFormEditOrderId(null)
-        closeInboundForm()
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
@@ -3232,7 +3269,6 @@ export default function AdminHub({
       inboundOrders,
       buildInboundOrderPayload,
       applyInboundFulfillmentPatches,
-      closeInboundForm,
       recordInboundCompletionHistory,
     ]
   )
@@ -3288,8 +3324,13 @@ export default function AdminHub({
         setInboundCostDiffModal({ diffs })
         return
       }
-      if (inboundFormEditOrderId) await finalizeInboundEditCompleted(patches)
-      else await finalizeInboundCompleted(patches)
+      if (inboundFormEditOrderId) {
+        const ok = await finalizeInboundEditCompleted(patches)
+        if (ok) triggerInboundSaveToast()
+      } else {
+        const ok = await finalizeInboundCompleted(patches)
+        if (ok) triggerInboundSaveToast()
+      }
     })()
   }, [
     inboundFormSupplierName,
@@ -3299,6 +3340,7 @@ export default function AdminHub({
     inboundFormEditOrderId,
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
+    triggerInboundSaveToast,
   ])
 
   const cancelInboundCostDiffModal = useCallback(() => {
@@ -3319,22 +3361,11 @@ export default function AdminHub({
     const mergedRow = pending.mergedRow
     const oldRow = pending.oldRow
 
-    const showResultAfterSuccess = () => {
+    const finishInboundCostFlowSuccess = () => {
       inboundCompletePendingRef.current = null
       setInboundCostDiffModal(null)
-      setInboundCostResultDetailsOpen(true)
-      const originTab =
-        mode === 'detail_edit' && mergedRow?.id ? toInboundDetailTabId(mergedRow.id) : TAB_INBOUND
-      inboundCostResultOriginTabRef.current = originTab
-      setInboundCostResultModal({
-        updated: diffs.map((d) => ({
-          variantId: d.variantId,
-          code: d.code,
-          name: d.name,
-        })),
-        failCount: 0,
-        originTab: originTab,
-      })
+      appendInboundCostChangeNotifications(diffs)
+      triggerInboundSaveToast()
     }
 
     if (mode === 'detail_edit' && mergedRow && oldRow) {
@@ -3347,7 +3378,6 @@ export default function AdminHub({
           return
         }
         await recordInboundCompletionHistory(mergedRow)
-        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
         setInboundOrders((p) => p.map((o) => (o.id === oid ? mergedRow : o)))
         setInboundDetailLineDrafts((prev) => {
           if (!prev[oid]) return prev
@@ -3355,7 +3385,7 @@ export default function AdminHub({
           delete n[oid]
           return n
         })
-        showResultAfterSuccess()
+        finishInboundCostFlowSuccess()
       } finally {
         setInboundCatalogBulkSaving(false)
       }
@@ -3366,19 +3396,15 @@ export default function AdminHub({
       mode === 'edit'
         ? await finalizeInboundEditCompleted(patches)
         : await finalizeInboundCompleted(patches)
-    if (ok) showResultAfterSuccess()
+    if (ok) finishInboundCostFlowSuccess()
   }, [
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
     cancelInboundCostDiffModal,
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
+    triggerInboundSaveToast,
   ])
-
-  const dismissInboundCostResultModal = useCallback(() => {
-    inboundCostResultOriginTabRef.current = null
-    setInboundCostResultModal(null)
-  }, [])
 
   const focusInboundDraftField = useCallback((lineId, field) => {
     const id = String(lineId ?? '')
@@ -3442,11 +3468,6 @@ export default function AdminHub({
         if (!inboundCatalogBulkSaving) cancelInboundCostDiffModal()
         return
       }
-      if (inboundCostResultModal) {
-        e.preventDefault()
-        /* Chỉ đóng bằng nút Xác nhận — không đóng bằng Escape */
-        return
-      }
       if (inboundReturnModal || inboundCancelModal) {
         e.preventDefault()
         return
@@ -3465,7 +3486,6 @@ export default function AdminHub({
     supplierModalOpen,
     inboundQuickPickOpen,
     inboundCostDiffModal,
-    inboundCostResultModal,
     inboundReturnModal,
     inboundCancelModal,
     cancelInboundCostDiffModal,
@@ -3482,7 +3502,6 @@ export default function AdminHub({
         supplierModalOpen ||
         inboundCostDiffModal ||
         inboundCatalogBulkSaving ||
-        inboundCostResultModal ||
         inboundReturnModal ||
         inboundCancelModal
       )
@@ -3499,7 +3518,6 @@ export default function AdminHub({
     supplierModalOpen,
     inboundCostDiffModal,
     inboundCatalogBulkSaving,
-    inboundCostResultModal,
     inboundReturnModal,
     inboundCancelModal,
   ])
@@ -3525,7 +3543,7 @@ export default function AdminHub({
         const row = buildInboundOrderPayload('saved_temp')
         setInboundOrders((p) => p.map((o) => (o.id === inboundFormEditOrderId ? row : o)))
         setInboundFormEditOrderId(null)
-        closeInboundForm()
+        triggerInboundSaveToast()
         return
       }
       if (status === 'completed') {
@@ -3534,15 +3552,15 @@ export default function AdminHub({
       }
       const row = buildInboundOrderPayload(status)
       setInboundOrders((prev) => [row, ...prev])
-      closeInboundForm()
+      triggerInboundSaveToast()
     },
     [
       inboundFormSupplierName,
       inboundFormEditOrderId,
       inboundOrders,
       buildInboundOrderPayload,
-      closeInboundForm,
       handleInboundCompleteClick,
+      triggerInboundSaveToast,
     ]
   )
 
@@ -3797,7 +3815,8 @@ export default function AdminHub({
           return
         }
         await recordInboundCompletionHistory(merged)
-        window.alert(`Đã cập nhật thành công ${res.updatedCount} sản phẩm.`)
+        appendInboundCostChangeNotifications(diffs)
+        triggerInboundSaveToast()
         setInboundOrders((p) => p.map((o) => (o.id === oid ? merged : o)))
         setInboundDetailLineDrafts((prev) => {
           if (!prev[oid]) return prev
@@ -3816,6 +3835,7 @@ export default function AdminHub({
     catalogList,
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
+    triggerInboundSaveToast,
   ])
 
   const persistPosOrderAndReload = useCallback(async (nextOrder) => {
@@ -5358,6 +5378,7 @@ export default function AdminHub({
                           goodsSelected={goodsSelected}
                           toggleGoodsRowExpand={toggleGoodsRowExpand}
                           toggleGoodsSelect={toggleGoodsSelect}
+                          onGoodsMobileDelete={handleGoodsMobileCardDelete}
                           expandedSlot={goodsExpandedBelowSlot}
                           listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsRowsFiltered.length}`}
                         />
@@ -7296,7 +7317,30 @@ export default function AdminHub({
                               </button>
                             </td>
                             <td className="ah-inbound-ln-stt ah-inbound-draft-td-stt">{idx + 1}</td>
-                            <td className="ah-inbound-ln-code ah-inbound-draft-td-code">{ln.code || '—'}</td>
+                            <td className="ah-inbound-ln-code ah-inbound-draft-td-code">
+                              {ln.code && ln.variantId ? (
+                                <a
+                                  className="ah-inbound-line-code-link"
+                                  href={
+                                    buildOpenHangHoaGoodsAbsUrl(ln.variantId, String(ln.code || '').trim()) || '#'
+                                  }
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Mở trang Hàng hóa — chi tiết sản phẩm (tab mới)"
+                                  onClick={(e) => {
+                                    const u = buildOpenHangHoaGoodsAbsUrl(
+                                      ln.variantId,
+                                      String(ln.code || '').trim()
+                                    )
+                                    if (!u) e.preventDefault()
+                                  }}
+                                >
+                                  {ln.code}
+                                </a>
+                              ) : (
+                                ln.code || '—'
+                              )}
+                            </td>
                             <td className="ah-inbound-draft-td-name">{ln.name || '—'}</td>
                             <td
                               className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-td-ncc"
@@ -7737,77 +7781,6 @@ export default function AdminHub({
         </div>
       )}
 
-      {inboundCostResultModal && (
-        <div
-          className="ah-iv-result-float"
-          role="region"
-          aria-label="Thông báo cập nhật giá nhập mới (luôn hiển thị cho đến khi Xác nhận)"
-        >
-          <div
-            className="ah-iv-modal ah-iv-modal--result ah-iv-modal--float-result"
-            aria-labelledby="ah-iv-result-title"
-          >
-            <header className="ah-iv-modal__head">
-              <h2 id="ah-iv-result-title" className="ah-iv-modal__title">
-                Cập nhật giá nhập mới cho sản phẩm
-              </h2>
-            </header>
-            <div className="ah-iv-modal__body">
-              <p className="ah-iv-modal__status">Xử lý dữ liệu hoàn tất!</p>
-              <div className="ah-iv-result-summary-row">
-                <span>
-                  Sản phẩm được cập nhật thành công:{' '}
-                  <strong className="ah-iv-result-num--ok">
-                    {inboundCostResultModal.updated.length}
-                  </strong>
-                </span>
-                <button
-                  type="button"
-                  className="ah-iv-result-detail-toggle"
-                  onClick={() => setInboundCostResultDetailsOpen((o) => !o)}
-                >
-                  Chi tiết
-                  <span className="ah-iv-chevron" aria-hidden>
-                    {inboundCostResultDetailsOpen ? '▴' : '▾'}
-                  </span>
-                </button>
-              </div>
-              {inboundCostResultDetailsOpen && (
-                <div className="ah-iv-result-box">
-                  <ul className="ah-iv-result-ul">
-                    {inboundCostResultModal.updated.map((it) => (
-                      <li key={it.variantId}>
-                        <button
-                          type="button"
-                          className="ah-iv-result-rowlink"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            openProductDetailTab(it.variantId)
-                          }}
-                        >
-                          <span className="ah-iv-result-code-link">{it.code}</span>
-                          <span> — {it.name}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <p className="ah-iv-result-fail">
-                Sản phẩm cập nhật không thành công:{' '}
-                <strong className="ah-iv-result-num--fail">{inboundCostResultModal.failCount}</strong>
-              </p>
-            </div>
-            <footer className="ah-iv-modal__foot ah-iv-modal__foot--single">
-              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={dismissInboundCostResultModal}>
-                Xác nhận
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
-
       {inboundReturnModal && (
         <div
           className="ah-inbound-float-panel ah-inbound-float-panel--left ah-inbound-float-panel--return-sheet"
@@ -8181,6 +8154,7 @@ export default function AdminHub({
         persistStandaloneProducts={persistStandaloneProducts}
         fileNameHint={standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'}
         onSaved={triggerGoodsSaveSuccessToast}
+        disableEnforceFocus={supplierModalOpen}
       />
 
       {unitModal && (
@@ -8450,6 +8424,21 @@ export default function AdminHub({
           }}
         >
           Đã lưu nhà cung cấp
+        </div>
+      )}
+
+      {inboundSaveToastGen > 0 && (
+        <div
+          key={`inb-toast-${inboundSaveToastGen}`}
+          className="ah-save-toast ah-save-toast--inbound"
+          role="status"
+          aria-live="polite"
+          onAnimationEnd={(e) => {
+            if (e.target !== e.currentTarget) return
+            setInboundSaveToastGen(0)
+          }}
+        >
+          Đã lưu phiếu nhập — xem thêm ở chuông thông báo nếu có thay đổi giá vốn
         </div>
       )}
     </div>

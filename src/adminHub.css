@@ -1224,6 +1224,266 @@
   background: #12161c;
 }
 
+.ah-goods-vrow-root {
+  display: contents;
+}
+
+.ah-goods-mobile-card {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .ah-goods-table-wrap--virtual,
+  .ah-goods-virtual-host {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ah-goods-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+
+  .ah-goods-toolbar-left,
+  .ah-goods-toolbar-right {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .ah-goods-toolbar-left--with-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ah-goods-toolbar-filters {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+
+  .ah-goods-filter-field,
+  .ah-goods-filter-field--brand {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  .ah-goods-toolbar-brand-wrap {
+    max-width: none;
+  }
+
+  .ah-goods-search-wrap--solo {
+    max-width: none;
+    width: 100%;
+  }
+
+  .ah-goods-toolbar-right {
+    justify-content: stretch;
+    gap: 0.5rem;
+  }
+
+  .ah-goods-toolbar-right .ah-split-create,
+  .ah-goods-toolbar-right .ah-goods-io-btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .ah-goods-catalog-head {
+    display: none !important;
+  }
+
+  .ah-goods-vrow-root {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0 0.25rem;
+  }
+
+  .ah-goods-vrow-root .ah-goods-vrow--desktop {
+    display: none !important;
+  }
+
+  .ah-goods-mobile-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.65rem 0.75rem 0.7rem;
+    margin: 0 0 0.35rem;
+    border-radius: 12px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: linear-gradient(165deg, #1a2332 0%, #141a22 100%);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+
+  .ah-goods-mobile-card.ah-goods-data-row--open {
+    border-color: rgba(56, 189, 248, 0.5);
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.4),
+      inset 0 0 0 1px rgba(11, 132, 255, 0.2);
+  }
+
+  .ah-goods-mobile-card-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: #f1f5f9;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .ah-goods-mobile-card-meta {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: #94a3b8;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.35rem;
+  }
+
+  .ah-goods-mobile-card-code {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ah-goods-mobile-card-meta-sep {
+    opacity: 0.7;
+  }
+
+  .ah-goods-mobile-card-brand {
+    color: #cbd5e1;
+  }
+
+  .ah-goods-mobile-card-main {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.65rem;
+    margin-top: 0.15rem;
+  }
+
+  .ah-goods-mobile-card-price,
+  .ah-goods-mobile-card-stock {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .ah-goods-mobile-card-price-lbl,
+  .ah-goods-mobile-card-stock-lbl {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #64748b;
+  }
+
+  .ah-goods-mobile-card-price-val {
+    font-size: 1rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: #38bdf8;
+    line-height: 1.25;
+  }
+
+  .ah-goods-mobile-card-stock-val {
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #e2e8f0;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+
+  .ah-goods-mobile-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.35rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid rgba(51, 65, 85, 0.65);
+  }
+
+  .ah-goods-mobile-card-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .ah-goods-mobile-card-check input {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: #38bdf8;
+    cursor: pointer;
+  }
+
+  .ah-goods-mobile-btn {
+    flex: 1 1 calc(50% - 2rem);
+    min-height: 48px;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.65rem;
+    border-radius: 10px;
+    border: 1px solid rgba(51, 65, 85, 0.95);
+    background: #1c2430;
+    color: #e2e8f0;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      border-color 0.12s ease,
+      color 0.12s ease;
+    touch-action: manipulation;
+  }
+
+  .ah-goods-mobile-btn-icon {
+    flex-shrink: 0;
+  }
+
+  .ah-goods-mobile-btn--primary {
+    border-color: rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.12);
+    color: #7dd3fc;
+  }
+
+  .ah-goods-mobile-btn--primary:active {
+    background: rgba(56, 189, 248, 0.22);
+  }
+
+  .ah-goods-mobile-btn--danger {
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(127, 29, 29, 0.25);
+    color: #fecaca;
+  }
+
+  .ah-goods-mobile-btn--danger:active {
+    background: rgba(127, 29, 29, 0.4);
+  }
+}
+
 .ah-goods-detail-after-virt {
   max-height: 520px;
   overflow: auto;
@@ -2815,6 +3075,16 @@
 }
 
 .ah-inbound-code-link:hover {
+  color: #7dd3fc;
+}
+
+a.ah-inbound-line-code-link {
+  color: #38bdf8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a.ah-inbound-line-code-link:hover {
   color: #7dd3fc;
 }
 
