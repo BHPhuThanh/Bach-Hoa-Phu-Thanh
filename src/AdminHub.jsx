@@ -4424,8 +4424,13 @@ export default function AdminHub({
             alert('File không đủ dòng dữ liệu.')
             return
           }
-          const delim = lines[0].includes(';') ? ';' : ','
-          const head = lines[0].split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
+          const firstLine = String(lines?.[0] ?? '')
+          if (!firstLine) {
+            alert('Không đọc được dòng tiêu đề.')
+            return
+          }
+          const delim = firstLine.includes(';') ? ';' : ','
+          const head = firstLine.split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
           const idxCode = head.findIndex((h) => /mã đơn nhập/i.test(h))
           const idxDate = head.findIndex((h) => /ngày nhập/i.test(h))
           const idxSup = head.findIndex((h) => /nhà cung cấp/i.test(h))
@@ -4444,7 +4449,9 @@ export default function AdminHub({
           }
           const added = []
           for (let i = 1; i < lines.length; i++) {
-            const cells = lines[i].split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
+            const rowText = String(lines?.[i] ?? '')
+            if (!rowText) continue
+            const cells = rowText.split(delim).map((c) => c.replace(/^"|"$/g, '').trim())
             const code = cells[idxCode] || ''
             if (!code) continue
             const supplier = idxSup >= 0 ? cells[idxSup] || '' : ''

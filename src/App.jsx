@@ -2709,7 +2709,43 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
     setProducts((prev) => {
-      const next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
+      const flat = flattenDisplayCatalogToVariants(prev)
+      const target = flat.find((v) => String(v?.id) === String(variantId))
+      let next = prev
+      const stockRaw = patch?.stockQty
+      const stockNum = Number(stockRaw)
+      const shouldSyncSiblingStock = target && Number.isFinite(stockNum)
+
+      if (shouldSyncSiblingStock) {
+        const root = normalizeGroupRoot(
+          String(target.code ?? ''),
+          String(target.linkedMasterCode ?? '')
+        )
+        const convTarget = Math.max(1e-9, Number(effectiveConversionForVariant(target)) || 1)
+        const baseStock = stockNum * convTarget
+        const group = flat.filter(
+          (v) =>
+            normalizeGroupRoot(String(v?.code ?? ''), String(v?.linkedMasterCode ?? '')) === root
+        )
+        const patchById = new Map()
+        for (const v of group) {
+          const conv = Math.max(1e-9, Number(effectiveConversionForVariant(v)) || 1)
+          patchById.set(v.id, {
+            stockQty: Number((baseStock / conv).toFixed(4)),
+          })
+        }
+        const own = patchById.get(variantId) || {}
+        patchById.set(variantId, {
+          ...own,
+          ...patch,
+          stockQty: Number((baseStock / convTarget).toFixed(4)),
+        })
+        for (const [vid, p] of patchById.entries()) {
+          next = applyProductDataToCatalog(next, { type: 'patch_variant', variantId: vid, patch: p })
+        }
+      } else {
+        next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
+      }
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
