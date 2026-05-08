@@ -10,9 +10,45 @@ function createInboundLineId() {
   return `il-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function parseNumberVi(raw) {
+  const s0 = String(raw ?? '')
+    .trim()
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s/g, '')
+    .replace(/đ/gi, '')
+  if (!s0) return 0
+  let s = s0.replace(/[^\d.,-]/g, '')
+  if (!s) return 0
+  const neg = s.startsWith('-')
+  s = s.replace(/^-/, '')
+  const lastDot = s.lastIndexOf('.')
+  const lastComma = s.lastIndexOf(',')
+  let out = s
+  if (lastDot >= 0 && lastComma >= 0) {
+    // VN phổ biến: '.' phân nghìn, ',' thập phân
+    out = s.replace(/\./g, '').replace(/,/g, '.')
+  } else if (lastComma >= 0) {
+    const tail = s.slice(lastComma + 1)
+    out = tail.length === 3 ? s.replace(/,/g, '') : s.replace(/,/g, '.')
+  } else if (lastDot >= 0) {
+    const tail = s.slice(lastDot + 1)
+    out = tail.length === 3 ? s.replace(/\./g, '') : s
+  }
+  const n = Number(out)
+  if (!Number.isFinite(n)) return 0
+  return neg ? -n : n
+}
+
+function parseMoneyVi(raw) {
+  const d = String(raw ?? '').replace(/[^\d]/g, '')
+  if (!d) return 0
+  const n = parseInt(d, 10)
+  return Number.isFinite(n) ? n : 0
+}
+
 export function normalizeInboundLineForCost(x) {
-  const qty = Math.max(0, Number(x.qty) || 0)
-  let returnedQty = Math.max(0, Number(x.returnedQty) || 0)
+  const qty = Math.max(0, parseNumberVi(x.qty))
+  let returnedQty = Math.max(0, parseNumberVi(x.returnedQty))
   if (returnedQty > qty) returnedQty = qty
   return {
     lineId: String(x.lineId || createInboundLineId()),
@@ -22,8 +58,8 @@ export function normalizeInboundLineForCost(x) {
     unitLabel: String(x.unitLabel ?? '').trim(),
     qty,
     returnedQty,
-    unitPrice: Math.max(0, Number(x.unitPrice) || 0),
-    lineDiscount: Math.max(0, Number(x.lineDiscount) || 0),
+    unitPrice: Math.max(0, parseMoneyVi(x.unitPrice)),
+    lineDiscount: Math.max(0, parseMoneyVi(x.lineDiscount)),
   }
 }
 
@@ -55,10 +91,10 @@ function resolvePositiveNumber(...vals) {
 }
 
 export function calculateWeightedAverage(oldQty, oldCost, inboundQty, inboundUnitCost) {
-  const oldQtyNum = Math.max(0, Number(oldQty) || 0)
-  const oldCostNum = Math.max(0, Number(oldCost) || 0)
-  const inboundQtyNum = Math.max(0, Number(inboundQty) || 0)
-  const inboundUnitCostNum = Math.max(0, Number(inboundUnitCost) || 0)
+  const oldQtyNum = Math.max(0, parseNumberVi(oldQty))
+  const oldCostNum = Math.max(0, parseNumberVi(oldCost))
+  const inboundQtyNum = Math.max(0, parseNumberVi(inboundQty))
+  const inboundUnitCostNum = Math.max(0, parseNumberVi(inboundUnitCost))
   const totalQty = oldQtyNum + inboundQtyNum
   if (totalQty <= 0) return round4(oldCostNum)
   const weighted = (oldQtyNum * oldCostNum + inboundQtyNum * inboundUnitCostNum) / totalQty
@@ -110,6 +146,8 @@ function parseGroupServerSnapshot(members, serverByMaHang) {
 
 function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
   const m = new Map()
+  const byVariant = new Map()
+  const byVariantEnteredUnitPrice = new Map()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
     const q = inboundLineReturnableQtyForCost(ln)
@@ -124,8 +162,17 @@ function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
     const baseQty = q * conv
     const prev = m.get(root) || { qty: 0, net: 0 }
     m.set(root, { qty: prev.qty + baseQty, net: prev.net + net })
+
+    const pv = byVariant.get(ln.variantId) || { qty: 0, net: 0 }
+    byVariant.set(ln.variantId, { qty: pv.qty + q, net: pv.net + net })
+
+    const pu = byVariantEnteredUnitPrice.get(ln.variantId) || { qty: 0, sum: 0 }
+    byVariantEnteredUnitPrice.set(ln.variantId, {
+      qty: pu.qty + q,
+      sum: pu.sum + q * Math.max(0, parseMoneyVi(raw?.unitPrice ?? ln.unitPrice)),
+    })
   }
-  return m
+  return { byRoot: m, byVariant, byVariantEnteredUnitPrice }
 }
 
 /**
@@ -196,9 +243,9 @@ export function computeInboundFulfillmentPlan(
   const aggNew = aggregateInboundPurchaseByGroupRoot(inboundFormLines, byVid, serverByMaHang)
   const aggOld = priorOrderLines?.length
     ? aggregateInboundPurchaseByGroupRoot(priorOrderLines, byVid, serverByMaHang)
-    : new Map()
+    : { byRoot: new Map(), byVariant: new Map(), byVariantEnteredUnitPrice: new Map() }
 
-  const keys = new Set([...aggNew.keys(), ...aggOld.keys()])
+  const keys = new Set([...aggNew.byRoot.keys(), ...aggOld.byRoot.keys()])
   const diffs = []
   const patches = []
 
@@ -215,8 +262,8 @@ export function computeInboundFulfillmentPlan(
     const repCode = String(rep.code || '').trim()
     if (!repCode) continue
 
-    const an = aggNew.get(root) || { qty: 0, net: 0 }
-    const ao = aggOld.get(root) || { qty: 0, net: 0 }
+    const an = aggNew.byRoot.get(root) || { qty: 0, net: 0 }
+    const ao = aggOld.byRoot.get(root) || { qty: 0, net: 0 }
     const deltaQ = an.qty - ao.qty
     const moneyDelta = an.net - ao.net
 
@@ -247,15 +294,32 @@ export function computeInboundFulfillmentPlan(
       deltaQ,
       inboundBaseUnitCost
     )
+
+    const keepExactInboundCostByVariantId = new Map()
+    for (const [vid, nn] of aggNew.byVariant.entries()) {
+      const oo = aggOld.byVariant.get(vid) || { qty: 0, net: 0 }
+      const dq = (Number(nn.qty) || 0) - (Number(oo.qty) || 0)
+      const dm = (Number(nn.net) || 0) - (Number(oo.net) || 0)
+      if (dq <= 0) continue
+      const v = byVid.get(vid)
+      if (!v) continue
+      const r = lineGroupRootOfVariant(v)
+      if (r !== root) continue
+      const entered = aggNew.byVariantEnteredUnitPrice.get(vid)
+      const keep = entered?.qty > 0 ? entered.sum / entered.qty : dm / dq
+      keepExactInboundCostByVariantId.set(vid, keep)
+    }
+
     for (const member of members) {
       if (!member?.id) continue
       const memberSrv = serverByMaHang?.get(String(member.code || '').trim())
       const conv = conversionToBaseForVariant(member, memberSrv)
+      const keep = keepExactInboundCostByVariantId.get(member.id)
       patches.push({
         variantId: member.id,
         patch: {
           stockQty: newBaseQty,
-          cost: round4(newBaseCost * conv),
+          cost: round4(keep != null ? keep : newBaseCost * conv),
         },
       })
     }
