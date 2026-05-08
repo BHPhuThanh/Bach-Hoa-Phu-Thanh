@@ -1293,6 +1293,7 @@ export default function AdminHub({
   const [goodsDateFromStr, setGoodsDateFromStr] = useState('')
   const [goodsDateToStr, setGoodsDateToStr] = useState('')
   const goodsDraftSeedKeyRef = useRef('')
+  const goodsDraftSeedVariantIdRef = useRef('')
   const [goodsCreateOpen, setGoodsCreateOpen] = useState(false)
   const goodsCreateWrapRef = useRef(null)
   const [goodsSelected, setGoodsSelected] = useState(() => ({}))
@@ -1314,6 +1315,8 @@ export default function AdminHub({
       setGoodsExpandedId(null)
       setGoodsDetailSelectedVid(null)
       setGoodsDetailDraft(null)
+      goodsDraftSeedKeyRef.current = ''
+      goodsDraftSeedVariantIdRef.current = ''
       setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
       setGoodsNewModalOpen(false)
       setComboModal(null)
@@ -1389,6 +1392,8 @@ export default function AdminHub({
     setGoodsExpandedId(null)
     setGoodsDetailSelectedVid(null)
     setGoodsDetailDraft(null)
+    goodsDraftSeedKeyRef.current = ''
+    goodsDraftSeedVariantIdRef.current = ''
   }, [])
 
   const toggleGoodsRowExpand = useCallback(
@@ -1397,6 +1402,8 @@ export default function AdminHub({
         if (cur === rowVariantId) {
           setGoodsDetailSelectedVid(null)
           setGoodsDetailDraft(null)
+          goodsDraftSeedKeyRef.current = ''
+          goodsDraftSeedVariantIdRef.current = ''
           return null
         }
         const ctx = findVariantContext(catalogList, rowVariantId)
@@ -1432,15 +1439,19 @@ export default function AdminHub({
   useEffect(() => {
     if (!goodsExpandedId) {
       goodsDraftSeedKeyRef.current = ''
+      goodsDraftSeedVariantIdRef.current = ''
       setGoodsDetailDraft(null)
       return
     }
-    if (!goodsDetailVariant || !goodsDetailVariantFp) return
+    const nextVid = String(goodsDetailSelectedVid ?? '')
+    if (!nextVid || !goodsDetailVariant || !goodsDetailVariantFp) return
     const key = `${goodsExpandedId}\u0000${goodsDetailVariantFp}`
-    if (goodsDraftSeedKeyRef.current === key) return
+    const seededSameVariant = goodsDraftSeedVariantIdRef.current === nextVid
+    if (seededSameVariant && goodsDraftSeedKeyRef.current === key) return
     goodsDraftSeedKeyRef.current = key
+    goodsDraftSeedVariantIdRef.current = nextVid
     setGoodsDetailDraft(buildGoodsDetailDraft(goodsDetailVariant))
-  }, [goodsExpandedId, goodsDetailVariantFp, goodsDetailVariant])
+  }, [goodsExpandedId, goodsDetailSelectedVid, goodsDetailVariantFp, goodsDetailVariant, buildGoodsDetailDraft])
 
   useEffect(() => {
     if (!goodsExpandedId) return

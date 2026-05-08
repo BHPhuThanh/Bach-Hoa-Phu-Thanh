@@ -123,29 +123,30 @@ function conversionToBaseForVariant(v, serverRow) {
   )
 }
 
-function parseGroupServerSnapshot(members, serverByMaHang) {
-  let totalBaseQty = 0
-  let totalValue = 0
-  let seenAnyServer = false
-  for (const member of members || []) {
+function parseGroupServerSnapshot(primaryMember, members, serverByMaHang) {
+  const ordered = []
+  if (primaryMember) ordered.push(primaryMember)
+  for (const m of members || []) {
+    if (!m || (primaryMember && m.id === primaryMember.id)) continue
+    ordered.push(m)
+  }
+  for (const member of ordered) {
     const code = String(member?.code || '').trim()
     if (!code) continue
     const srv = serverByMaHang?.get(code)
     if (!srv) continue
-    seenAnyServer = true
     const { ton, giaVon } = parseServerTonAndCost(srv)
     const conv = conversionToBaseForVariant(member, srv)
     const qtyAtThisUnit = Math.max(0, Number(ton) || 0)
     const costAtThisUnit = Math.max(0, Number(giaVon) || 0)
-    totalBaseQty += qtyAtThisUnit * conv
-    totalValue += qtyAtThisUnit * costAtThisUnit
+    return {
+      hasServer: true,
+      baseQty: qtyAtThisUnit * conv,
+      // gia_von đang lưu theo đơn vị hiện tại -> chuẩn hóa về đơn vị cơ bản.
+      baseCost: costAtThisUnit / conv,
+    }
   }
-  if (!seenAnyServer || totalBaseQty <= 0) return { hasServer: false, baseQty: 0, baseCost: 0 }
-  return {
-    hasServer: true,
-    baseQty: totalBaseQty,
-    baseCost: totalValue / totalBaseQty,
-  }
+  return { hasServer: false, baseQty: 0, baseCost: 0 }
 }
 
 function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
@@ -273,10 +274,12 @@ export function computeInboundFulfillmentPlan(
 
     if (deltaQ === 0 && Math.abs(moneyDelta) < 1e-6) continue
 
-    const srvGroup = parseGroupServerSnapshot(members, serverByMaHang)
+    const srvGroup = parseGroupServerSnapshot(rep, members, serverByMaHang)
     const fallbackBaseTon = members.reduce((acc, v) => {
       const n = Number(v?.stockQty)
-      return Number.isFinite(n) && n > acc ? n : acc
+      if (!Number.isFinite(n) || n < 0) return acc
+      const conv = conversionToBaseForVariant(v, null)
+      return Math.max(acc, n * conv)
     }, 0)
     const fallbackBaseCost = members.reduce((acc, v) => {
       const conv = conversionToBaseForVariant(v, null)
@@ -322,7 +325,7 @@ export function computeInboundFulfillmentPlan(
       patches.push({
         variantId: member.id,
         patch: {
-          stockQty: newBaseQty,
+          stockQty: fixed4Number(newBaseQty / conv),
           cost: fixed4Number(keep != null ? keep : newBaseCost * conv),
         },
       })
