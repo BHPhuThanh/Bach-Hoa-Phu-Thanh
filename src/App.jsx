@@ -2729,16 +2729,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         )
         const patchById = new Map()
         for (const v of group) {
-          const conv = Math.max(1e-9, Number(effectiveConversionForVariant(v)) || 1)
           patchById.set(v.id, {
-            stockQty: Number((baseStock / conv).toFixed(4)),
+            // ton_kho DB là tồn kho cơ bản dùng chung cho cả nhóm (UI tự chia theo quy_doi khi hiển thị).
+            stockQty: Number(baseStock.toFixed(4)),
           })
         }
         const own = patchById.get(variantId) || {}
         patchById.set(variantId, {
           ...own,
           ...patch,
-          stockQty: Number((baseStock / convTarget).toFixed(4)),
+          stockQty: Number(baseStock.toFixed(4)),
         })
         for (const [vid, p] of patchById.entries()) {
           next = applyProductDataToCatalog(next, { type: 'patch_variant', variantId: vid, patch: p })

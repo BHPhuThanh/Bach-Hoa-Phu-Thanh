@@ -1289,6 +1289,7 @@ export default function AdminHub({
   )
 
   const [goodsBrandKey, setGoodsBrandKey] = useState('')
+  const [goodsBrandOpen, setGoodsBrandOpen] = useState(false)
   const [goodsDatePreset, setGoodsDatePreset] = useState('')
   const [goodsDateFromStr, setGoodsDateFromStr] = useState('')
   const [goodsDateToStr, setGoodsDateToStr] = useState('')

@@ -325,7 +325,8 @@ export function computeInboundFulfillmentPlan(
       patches.push({
         variantId: member.id,
         patch: {
-          stockQty: fixed4Number(newBaseQty / conv),
+          // Single source of truth: luôn lưu ton_kho theo đơn vị cơ bản cho mọi SKU cùng nhóm.
+          stockQty: fixed4Number(newBaseQty),
           cost: fixed4Number(keep != null ? keep : newBaseCost * conv),
         },
       })
