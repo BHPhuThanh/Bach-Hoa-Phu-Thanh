@@ -4035,29 +4035,7 @@ export default function AdminHub({
     (row) => {
       if (!row || row.inventoryNavSource !== 'supabase') return
       const doc = String(row.docNo ?? '').trim()
-      const posOid = String(row.pos_order_id ?? '').trim()
-      const inbOid = String(row.inbound_order_id ?? '').trim()
       setSelected(null)
-      if (posOid) {
-        const o = orders.find((x) => String(x.id) === posOid)
-        if (o) {
-          syncHubUrlToMainTab(TAB_ORDERS)
-          openPosDetailTab(o)
-        } else {
-          window.alert('Không tìm thấy đơn bán (Hóa đơn) tương ứng chứng từ này.')
-        }
-        return
-      }
-      if (inbOid) {
-        const rRow = inboundOrders.find((x) => String(x.id) === inbOid)
-        if (rRow) {
-          syncHubUrlToMainTab(TAB_INBOUND)
-          openInboundDetailTab(rRow)
-        } else {
-          window.alert('Không tìm thấy phiếu nhập tương ứng chứng từ này.')
-        }
-        return
-      }
       if (/^HD/i.test(doc)) {
         const o = orders.find(
           (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()

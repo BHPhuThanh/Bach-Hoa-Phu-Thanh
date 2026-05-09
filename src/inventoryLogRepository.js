@@ -104,8 +104,6 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
           change_qty: -q,
           stock_after: stockAfter,
           staff_name: staffName,
-          pos_order_id: orderId || null,
-          inbound_order_id: null,
         })
       }
       continue
@@ -130,8 +128,6 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
       change_qty: -dq,
       stock_after: stockAfter,
       staff_name: staffName,
-      pos_order_id: orderId || null,
-      inbound_order_id: null,
     })
   }
 
@@ -141,7 +137,6 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
 /** Nhập hàng sau khi biết patches + catalog trước/sau. */
 export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches, meta) {
   const doc = String(meta?.documentCode ?? '').trim()
-  const inboundOid = String(meta?.inboundOrderId ?? '').trim()
   const staffName = meta?.staffName ?? staffNameForInventoryLog()
   if (!doc || !patches?.length) return []
 
@@ -173,8 +168,6 @@ export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches
       change_qty: n1 - n0,
       stock_after: n1,
       staff_name: staffName,
-      pos_order_id: null,
-      inbound_order_id: inboundOid || null,
     })
   }
 
@@ -224,8 +217,6 @@ export function buildStockAdjustInventoryLogRows(
       change_qty: b - a,
       stock_after: b,
       staff_name: staffName,
-      pos_order_id: null,
-      inbound_order_id: null,
     })
   }
 
@@ -239,9 +230,16 @@ export async function insertInventoryLogRows(rows) {
   const cleanedRows = rows
     .filter((row) => row && typeof row === 'object')
     .map((row) => {
-      const out = {}
-      for (const [k, v] of Object.entries(row)) out[k] = v === undefined ? null : v
-      return out
+      return {
+        created_at: row.created_at === undefined ? null : row.created_at,
+        staff_name: row.staff_name === undefined ? null : row.staff_name,
+        transaction_type: row.transaction_type === undefined ? null : row.transaction_type,
+        change_qty: row.change_qty === undefined ? null : row.change_qty,
+        stock_after: row.stock_after === undefined ? null : row.stock_after,
+        document_code: row.document_code === undefined ? null : row.document_code,
+        ma_hang: row.ma_hang === undefined ? null : row.ma_hang,
+        ten_hang: row.ten_hang === undefined ? null : row.ten_hang,
+      }
     })
   if (!cleanedRows.length) return { ok: true, skipped: true }
   try {
@@ -321,13 +319,7 @@ export function mapInventoryLogDbRowToDisplay(row) {
     stockRaw: balance,
 
     inventoryNavSource: 'supabase',
-    pos_order_id: row.pos_order_id ? String(row.pos_order_id) : '',
-    inbound_order_id: row.inbound_order_id ? String(row.inbound_order_id) : '',
-    inventoryDocClickable:
-      /^HD/i.test(docNo) ||
-      isInboundDocumentCode(docNo) ||
-      Boolean(row.pos_order_id) ||
-      Boolean(row.inbound_order_id),
+    inventoryDocClickable: /^HD/i.test(docNo) || isInboundDocumentCode(docNo),
 
     /* Tương thích mã JSX cũ */
     delta,
