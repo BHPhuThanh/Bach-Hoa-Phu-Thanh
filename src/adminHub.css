@@ -2169,6 +2169,36 @@
   color: #94a3b8;
 }
 
+.ah-inv-ledger-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 14px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+
+.ah-inv-ledger-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ah-inv-ledger-filter-field--grow {
+  flex: 1 1 200px;
+}
+
+.ah-inv-ledger-filter-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.78;
+  letter-spacing: 0.02em;
+}
+
+.ah-inv-ledger-filter-input {
+  min-height: 34px;
+}
+
 .ah-goods-card-stock-wrap {
   margin: 0 0 0.35rem;
   min-width: 0;

@@ -8,8 +8,19 @@ import {
 import {
   applyProductDataToCatalog,
   fetchProducts,
+  flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
 } from './catalogRepository.js'
+import {
+  insertInventoryLogRows,
+  buildStockAdjustInventoryLogRows,
+} from './inventoryLogRepository.js'
+import { isSupabaseConfigured } from './supabaseClient.js'
+import {
+  collectSiblingVariantIds,
+  resolveMaGocFromVariant,
+  variantQuyDoiNumber,
+} from './comboCatalog.js'
 import {
   appendStockCheckVoucher,
   createHoanThanhStockCheckVoucher,
@@ -19,7 +30,11 @@ import {
 } from './stockCheckStorage.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
-import { formatDisplayTonKhoVi, formatStockQtyDisplayVi } from './displayStockQty.js'
+import {
+  displayTonKhoNumber,
+  formatDisplayTonKhoVi,
+  formatStockQtyDisplayVi,
+} from './displayStockQty.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
@@ -45,6 +60,13 @@ function creatorLabel() {
   return 'Admin'
 }
 
+function stockCheckStaffNameForLog() {
+  const c = creatorLabel()
+  if (c === 'Admin') return 'Chủ cửa hàng'
+  if (c === 'Nhân viên') return 'Nhân viên'
+  return 'Chủ cửa hàng'
+}
+
 /** Giống Admin Hub — tồn chi nhánh / số đếm thực tế. */
 function parseStockInput(raw) {
   const s = String(raw ?? '').trim().replace(/\s/g, '').replace(/\./g, '').replace(',', '.')
@@ -62,13 +84,20 @@ function formatSignedQtyVi(n) {
   return t
 }
 
-function deltaLabel(branchQty, actualRaw) {
+function deltaLabelDisplay(branchTonKhoRaw, actualRaw, variant) {
   const actual = parseStockInput(actualRaw)
-  const b =
-    branchQty != null && branchQty !== '' && Number.isFinite(Number(branchQty)) ? Number(branchQty) : null
   if (actual === null) return '—'
+  const b =
+    branchTonKhoRaw != null &&
+    branchTonKhoRaw !== '' &&
+    Number.isFinite(Number(branchTonKhoRaw))
+      ? Number(branchTonKhoRaw)
+      : null
   if (b === null) return formatSignedQtyVi(actual)
-  return formatSignedQtyVi(actual - b)
+  const branchDisp =
+    variant && typeof variant === 'object' ? displayTonKhoNumber(b, variant) : null
+  if (branchDisp == null || !Number.isFinite(branchDisp)) return formatSignedQtyVi(actual)
+  return formatSignedQtyVi(actual - branchDisp)
 }
 
 function findCatalogVariantById(products, variantId) {
@@ -274,39 +303,106 @@ export default function StockCheckCreatePage() {
 
   const handleBalance = useCallback(async () => {
     if (saving) return
+    /** Tồn kho DB chuẩn (cơ bản) theo họ `ma_goc`: mỗi khóa một con số. */
+    const baseTonByMaGoc = new Map()
+    for (const row of rows) {
+      const actualDisplay = parseStockInput(row.actualDraft)
+      if (actualDisplay === null) continue
+      const v = findCatalogVariantById(products, row.variantId)
+      if (!v) continue
+      const maGoc = resolveMaGocFromVariant(v)
+      if (!maGoc) {
+        window.alert(
+          `Không xác định được họ sản phẩm cho «${String(row.productCode || '').trim() || '—'}». Kiểm tra ma_hàng / ma_hh_lien_quan.`
+        )
+        return
+      }
+      const qd = variantQuyDoiNumber(v)
+      const baseTon = actualDisplay * qd
+      if (!Number.isFinite(baseTon)) {
+        window.alert(`Số lượng không hợp lệ (${row.productCode || ''}).`)
+        return
+      }
+      if (baseTon < 0) {
+        window.alert('Tồn thực tế không được âm.')
+        return
+      }
+      if (baseTonByMaGoc.has(maGoc)) {
+        const prev = baseTonByMaGoc.get(maGoc)
+        if (Math.abs(prev - baseTon) > 1e-3) {
+          window.alert(
+            `Các dòng cùng nhóm ĐVT (cùng ma_hh_lien_quan / mã gốc «${maGoc}») đang không thống nhất một số đếm cơ bản. Hãy điều chỉnh cho khớp.`
+          )
+          return
+        }
+      } else baseTonByMaGoc.set(maGoc, baseTon)
+    }
+    if (baseTonByMaGoc.size === 0) {
+      window.alert('Thêm ít nhất một dòng và nhập «Tồn thực tế» (số đếm được) cho dòng đó.')
+      return
+    }
+
     const lines = []
+    const variantsToTouch = new Set()
     let nextProducts = products
     for (const row of rows) {
-      const actual = parseStockInput(row.actualDraft)
-      if (actual === null) continue
-      const branchNum =
+      const actualDisplay = parseStockInput(row.actualDraft)
+      if (actualDisplay === null) continue
+      const v = findCatalogVariantById(products, row.variantId)
+      const branchTon =
         row.branchQty != null && Number.isFinite(Number(row.branchQty)) ? Number(row.branchQty) : null
-      const delta = branchNum != null ? actual - branchNum : actual
+      let deltaDisplay = actualDisplay
+      if (branchTon !== null && v) {
+        const branchDisp = displayTonKhoNumber(branchTon, v)
+        if (branchDisp != null && Number.isFinite(branchDisp)) deltaDisplay = actualDisplay - branchDisp
+      }
       lines.push({
         variantId: row.variantId,
         productName: row.productName || '—',
         productCode: row.productCode || '—',
         unitLabel: row.unitLabel || '—',
-        branchQty: branchNum,
-        actualQty: actual,
-        deltaQty: delta,
+        branchQty: branchTon,
+        actualQty: actualDisplay,
+        deltaQty: deltaDisplay,
         reason: String(row.reasonDraft ?? '').trim() || '—',
         note: String(row.noteDraft ?? '').trim(),
       })
-      nextProducts = applyProductDataToCatalog(nextProducts, {
-        type: 'patch_variant',
-        variantId: row.variantId,
-        patch: { stockQty: actual },
-      })
     }
-    if (lines.length === 0) {
-      window.alert('Thêm ít nhất một dòng và nhập «Tồn thực tế» (số đếm được) cho dòng đó.')
-      return
+    for (const [maGoc, baseTon] of baseTonByMaGoc) {
+      const sibs = collectSiblingVariantIds(nextProducts, maGoc)
+      if (sibs.length === 0) {
+        window.alert(
+          `Không tìm thấy mã anh em trong danh mục cho «${maGoc}». Kiểm tra ma_hàng / ma_hh_lien_quan.`
+        )
+        return
+      }
+      for (const sid of sibs) {
+        const id = String(sid)
+        variantsToTouch.add(id)
+        nextProducts = applyProductDataToCatalog(nextProducts, {
+          type: 'patch_variant',
+          variantId: id,
+          patch: { stockQty: baseTon },
+        })
+      }
     }
+
     setSaving(true)
     try {
-      const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+      const flat = flattenDisplayCatalogToVariants(nextProducts)
+      const tonKhoOnlyVariants = flat.filter((v) => variantsToTouch.has(String(v.id)))
+      const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName, {
+        tonKhoOnlyVariants,
+      })
       if (!persistResult.ok) return
+      if (isSupabaseConfigured() && variantsToTouch.size > 0) {
+        const logRows = buildStockAdjustInventoryLogRows(products, nextProducts, variantsToTouch, {
+          transactionType: 'Điều chỉnh',
+          documentCode: 'Sửa thủ công',
+          staffName: stockCheckStaffNameForLog(),
+        })
+        void insertInventoryLogRows(logRows)
+      }
       const prev = loadStockCheckVouchers()
       const voucher = createHoanThanhStockCheckVoucher(prev, {
         createdBy: creatorLabel(),
@@ -513,7 +609,9 @@ export default function StockCheckCreatePage() {
                           inputMode="decimal"
                         />
                       </td>
-                      <td className="cac-num scc-delta-cell">{deltaLabel(row.branchQty, row.actualDraft)}</td>
+                      <td className="cac-num scc-delta-cell">
+                        {deltaLabelDisplay(row.branchQty, row.actualDraft, vDisp ?? undefined)}
+                      </td>
                       <td>
                         <input
                           className="cac-in scc-in-text"

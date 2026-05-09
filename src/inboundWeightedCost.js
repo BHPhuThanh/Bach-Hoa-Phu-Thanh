@@ -151,8 +151,6 @@ function parseGroupServerSnapshot(primaryMember, members, serverByMaHang) {
 
 function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
   const m = new Map()
-  const byVariant = new Map()
-  const byVariantEnteredUnitPrice = new Map()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
     const q = inboundLineReturnableQtyForCost(ln)
@@ -167,17 +165,8 @@ function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
     const baseQty = q * conv
     const prev = m.get(root) || { qty: 0, net: 0 }
     m.set(root, { qty: prev.qty + baseQty, net: prev.net + net })
-
-    const pv = byVariant.get(ln.variantId) || { qty: 0, net: 0 }
-    byVariant.set(ln.variantId, { qty: pv.qty + q, net: pv.net + net })
-
-    const pu = byVariantEnteredUnitPrice.get(ln.variantId) || { qty: 0, sum: 0 }
-    byVariantEnteredUnitPrice.set(ln.variantId, {
-      qty: pu.qty + q,
-      sum: pu.sum + q * Math.max(0, parseMoneyVi(raw?.unitPrice ?? ln.unitPrice)),
-    })
   }
-  return { byRoot: m, byVariant, byVariantEnteredUnitPrice }
+  return { byRoot: m }
 }
 
 /**
@@ -248,7 +237,7 @@ export function computeInboundFulfillmentPlan(
   const aggNew = aggregateInboundPurchaseByGroupRoot(inboundFormLines, byVid, serverByMaHang)
   const aggOld = priorOrderLines?.length
     ? aggregateInboundPurchaseByGroupRoot(priorOrderLines, byVid, serverByMaHang)
-    : { byRoot: new Map(), byVariant: new Map(), byVariantEnteredUnitPrice: new Map() }
+    : { byRoot: new Map() }
 
   const keys = new Set([...aggNew.byRoot.keys(), ...aggOld.byRoot.keys()])
   const diffs = []
@@ -302,32 +291,17 @@ export function computeInboundFulfillmentPlan(
       inboundBaseUnitCost
     )
 
-    const keepExactInboundCostByVariantId = new Map()
-    for (const [vid, nn] of aggNew.byVariant.entries()) {
-      const oo = aggOld.byVariant.get(vid) || { qty: 0, net: 0 }
-      const dq = (Number(nn.qty) || 0) - (Number(oo.qty) || 0)
-      const dm = (Number(nn.net) || 0) - (Number(oo.net) || 0)
-      if (dq <= 0) continue
-      const v = byVid.get(vid)
-      if (!v) continue
-      const r = lineGroupRootOfVariant(v)
-      if (r !== root) continue
-      const entered = aggNew.byVariantEnteredUnitPrice.get(vid)
-      const keep = entered?.qty > 0 ? entered.sum / entered.qty : dm / dq
-      keepExactInboundCostByVariantId.set(vid, keep)
-    }
-
     for (const member of members) {
       if (!member?.id) continue
       const memberSrv = serverByMaHang?.get(String(member.code || '').trim())
       const conv = conversionToBaseForVariant(member, memberSrv)
-      const keep = keepExactInboundCostByVariantId.get(member.id)
       patches.push({
         variantId: member.id,
         patch: {
           // Single source of truth: luôn lưu ton_kho theo đơn vị cơ bản cho mọi SKU cùng nhóm.
           stockQty: fixed4Number(newBaseQty),
-          cost: fixed4Number(keep != null ? keep : newBaseCost * conv),
+          // một giá vốn cơ bản cho họ — gia_von ĐVT = giá vốn cơ bản × quy_doi (không gán đè bằng đơn giá 0đ từng dòng nhập).
+          cost: fixed4Number(newBaseCost * conv),
         },
       })
     }

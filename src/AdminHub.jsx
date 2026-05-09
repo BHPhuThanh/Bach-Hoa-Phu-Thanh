@@ -118,6 +118,13 @@ import {
   saveCostAdjustVouchersToStore,
 } from './costAdjustStorage.js'
 import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
+import {
+  buildInboundInventoryLogRows,
+  fetchInventoryLogsByMaHang,
+  insertInventoryLogRows,
+  mapInventoryLogDbRowToDisplay,
+  staffNameForInventoryLog,
+} from './inventoryLogRepository.js'
 import './dashboard.css'
 import './dashboard-dark.css'
 import './adminHub.css'
@@ -1303,12 +1310,49 @@ export default function AdminHub({
   const [goodsDetailDraft, setGoodsDetailDraft] = useState(null)
   /** Tab phụ trong panel chi tiết hàng: Mô tả (form) / Lịch sử kho (thẻ kho). */
   const [goodsDetailShelfTab, setGoodsDetailShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
+  const [goodsSfInventoryRows, setGoodsSfInventoryRows] = useState([])
+  const [goodsSfInventoryLoading, setGoodsSfInventoryLoading] = useState(false)
+  const [goodsSfInventoryFetchErr, setGoodsSfInventoryFetchErr] = useState(false)
+  const [goodsInvLedgerDateFrom, setGoodsInvLedgerDateFrom] = useState('')
+  const [goodsInvLedgerDateTo, setGoodsInvLedgerDateTo] = useState('')
+  const [goodsInvLedgerDocSearch, setGoodsInvLedgerDocSearch] = useState('')
+  const [goodsInvLedgerDocDebounced, setGoodsInvLedgerDocDebounced] = useState('')
+  const [soloSfInventoryRows, setSoloSfInventoryRows] = useState([])
+  const [soloSfInventoryLoading, setSoloSfInventoryLoading] = useState(false)
+  const [soloSfInventoryFetchErr, setSoloSfInventoryFetchErr] = useState(false)
+  const [soloInvLedgerDateFrom, setSoloInvLedgerDateFrom] = useState('')
+  const [soloInvLedgerDateTo, setSoloInvLedgerDateTo] = useState('')
+  const [soloInvLedgerDocSearch, setSoloInvLedgerDocSearch] = useState('')
+  const [soloInvLedgerDocDebounced, setSoloInvLedgerDocDebounced] = useState('')
   /** Tăng mỗi lần Lưu thành công — dùng làm key + chạy animation toast 2s. */
   const [goodsSaveToastGen, setGoodsSaveToastGen] = useState(0)
 
   const [goodsNewModalOpen, setGoodsNewModalOpen] = useState(false)
   /** null | { mode: 'create' } | { mode: 'edit', product } */
   const [comboModal, setComboModal] = useState(null)
+
+  useEffect(() => {
+    const tid = window.setTimeout(
+      () => setGoodsInvLedgerDocDebounced(goodsInvLedgerDocSearch.trim()),
+      380
+    )
+    return () => window.clearTimeout(tid)
+  }, [goodsInvLedgerDocSearch])
+
+  useEffect(() => {
+    const tid = window.setTimeout(
+      () => setSoloInvLedgerDocDebounced(soloInvLedgerDocSearch.trim()),
+      380
+    )
+    return () => window.clearTimeout(tid)
+  }, [soloInvLedgerDocSearch])
+
+  useEffect(() => {
+    setGoodsInvLedgerDocSearch('')
+    setGoodsInvLedgerDocDebounced('')
+    setGoodsInvLedgerDateFrom('')
+    setGoodsInvLedgerDateTo('')
+  }, [goodsExpandedId, goodsDetailSelectedVid])
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
@@ -1765,6 +1809,13 @@ export default function AdminHub({
   ])
 
   const soloActiveVariantId = useMemo(() => parseSoloProductTabId(activeTab), [activeTab])
+
+  useEffect(() => {
+    setSoloInvLedgerDocSearch('')
+    setSoloInvLedgerDocDebounced('')
+    setSoloInvLedgerDateFrom('')
+    setSoloInvLedgerDateTo('')
+  }, [soloActiveVariantId])
 
   const soloGoodsCtx = useMemo(() => {
     if (!soloActiveVariantId) return null
@@ -3215,14 +3266,16 @@ export default function AdminHub({
    * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
    */
   const applyInboundFulfillmentPatches = useCallback(
-    async (patches) => {
+    async (patches, inventoryMetaForLog) => {
       const valid = (patches || []).filter(
         (p) => p && p.variantId != null && p.patch && typeof p.patch === 'object'
       )
       const n = valid.length
       if (n === 0) return { ok: true, updatedCount: 0 }
       if (typeof onBulkPatchCatalogVariants === 'function') {
-        const r = await onBulkPatchCatalogVariants(valid)
+        const r = await onBulkPatchCatalogVariants(valid, {
+          inboundInventoryMeta: inventoryMetaForLog,
+        })
         if (r?.ok) return { ok: true, updatedCount: r.updatedCount ?? n }
         return { ok: false, updatedCount: 0, error: r?.error || 'Không ghi được danh mục.' }
       }
@@ -3231,6 +3284,7 @@ export default function AdminHub({
       }
       const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
       const byVid = new Map(valid.map((p) => [p.variantId, p.patch]))
+      const prevProducts = prepareCatalogForPosSearch(buildDisplayCatalog(flat))
       const nextFlat = flat.map((v) =>
         byVid.has(v.id) ? { ...v, ...byVid.get(v.id) } : v
       )
@@ -3239,7 +3293,17 @@ export default function AdminHub({
         nextProducts,
         standaloneCatalog.fileName || ''
       )
-      if (persistRes?.ok) return { ok: true, updatedCount: n }
+      if (persistRes?.ok) {
+        if (inventoryMetaForLog?.documentCode && isSupabaseConfigured()) {
+          const logRows = buildInboundInventoryLogRows(prevProducts, nextProducts, valid, {
+            documentCode: inventoryMetaForLog.documentCode,
+            inboundOrderId: inventoryMetaForLog.inboundOrderId ?? '',
+            staffName: inventoryMetaForLog.staffName ?? staffNameForInventoryLog(),
+          })
+          void insertInventoryLogRows(logRows)
+        }
+        return { ok: true, updatedCount: n }
+      }
       return {
         ok: false,
         updatedCount: 0,
@@ -3255,7 +3319,10 @@ export default function AdminHub({
       const row = buildInboundOrderPayload('completed')
       setInboundCatalogBulkSaving(true)
       try {
-        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [])
+        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
+          documentCode: row.code,
+          inboundOrderId: row.id,
+        })
         if (!res?.ok) {
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return false
@@ -3288,7 +3355,10 @@ export default function AdminHub({
       })
       setInboundCatalogBulkSaving(true)
       try {
-        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [])
+        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
+          documentCode: merged.code,
+          inboundOrderId: merged.id,
+        })
         if (!res?.ok) {
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return false
@@ -3411,7 +3481,10 @@ export default function AdminHub({
       const oid = mergedRow.id
       setInboundCatalogBulkSaving(true)
       try {
-        const res = await applyInboundFulfillmentPatches(patches)
+        const res = await applyInboundFulfillmentPatches(patches, {
+          documentCode: mergedRow.code,
+          inboundOrderId: mergedRow.id,
+        })
         if (!res?.ok) {
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return
@@ -3850,7 +3923,10 @@ export default function AdminHub({
       }
       setInboundCatalogBulkSaving(true)
       try {
-        const res = await applyInboundFulfillmentPatches(patches)
+        const res = await applyInboundFulfillmentPatches(patches, {
+          documentCode: merged.code,
+          inboundOrderId: merged.id,
+        })
         if (!res?.ok) {
           window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
           return
@@ -3946,6 +4022,56 @@ export default function AdminHub({
     })
     setActiveTab(toPosOrderDetailTabId(oid))
   }, [])
+
+  const handleInventoryLedgerDocActivate = useCallback(
+    (row) => {
+      if (!row || row.inventoryNavSource !== 'supabase') return
+      const doc = String(row.docNo ?? '').trim()
+      const posOid = String(row.pos_order_id ?? '').trim()
+      const inbOid = String(row.inbound_order_id ?? '').trim()
+      setSelected(null)
+      if (posOid) {
+        const o = orders.find((x) => String(x.id) === posOid)
+        if (o) {
+          syncHubUrlToMainTab(TAB_ORDERS)
+          openPosDetailTab(o)
+        } else {
+          window.alert('Không tìm thấy đơn bán (Hóa đơn) tương ứng chứng từ này.')
+        }
+        return
+      }
+      if (inbOid) {
+        const rRow = inboundOrders.find((x) => String(x.id) === inbOid)
+        if (rRow) {
+          syncHubUrlToMainTab(TAB_INBOUND)
+          openInboundDetailTab(rRow)
+        } else {
+          window.alert('Không tìm thấy phiếu nhập tương ứng chứng từ này.')
+        }
+        return
+      }
+      if (/^HD/i.test(doc)) {
+        const o = orders.find(
+          (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
+        )
+        if (o) {
+          syncHubUrlToMainTab(TAB_ORDERS)
+          openPosDetailTab(o)
+        } else window.alert('Không tìm thấy đơn bán (Hóa đơn) tương ứng chứng từ này.')
+        return
+      }
+      if (/^(NH|PN)/i.test(doc)) {
+        const rRow = inboundOrders.find(
+          (x) => String(x.code ?? '').trim().toUpperCase() === doc.toUpperCase()
+        )
+        if (rRow) {
+          syncHubUrlToMainTab(TAB_INBOUND)
+          openInboundDetailTab(rRow)
+        } else window.alert('Không tìm thấy phiếu nhập tương ứng chứng từ này.')
+      }
+    },
+    [orders, inboundOrders, openPosDetailTab, openInboundDetailTab, syncHubUrlToMainTab]
+  )
 
   const [soloGoodsUiTab, setSoloGoodsUiTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   useEffect(() => {
@@ -4068,6 +4194,129 @@ export default function AdminHub({
     returnDayLedger,
   ])
 
+  useEffect(() => {
+    const ma = String(goodsDetailVariant?.code ?? '').trim()
+    const want =
+      activeTab === TAB_GOODS &&
+      Boolean(goodsExpandedId) &&
+      Boolean(ma) &&
+      (goodsDetailShelfTab === GOODS_DETAIL_VIEW_TONKHO ||
+        goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU)
+    if (!want || !isSupabaseConfigured()) {
+      setGoodsSfInventoryRows([])
+      setGoodsSfInventoryLoading(false)
+      setGoodsSfInventoryFetchErr(false)
+      return undefined
+    }
+    let cancelled = false
+    setGoodsSfInventoryLoading(true)
+    fetchInventoryLogsByMaHang(ma, {
+      limit: 200,
+      dateFrom: goodsInvLedgerDateFrom,
+      dateTo: goodsInvLedgerDateTo,
+      documentSearch: goodsInvLedgerDocDebounced,
+    }).then((r) => {
+      if (cancelled) return
+      setGoodsSfInventoryLoading(false)
+      if (r.ok) {
+        setGoodsSfInventoryRows(r.rows)
+        setGoodsSfInventoryFetchErr(false)
+      } else {
+        setGoodsSfInventoryRows([])
+        setGoodsSfInventoryFetchErr(true)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeTab,
+    goodsExpandedId,
+    goodsDetailVariant?.code,
+    goodsDetailShelfTab,
+    goodsSaveToastGen,
+    goodsInvLedgerDateFrom,
+    goodsInvLedgerDateTo,
+    goodsInvLedgerDocDebounced,
+  ])
+
+  useEffect(() => {
+    const ma = String(soloGoodsVariant?.code ?? '').trim()
+    const want =
+      isSoloProductTabId(activeTab) &&
+      Boolean(ma) &&
+      (soloGoodsUiTab === GOODS_DETAIL_VIEW_TONKHO || soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU)
+    if (!want || !isSupabaseConfigured()) {
+      setSoloSfInventoryRows([])
+      setSoloSfInventoryLoading(false)
+      setSoloSfInventoryFetchErr(false)
+      return undefined
+    }
+    let cancelled = false
+    setSoloSfInventoryLoading(true)
+    fetchInventoryLogsByMaHang(ma, {
+      limit: 200,
+      dateFrom: soloInvLedgerDateFrom,
+      dateTo: soloInvLedgerDateTo,
+      documentSearch: soloInvLedgerDocDebounced,
+    }).then((r) => {
+      if (cancelled) return
+      setSoloSfInventoryLoading(false)
+      if (r.ok) {
+        setSoloSfInventoryRows(r.rows)
+        setSoloSfInventoryFetchErr(false)
+      } else {
+        setSoloSfInventoryRows([])
+        setSoloSfInventoryFetchErr(true)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeTab,
+    soloActiveVariantId,
+    soloGoodsVariant?.code,
+    soloGoodsUiTab,
+    goodsSaveToastGen,
+    soloInvLedgerDateFrom,
+    soloInvLedgerDateTo,
+    soloInvLedgerDocDebounced,
+  ])
+
+  const goodsMergedInventoryLedgerRows = useMemo(() => {
+    if (!isSupabaseConfigured() || goodsSfInventoryFetchErr)
+      return { mode: 'legacy', rows: goodsDetailStockLedgerRows }
+    if (goodsSfInventoryLoading && goodsSfInventoryRows.length === 0)
+      return { mode: 'loading', rows: [] }
+    const mapped = (goodsSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
+    return { mode: 'supabase', rows: mapped }
+  }, [
+    goodsSfInventoryRows,
+    goodsSfInventoryLoading,
+    goodsSfInventoryFetchErr,
+    goodsDetailStockLedgerRows,
+  ])
+
+  const soloMergedInventoryLedgerRows = useMemo(() => {
+    if (!isSupabaseConfigured() || soloSfInventoryFetchErr)
+      return { mode: 'legacy', rows: soloStockLedgerRows }
+    if (soloSfInventoryLoading && soloSfInventoryRows.length === 0)
+      return { mode: 'loading', rows: [] }
+    const mapped = (soloSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
+    return { mode: 'supabase', rows: mapped }
+  }, [soloSfInventoryRows, soloSfInventoryLoading, soloSfInventoryFetchErr, soloStockLedgerRows])
+
+  const goodsInventoryPreviewRows = useMemo(() => {
+    const r = goodsMergedInventoryLedgerRows.rows
+    return Array.isArray(r) ? r.slice(0, 8) : []
+  }, [goodsMergedInventoryLedgerRows.rows])
+
+  const soloInventoryPreviewRows = useMemo(() => {
+    const r = soloMergedInventoryLedgerRows.rows
+    return Array.isArray(r) ? r.slice(0, 8) : []
+  }, [soloMergedInventoryLedgerRows.rows])
+
   const goodsExpandedBelowSlot = useMemo(() => {
     if (!goodsExpandedId || !goodsDetailCtx || !goodsDetailVariant || !goodsDetailDraft) return null
     return (
@@ -4089,7 +4338,15 @@ export default function AdminHub({
         copyGoodsDetail={copyGoodsDetail}
         deleteGoodsDetailVariant={deleteGoodsDetailVariant}
         formatMoneyDraftVi={formatMoneyDraftVi}
-        goodsDetailStockLedgerRows={goodsDetailStockLedgerRows}
+        goodsStockLedgerMerged={goodsMergedInventoryLedgerRows}
+        goodsInventoryPreviewRows={goodsInventoryPreviewRows}
+        goodsInvLedgerDateFrom={goodsInvLedgerDateFrom}
+        goodsInvLedgerDateTo={goodsInvLedgerDateTo}
+        goodsInvLedgerDocumentSearch={goodsInvLedgerDocSearch}
+        onGoodsInvLedgerDateFromChange={setGoodsInvLedgerDateFrom}
+        onGoodsInvLedgerDateToChange={setGoodsInvLedgerDateTo}
+        onGoodsInvLedgerDocumentSearchChange={setGoodsInvLedgerDocSearch}
+        onInventoryDocumentActivate={handleInventoryLedgerDocActivate}
         getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
         openGoodsUnitModal={openGoodsUnitModal}
         catalogList={catalogList}
@@ -4111,12 +4368,18 @@ export default function AdminHub({
     goodsDetailDraft,
     goodsDetailShelfTab,
     goodsDetailSelectedVid,
-    goodsDetailStockLedgerRows,
+    goodsMergedInventoryLedgerRows,
+    goodsInventoryPreviewRows,
+    goodsInvLedgerDateFrom,
+    goodsInvLedgerDateTo,
+    goodsInvLedgerDocSearch,
+    handleInventoryLedgerDocActivate,
     discardGoodsDetailDraft,
     saveGoodsDetail,
     setGoodsDetailShelfTab,
     setGoodsDetailSelectedVid,
     setGoodsDetailDraft,
+    buildGoodsDetailDraft,
     copyGoodsDetail,
     deleteGoodsDetailVariant,
     openGoodsUnitModal,
@@ -6367,44 +6630,155 @@ export default function AdminHub({
                       + Thêm đơn vị tính
                     </button>
                   </div>
+                  {soloInventoryPreviewRows?.length ? (
+                    <div
+                      className="ah-goods-inventory-movement-preview ah-goods-inventory-movement-preview--solo"
+                      aria-label="Lịch sử biến động kho — xem trước"
+                    >
+                      <h4 className="ah-goods-inventory-movement-preview__title">Lịch sử biến động</h4>
+                      <p className="admin-hub-muted ah-goods-inventory-movement-preview__hint">
+                        Tóm tắt gần nhất — đầy đủ trong tab «Lịch sử kho». Bấm mã (HD… / PN…) để mở chứng từ.
+                      </p>
+                      <div className="admin-hub-table-wrap">
+                        <table className="admin-hub-table ah-solo-stock-table">
+                          <thead>
+                            <tr>
+                              <th>Ngày</th>
+                              <th>Nhân viên</th>
+                              <th>Thao tác</th>
+                              <th className="ah-num">Số lượng</th>
+                              <th className="ah-num">Tồn kho</th>
+                              <th>Mã chứng từ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {soloInventoryPreviewRows.map((pr) => (
+                              <tr key={`spv-${pr.key}`}>
+                                <td className="ah-solo-stock-cell-time">{pr.dateLabel}</td>
+                                <td>{pr.staffNameLabel ?? pr.staff}</td>
+                                <td>{pr.transactionTypeLabel ?? pr.action}</td>
+                                <td
+                                  className={`ah-num${
+                                    pr.delta > 0
+                                      ? ' ah-solo-stock-delta--pos'
+                                      : pr.delta < 0
+                                        ? ' ah-solo-stock-delta--neg'
+                                        : ''
+                                  }`}
+                                >
+                                  {pr.qtyLabel ?? pr.deltaLabel}
+                                </td>
+                                <td className="ah-num">{pr.stockAfterLabel ?? pr.balanceLabel}</td>
+                                <td onClick={(e) => e.stopPropagation()}>
+                                  {pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable ? (
+                                    <button
+                                      type="button"
+                                      className="ah-solo-stock-doc-link"
+                                      onClick={() => handleInventoryLedgerDocActivate(pr)}
+                                    >
+                                      {pr.docNo}
+                                    </button>
+                                  ) : (
+                                    pr.docNo
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
               )}
               {soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU && (
                 <div className="ah-solo-product-stock-panel">
                   <p className="admin-hub-muted ah-solo-stock-lead">
-                    Thẻ kho — tổng biến động được căn về <strong>tồn kho hiện tại</strong> trên danh mục. Bấm mã chứng
-                    từ để mở chi tiết đơn trong <strong>tab trình duyệt mới</strong>.
+                    Dữ liệu từ <strong>Supabase</strong> (mới nhất trước) khi có cấu hình; nếu không, dùng biến động ước
+                    tính cục bộ. Đơn bán (HD…) / phiếu nhập (PN…) — bấm mã để xem chứng từ trong Hub.
                   </p>
+                  <div className="ah-inv-ledger-filter-bar">
+                    <div className="ah-inv-ledger-filter-field">
+                      <label className="ah-inv-ledger-filter-lbl" htmlFor="ah-solo-inv-from">
+                        Từ ngày
+                      </label>
+                      <input
+                        id="ah-solo-inv-from"
+                        type="date"
+                        className="ah-goods-card-input ah-inv-ledger-filter-input"
+                        value={soloInvLedgerDateFrom}
+                        onChange={(e) => setSoloInvLedgerDateFrom(e.target.value)}
+                      />
+                    </div>
+                    <div className="ah-inv-ledger-filter-field">
+                      <label className="ah-inv-ledger-filter-lbl" htmlFor="ah-solo-inv-to">
+                        Đến ngày
+                      </label>
+                      <input
+                        id="ah-solo-inv-to"
+                        type="date"
+                        className="ah-goods-card-input ah-inv-ledger-filter-input"
+                        value={soloInvLedgerDateTo}
+                        onChange={(e) => setSoloInvLedgerDateTo(e.target.value)}
+                      />
+                    </div>
+                    <div className="ah-inv-ledger-filter-field ah-inv-ledger-filter-field--grow">
+                      <label className="ah-inv-ledger-filter-lbl" htmlFor="ah-solo-inv-doc">
+                        Mã chứng từ
+                      </label>
+                      <input
+                        id="ah-solo-inv-doc"
+                        type="search"
+                        className="ah-goods-card-input ah-inv-ledger-filter-input"
+                        placeholder="Tìm HD…, PN…"
+                        value={soloInvLedgerDocSearch}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(e) => setSoloInvLedgerDocSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <div className="admin-hub-table-wrap ah-solo-stock-table-wrap">
                     <table className="admin-hub-table ah-solo-stock-table">
                       <thead>
                         <tr>
-                          <th>Ngày ghi nhận</th>
+                          <th>Ngày</th>
                           <th>Nhân viên</th>
                           <th>Thao tác</th>
-                          <th className="ah-num">Số lượng thay đổi</th>
+                          <th className="ah-num">Số lượng</th>
                           <th className="ah-num">Tồn kho</th>
                           <th>Mã chứng từ</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {soloStockLedgerRows.length === 0 ? (
+                        {soloMergedInventoryLedgerRows.mode === 'loading' ? (
                           <tr>
                             <td colSpan={6} className="admin-hub-muted">
-                              Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).
+                              Đang tải nhật ký từ Supabase…
+                            </td>
+                          </tr>
+                        ) : soloMergedInventoryLedgerRows.rows?.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="admin-hub-muted">
+                              {soloMergedInventoryLedgerRows.mode === 'legacy'
+                                ? 'Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).'
+                                : 'Chưa có dòng nào trên máy chủ — thực hiện giao dịch sau khi bật nhật ký để đổ dữ liệu.'}
                             </td>
                           </tr>
                         ) : (
-                          soloStockLedgerRows.map((row) => {
-                            const detailUrl = row.docLink
-                              ? getStockLedgerDetailAbsoluteUrl(row.docLink)
-                              : ''
+                          soloMergedInventoryLedgerRows.rows.map((row) => {
+                            const detailUrl =
+                              row.inventoryNavSource === 'supabase'
+                                ? ''
+                                : row.docLink
+                                  ? getStockLedgerDetailAbsoluteUrl(row.docLink)
+                                  : ''
                             return (
                               <tr key={row.key}>
                                 <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
-                                <td>{row.staff}</td>
-                                <td>{row.action}</td>
+                                <td>{row.staffNameLabel ?? row.staff}</td>
+                                <td>{row.transactionTypeLabel ?? row.action}</td>
                                 <td
                                   className={`ah-num${
                                     row.delta > 0
@@ -6414,9 +6788,9 @@ export default function AdminHub({
                                         : ''
                                   }`}
                                 >
-                                  {row.deltaLabel}
+                                  {row.qtyLabel ?? row.deltaLabel}
                                 </td>
-                                <td className="ah-num">{row.balanceLabel}</td>
+                                <td className="ah-num">{row.stockAfterLabel ?? row.balanceLabel}</td>
                                 <td onClick={(e) => e.stopPropagation()}>
                                   {detailUrl ? (
                                     <a
@@ -6431,6 +6805,14 @@ export default function AdminHub({
                                     >
                                       {row.docNo}
                                     </a>
+                                  ) : row.inventoryNavSource === 'supabase' && row.inventoryDocClickable ? (
+                                    <button
+                                      type="button"
+                                      className="ah-solo-stock-doc-link"
+                                      onClick={() => handleInventoryLedgerDocActivate(row)}
+                                    >
+                                      {row.docNo}
+                                    </button>
                                   ) : (
                                     row.docNo
                                   )}

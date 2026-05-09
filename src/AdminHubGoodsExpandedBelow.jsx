@@ -24,7 +24,15 @@ export function AdminHubGoodsExpandedBelow(props) {
     copyGoodsDetail,
     deleteGoodsDetailVariant,
     formatMoneyDraftVi,
-    goodsDetailStockLedgerRows,
+    goodsStockLedgerMerged = { mode: 'legacy', rows: [] },
+    goodsInventoryPreviewRows = [],
+    goodsInvLedgerDateFrom = '',
+    goodsInvLedgerDateTo = '',
+    goodsInvLedgerDocumentSearch = '',
+    onGoodsInvLedgerDateFromChange,
+    onGoodsInvLedgerDateToChange,
+    onGoodsInvLedgerDocumentSearchChange,
+    onInventoryDocumentActivate,
     getStockLedgerDetailAbsoluteUrl,
     openGoodsUnitModal,
     catalogList,
@@ -34,6 +42,14 @@ export function AdminHubGoodsExpandedBelow(props) {
     goodsBrandAutocompleteOptions = [],
     onRequestAddSupplier,
   } = props
+  const glMerged = goodsStockLedgerMerged || { mode: 'legacy', rows: [] }
+  const glRows = Array.isArray(glMerged.rows) ? glMerged.rows : []
+  const glLoading = glMerged.mode === 'loading'
+  const glLegacyEmptyMsg =
+    glMerged.mode === 'legacy'
+      ? 'Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).'
+      : 'Chưa có dòng nào trên máy chủ — thực hiện giao dịch sau khi bật Supabase nhật ký kho để đổ dữ liệu.'
+
   return (
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
                                 <div className="ah-goods-detail-panel ah-goods-detail-panel--card">
@@ -551,6 +567,62 @@ export function AdminHubGoodsExpandedBelow(props) {
                                               + Thêm đơn vị tính
                                             </button>
                                           </div>
+                                          {goodsInventoryPreviewRows?.length ? (
+                                            <div
+                                              className="ah-goods-inventory-movement-preview"
+                                              onClick={(e) => e.stopPropagation()}
+                                              role="region"
+                                              aria-label="Lịch sử biến động kho — xem trước"
+                                            >
+                                              <h4 className="ah-goods-inventory-movement-preview__title">
+                                                Lịch sử biến động
+                                              </h4>
+                                              <p className="admin-hub-muted ah-goods-inventory-movement-preview__hint">
+                                                Tóm tắt gần nhất — đầy đủ trong tab «Lịch sử kho». Bấm mã chứng từ (HD… /
+                                                PN…) để xem chứng từ trong Hub.
+                                              </p>
+                                              <div className="admin-hub-table-wrap">
+                                                <table className="admin-hub-table ah-solo-stock-table">
+                                                  <thead>
+                                                    <tr>
+                                                      <th>Ngày</th>
+                                                      <th>Nhân viên</th>
+                                                      <th>Thao tác</th>
+                                                      <th className="ah-num">Số lượng</th>
+                                                      <th className="ah-num">Tồn kho</th>
+                                                      <th>Mã chứng từ</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody>
+                                                    {goodsInventoryPreviewRows.map((pr) => (
+                                                      <tr key={`pv-${pr.key}`}>
+                                                        <td className="ah-solo-stock-cell-time">{pr.dateLabel}</td>
+                                                        <td>{pr.staffNameLabel ?? pr.staff}</td>
+                                                        <td>{pr.transactionTypeLabel ?? pr.action}</td>
+                                                        <td className={`ah-num${pr.delta > 0 ? ' ah-solo-stock-delta--pos' : pr.delta < 0 ? ' ah-solo-stock-delta--neg' : ''}`}>
+                                                          {pr.qtyLabel ?? pr.deltaLabel}
+                                                        </td>
+                                                        <td className="ah-num">{pr.stockAfterLabel ?? pr.balanceLabel}</td>
+                                                        <td onClick={(e) => e.stopPropagation()}>
+                                                          {pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable ? (
+                                                            <button
+                                                              type="button"
+                                                              className="ah-solo-stock-doc-link"
+                                                              onClick={() => onInventoryDocumentActivate?.(pr)}
+                                                            >
+                                                              {pr.docNo}
+                                                            </button>
+                                                          ) : (
+                                                            pr.docNo
+                                                          )}
+                                                        </td>
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            </div>
+                                          ) : null}
                                         </div>
                                       ) : (
                                         <div className="ah-goods-card-body ah-goods-card-body--loading ah-goods-card-body--below-tabs">
@@ -561,6 +633,55 @@ export function AdminHubGoodsExpandedBelow(props) {
                                     )}
                                     {goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU && (
                                       <div className="ah-goods-card-stock-wrap">
+                                        <div
+                                          className="ah-inv-ledger-filter-bar"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <div className="ah-inv-ledger-filter-field">
+                                            <label className="ah-inv-ledger-filter-lbl" htmlFor="ah-goods-inv-from">
+                                              Từ ngày
+                                            </label>
+                                            <input
+                                              id="ah-goods-inv-from"
+                                              type="date"
+                                              className="ah-goods-card-input ah-inv-ledger-filter-input"
+                                              value={goodsInvLedgerDateFrom}
+                                              onChange={(e) => onGoodsInvLedgerDateFromChange?.(e.target.value)}
+                                            />
+                                          </div>
+                                          <div className="ah-inv-ledger-filter-field">
+                                            <label className="ah-inv-ledger-filter-lbl" htmlFor="ah-goods-inv-to">
+                                              Đến ngày
+                                            </label>
+                                            <input
+                                              id="ah-goods-inv-to"
+                                              type="date"
+                                              className="ah-goods-card-input ah-inv-ledger-filter-input"
+                                              value={goodsInvLedgerDateTo}
+                                              onChange={(e) => onGoodsInvLedgerDateToChange?.(e.target.value)}
+                                            />
+                                          </div>
+                                          <div className="ah-inv-ledger-filter-field ah-inv-ledger-filter-field--grow">
+                                            <label
+                                              className="ah-inv-ledger-filter-lbl"
+                                              htmlFor="ah-goods-inv-doc"
+                                            >
+                                              Mã chứng từ
+                                            </label>
+                                            <input
+                                              id="ah-goods-inv-doc"
+                                              type="search"
+                                              className="ah-goods-card-input ah-inv-ledger-filter-input"
+                                              placeholder="Tìm HD…, PN…"
+                                              value={goodsInvLedgerDocumentSearch}
+                                              autoComplete="off"
+                                              spellCheck={false}
+                                              onChange={(e) =>
+                                                onGoodsInvLedgerDocumentSearchChange?.(e.target.value)
+                                              }
+                                            />
+                                          </div>
+                                        </div>
                                         <div className="admin-hub-table-wrap ah-solo-stock-table-wrap">
                                           <table className="admin-hub-table ah-solo-stock-table">
                                             <thead>
@@ -568,29 +689,37 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                 <th>Ngày</th>
                                                 <th>Nhân viên</th>
                                                 <th>Thao tác</th>
-                                                <th className="ah-num">± Số lượng</th>
+                                                <th className="ah-num">Số lượng</th>
                                                 <th className="ah-num">Tồn kho</th>
                                                 <th>Mã chứng từ</th>
                                               </tr>
                                             </thead>
                                             <tbody>
-                                              {goodsDetailStockLedgerRows.length === 0 ? (
+                                              {glLoading ? (
                                                 <tr>
                                                   <td colSpan={6} className="admin-hub-muted">
-                                                    Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán /
-                                                    nhập / hoàn trả).
+                                                    Đang tải nhật ký từ Supabase…
+                                                  </td>
+                                                </tr>
+                                              ) : glRows.length === 0 ? (
+                                                <tr>
+                                                  <td colSpan={6} className="admin-hub-muted">
+                                                    {glLegacyEmptyMsg}
                                                   </td>
                                                 </tr>
                                               ) : (
-                                                goodsDetailStockLedgerRows.map((row) => {
-                                                  const detailUrl = row.docLink
-                                                    ? getStockLedgerDetailAbsoluteUrl(row.docLink)
-                                                    : ''
+                                                glRows.map((row) => {
+                                                  const detailUrl =
+                                                    row.inventoryNavSource === 'supabase'
+                                                      ? ''
+                                                      : row.docLink
+                                                        ? getStockLedgerDetailAbsoluteUrl(row.docLink)
+                                                        : ''
                                                   return (
                                                     <tr key={row.key}>
                                                       <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
-                                                      <td>{row.staff}</td>
-                                                      <td>{row.action}</td>
+                                                      <td>{row.staffNameLabel ?? row.staff}</td>
+                                                      <td>{row.transactionTypeLabel ?? row.action}</td>
                                                       <td
                                                         className={`ah-num${
                                                           row.delta > 0
@@ -600,9 +729,9 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                               : ''
                                                         }`}
                                                       >
-                                                        {row.deltaLabel}
+                                                        {row.qtyLabel ?? row.deltaLabel}
                                                       </td>
-                                                      <td className="ah-num">{row.balanceLabel}</td>
+                                                      <td className="ah-num">{row.stockAfterLabel ?? row.balanceLabel}</td>
                                                       <td onClick={(e) => e.stopPropagation()}>
                                                         {detailUrl ? (
                                                           <a
@@ -617,6 +746,15 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                           >
                                                             {row.docNo}
                                                           </a>
+                                                        ) : row.inventoryNavSource === 'supabase' &&
+                                                          row.inventoryDocClickable ? (
+                                                          <button
+                                                            type="button"
+                                                            className="ah-solo-stock-doc-link"
+                                                            onClick={() => onInventoryDocumentActivate?.(row)}
+                                                          >
+                                                            {row.docNo}
+                                                          </button>
                                                         ) : (
                                                           row.docNo
                                                         )}

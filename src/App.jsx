@@ -99,10 +99,18 @@ import {
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
+  insertInventoryLogRows,
+  buildPosSaleInventoryLogRows,
+  buildInboundInventoryLogRows,
+  buildStockAdjustInventoryLogRows,
+  staffNameForInventoryLog,
+} from './inventoryLogRepository.js'
+import {
   APP_NOTIFICATIONS_BUMP_EVENT,
   clearAppNotificationById,
   loadAppNotifications,
 } from './appNotificationsStorage.js'
+import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
 import {
   fetchCustomersFromSupabase,
   formatPostgrestErrorForUser,
@@ -2470,6 +2478,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   /** Snapshot danh mục cho nhập hàng bulk (persist await, tránh stale closure trong async). */
   const bulkCatalogProductsRef = useRef(products)
   bulkCatalogProductsRef.current = products
+  /** Sau persist thủ công / Hàng hóa — ghi nhật ký kho. */
+  const pendingInventoryManualLogRef = useRef(null)
   useEffect(() => {
     catalogStoreHydratedRef.current = catalogStoreHydrated
   }, [catalogStoreHydrated])
@@ -2708,6 +2718,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
+    pendingInventoryManualLogRef.current = null
+    const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
     setProducts((prev) => {
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
@@ -2715,6 +2727,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const stockRaw = patch?.stockQty
       const stockNum = Number(stockRaw)
       const shouldSyncSiblingStock = target && Number.isFinite(stockNum)
+
+      /** @type {string[]} */
+      let affectedIdsForLog = []
 
       if (shouldSyncSiblingStock) {
         const root = normalizeGroupRoot(
@@ -2743,14 +2758,46 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         for (const [vid, p] of patchById.entries()) {
           next = applyProductDataToCatalog(next, { type: 'patch_variant', variantId: vid, patch: p })
         }
+        affectedIdsForLog = [...patchById.keys()].map((id) => String(id))
       } else {
         next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
+        affectedIdsForLog = [String(variantId)]
       }
+
+      if (stockTouched && affectedIdsForLog.length) {
+        let any = false
+        const flatPrev = flattenDisplayCatalogToVariants(prev)
+        const flatNext = flattenDisplayCatalogToVariants(next)
+        for (const vid of affectedIdsForLog) {
+          const v0 = flatPrev.find((x) => String(x?.id) === vid)
+          const v1 = flatNext.find((x) => String(x?.id) === vid)
+          if (stockQtyMeaningfullyChanged(v0?.stockQty, v1?.stockQty)) {
+            any = true
+            break
+          }
+        }
+        if (any && isSupabaseConfigured()) {
+          pendingInventoryManualLogRef.current = { prev, next, ids: affectedIdsForLog }
+        }
+      }
+
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
         void (async () => {
           const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          if (r.ok) await applyServerCatalogAfterPersist()
+          if (r.ok) {
+            await applyServerCatalogAfterPersist()
+            const man = pendingInventoryManualLogRef.current
+            pendingInventoryManualLogRef.current = null
+            if (man && isSupabaseConfigured()) {
+              const rows = buildStockAdjustInventoryLogRows(man.prev, man.next, man.ids, {
+                staffName: staffNameForInventoryLog(),
+              })
+              void insertInventoryLogRows(rows)
+            }
+          } else {
+            pendingInventoryManualLogRef.current = null
+          }
         })()
       })
       return next
@@ -2759,9 +2806,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   /**
    * Nhập hàng — gộp nhiều biến thể (tồn + vốn); giá bán không đổi. Chỉ cập nhật React state sau khi persist thành công.
+   * @param {Array<{ variantId: string, patch: object }>} patches
+   * @param {{ inboundInventoryMeta?: { documentCode?: string, inboundOrderId?: string } }} [opts]
    * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
    */
-  const handleBulkPatchCatalogVariants = useCallback(async (patches) => {
+  const handleBulkPatchCatalogVariants = useCallback(async (patches, opts) => {
     const valid = (patches || []).filter(
       (e) => e && e.variantId != null && e.patch && typeof e.patch === 'object'
     )
@@ -2776,7 +2825,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
     }
 
-    let next = bulkCatalogProductsRef.current
+    const prev = bulkCatalogProductsRef.current
+    let next = prev
     for (const entry of valid) {
       next = applyProductDataToCatalog(next, {
         type: 'patch_variant',
@@ -2784,6 +2834,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         patch: entry.patch,
       })
     }
+
+    const ib = opts?.inboundInventoryMeta
 
     try {
       const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
@@ -2796,6 +2848,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       setProducts(next)
       await applyServerCatalogAfterPersist()
+      if (ib?.documentCode && isSupabaseConfigured()) {
+        const logRows = buildInboundInventoryLogRows(prev, next, valid, {
+          documentCode: ib.documentCode,
+          inboundOrderId: ib.inboundOrderId ?? '',
+          staffName: staffNameForInventoryLog(),
+        })
+        void insertInventoryLogRows(logRows)
+      }
       return { ok: true, updatedCount }
     } catch (e) {
       return {
@@ -4008,11 +4068,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
           void (async () => {
             const flat = flattenDisplayCatalogToVariants(next)
+            /* Tồn kho cơ bản (Base Stock) chung một số DB cho toàn họ ĐVT; PATCH Supabase không chia quy_doi — POS hiển thị chia sẵn. */
             const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
             const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
               tonKhoOnlyVariants,
             })
-            if (r.ok) await applyServerCatalogAfterPersist()
+            if (r.ok) {
+              await applyServerCatalogAfterPersist()
+              if (isSupabaseConfigured()) {
+                const invRows = buildPosSaleInventoryLogRows(prev, next, order, cartForStock)
+                void insertInventoryLogRows(invRows)
+              }
+            }
           })()
         })
         return next
