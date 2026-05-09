@@ -35,7 +35,7 @@ function localMidnightUtcIso(y, mZeroBased, day) {
 }
 
 function localEndOfDayUtcIso(y, mZeroBased, day) {
-  return new Date(y, mZeroBased, day, 23, 59, 59, 999).toISOString()
+  return new Date(y, mZeroBased, day, 23, 59, 59, 0).toISOString()
 }
 
 function parseYyyyMmDdToLocalIsoRangeEnds(ymd) {
@@ -231,7 +231,6 @@ export async function insertInventoryLogRows(rows) {
     .filter((row) => row && typeof row === 'object')
     .map((row) => {
       return {
-        created_at: row.created_at === undefined ? null : row.created_at,
         staff_name: row.staff_name === undefined ? null : row.staff_name,
         transaction_type: row.transaction_type === undefined ? null : row.transaction_type,
         change_qty: row.change_qty === undefined ? null : row.change_qty,
@@ -278,13 +277,16 @@ function formatStockAfterVi(n) {
   return x.toLocaleString('vi-VN', { maximumFractionDigits: 6 })
 }
 
-const INVENTORY_DT = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' })
-
 export function inventoryCreatedAtLabel(iso) {
   try {
     const d = iso ? new Date(iso) : null
     if (!d || Number.isNaN(d.getTime())) return '—'
-    return INVENTORY_DT.format(d)
+    const dd = String(d.getDate()).padStart(2, '0')
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const yyyy = String(d.getFullYear())
+    const hh = String(d.getHours()).padStart(2, '0')
+    const min = String(d.getMinutes()).padStart(2, '0')
+    return `${dd}/${mm}/${yyyy} ${hh}:${min}`
   } catch {
     return '—'
   }

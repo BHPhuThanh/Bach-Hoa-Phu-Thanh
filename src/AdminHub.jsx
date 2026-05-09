@@ -1296,6 +1296,20 @@ export default function AdminHub({
     [catalogList]
   )
 
+  const inventoryDateDefaults = useMemo(() => {
+    const now = new Date()
+    const toYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}`
+    const fromDate = new Date(now.getTime())
+    fromDate.setDate(fromDate.getDate() - 6)
+    const fromYmd = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(
+      2,
+      '0'
+    )}-${String(fromDate.getDate()).padStart(2, '0')}`
+    return { fromYmd, toYmd }
+  }, [])
+
   const [goodsBrandKey, setGoodsBrandKey] = useState('')
   const [goodsBrandOpen, setGoodsBrandOpen] = useState(false)
   const [goodsDatePreset, setGoodsDatePreset] = useState('')
@@ -1314,16 +1328,16 @@ export default function AdminHub({
   const [goodsSfInventoryRows, setGoodsSfInventoryRows] = useState([])
   const [goodsSfInventoryLoading, setGoodsSfInventoryLoading] = useState(false)
   const [goodsSfInventoryFetchErr, setGoodsSfInventoryFetchErr] = useState(false)
-  const [goodsInvLedgerDateFrom, setGoodsInvLedgerDateFrom] = useState('')
-  const [goodsInvLedgerDateTo, setGoodsInvLedgerDateTo] = useState('')
+  const [goodsInvLedgerDateFrom, setGoodsInvLedgerDateFrom] = useState(inventoryDateDefaults.fromYmd)
+  const [goodsInvLedgerDateTo, setGoodsInvLedgerDateTo] = useState(inventoryDateDefaults.toYmd)
   const [goodsInvLedgerDocSearch, setGoodsInvLedgerDocSearch] = useState('')
   const [goodsInvLedgerDocDebounced, setGoodsInvLedgerDocDebounced] = useState('')
   const [soloSfInventoryRows, setSoloSfInventoryRows] = useState([])
   const [soloSfInventoryLoading, setSoloSfInventoryLoading] = useState(false)
   const [soloSfInventoryFetchErr, setSoloSfInventoryFetchErr] = useState(false)
   const [inventoryLogRefreshTick, setInventoryLogRefreshTick] = useState(0)
-  const [soloInvLedgerDateFrom, setSoloInvLedgerDateFrom] = useState('')
-  const [soloInvLedgerDateTo, setSoloInvLedgerDateTo] = useState('')
+  const [soloInvLedgerDateFrom, setSoloInvLedgerDateFrom] = useState(inventoryDateDefaults.fromYmd)
+  const [soloInvLedgerDateTo, setSoloInvLedgerDateTo] = useState(inventoryDateDefaults.toYmd)
   const [soloInvLedgerDocSearch, setSoloInvLedgerDocSearch] = useState('')
   const [soloInvLedgerDocDebounced, setSoloInvLedgerDocDebounced] = useState('')
   useEffect(() => {
@@ -1358,9 +1372,9 @@ export default function AdminHub({
   useEffect(() => {
     setGoodsInvLedgerDocSearch('')
     setGoodsInvLedgerDocDebounced('')
-    setGoodsInvLedgerDateFrom('')
-    setGoodsInvLedgerDateTo('')
-  }, [goodsExpandedId, goodsDetailSelectedVid])
+    setGoodsInvLedgerDateFrom(inventoryDateDefaults.fromYmd)
+    setGoodsInvLedgerDateTo(inventoryDateDefaults.toYmd)
+  }, [goodsExpandedId, goodsDetailSelectedVid, inventoryDateDefaults])
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
@@ -1821,9 +1835,9 @@ export default function AdminHub({
   useEffect(() => {
     setSoloInvLedgerDocSearch('')
     setSoloInvLedgerDocDebounced('')
-    setSoloInvLedgerDateFrom('')
-    setSoloInvLedgerDateTo('')
-  }, [soloActiveVariantId])
+    setSoloInvLedgerDateFrom(inventoryDateDefaults.fromYmd)
+    setSoloInvLedgerDateTo(inventoryDateDefaults.toYmd)
+  }, [soloActiveVariantId, inventoryDateDefaults])
 
   const soloGoodsCtx = useMemo(() => {
     if (!soloActiveVariantId) return null
