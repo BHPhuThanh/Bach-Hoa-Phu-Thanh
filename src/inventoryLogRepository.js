@@ -16,6 +16,7 @@ import {
 } from './comboCatalog.js'
 
 export const INVENTORY_LOG_TABLE = 'inventory_log'
+export const INVENTORY_LOG_UPDATED_EVENT = 'inventory-log-updated'
 
 /** Tên nhân viên đang thao tác POS/Hub (không có auth SSO — mặc định chủ cửa hàng). */
 export function staffNameForInventoryLog() {
@@ -97,6 +98,7 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
         if (stockAfter == null) continue
         rows.push({
           ma_hang: ma,
+          ten_hang: String(hit.product?.name ?? hit.variant?.name ?? '').trim() || '—',
           transaction_type: 'Bán hàng',
           document_code: doc,
           change_qty: -q,
@@ -122,6 +124,7 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
     if (stockAfter == null) continue
     rows.push({
       ma_hang: ma,
+      ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
       transaction_type: 'Bán hàng',
       document_code: doc,
       change_qty: -dq,
@@ -164,6 +167,7 @@ export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches
     if (!ma) continue
     rows.push({
       ma_hang: ma,
+      ten_hang: String(v1.name ?? '').trim() || '—',
       transaction_type: 'Nhập hàng',
       document_code: doc,
       change_qty: n1 - n0,
@@ -214,6 +218,7 @@ export function buildStockAdjustInventoryLogRows(
     if (!ma) continue
     rows.push({
       ma_hang: ma,
+      ten_hang: String(v1.name ?? '').trim() || '—',
       transaction_type: transactionType,
       document_code: docCode,
       change_qty: b - a,
@@ -236,6 +241,9 @@ export async function insertInventoryLogRows(rows) {
     if (error) {
       console.warn('[inventory_log] insert:', error.message || error)
       return { ok: false, error }
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INVENTORY_LOG_UPDATED_EVENT))
     }
     return { ok: true }
   } catch (e) {
@@ -317,9 +325,6 @@ export function mapInventoryLogDbRowToDisplay(row) {
   }
 }
 
-const INVENTORY_LOG_SELECT_COLUMNS =
-  'id, created_at, ma_hang, transaction_type, document_code, change_qty, stock_after, staff_name, pos_order_id, inbound_order_id'
-
 /**
  * @param {string} maHangRaw
  * @param {number | object} limitOrOpts — số hoặc { limit?, dateFrom?, dateTo?, documentSearch? }
@@ -348,7 +353,7 @@ export async function fetchInventoryLogsByMaHang(maHangRaw, limitOrOpts = 200) {
   try {
     let q = sb
       .from(INVENTORY_LOG_TABLE)
-      .select(INVENTORY_LOG_SELECT_COLUMNS)
+      .select('*')
       .eq('ma_hang', ma)
 
     const rngFrom = dateFromStr ? parseYyyyMmDdToLocalIsoRangeEnds(dateFromStr) : null

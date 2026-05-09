@@ -121,6 +121,7 @@ import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
 import {
   buildInboundInventoryLogRows,
   fetchInventoryLogsByMaHang,
+  INVENTORY_LOG_UPDATED_EVENT,
   insertInventoryLogRows,
   mapInventoryLogDbRowToDisplay,
   staffNameForInventoryLog,
@@ -1320,10 +1321,17 @@ export default function AdminHub({
   const [soloSfInventoryRows, setSoloSfInventoryRows] = useState([])
   const [soloSfInventoryLoading, setSoloSfInventoryLoading] = useState(false)
   const [soloSfInventoryFetchErr, setSoloSfInventoryFetchErr] = useState(false)
+  const [inventoryLogRefreshTick, setInventoryLogRefreshTick] = useState(0)
   const [soloInvLedgerDateFrom, setSoloInvLedgerDateFrom] = useState('')
   const [soloInvLedgerDateTo, setSoloInvLedgerDateTo] = useState('')
   const [soloInvLedgerDocSearch, setSoloInvLedgerDocSearch] = useState('')
   const [soloInvLedgerDocDebounced, setSoloInvLedgerDocDebounced] = useState('')
+  useEffect(() => {
+    const onUpdated = () => setInventoryLogRefreshTick((x) => x + 1)
+    window.addEventListener(INVENTORY_LOG_UPDATED_EVENT, onUpdated)
+    return () => window.removeEventListener(INVENTORY_LOG_UPDATED_EVENT, onUpdated)
+  }, [])
+
   /** Tăng mỗi lần Lưu thành công — dùng làm key + chạy animation toast 2s. */
   const [goodsSaveToastGen, setGoodsSaveToastGen] = useState(0)
 
@@ -4235,6 +4243,7 @@ export default function AdminHub({
     goodsDetailVariant?.code,
     goodsDetailShelfTab,
     goodsSaveToastGen,
+    inventoryLogRefreshTick,
     goodsInvLedgerDateFrom,
     goodsInvLedgerDateTo,
     goodsInvLedgerDocDebounced,
@@ -4279,14 +4288,14 @@ export default function AdminHub({
     soloGoodsVariant?.code,
     soloGoodsUiTab,
     goodsSaveToastGen,
+    inventoryLogRefreshTick,
     soloInvLedgerDateFrom,
     soloInvLedgerDateTo,
     soloInvLedgerDocDebounced,
   ])
 
   const goodsMergedInventoryLedgerRows = useMemo(() => {
-    if (!isSupabaseConfigured() || goodsSfInventoryFetchErr)
-      return { mode: 'legacy', rows: goodsDetailStockLedgerRows }
+    if (!isSupabaseConfigured() || goodsSfInventoryFetchErr) return { mode: 'supabase', rows: [] }
     if (goodsSfInventoryLoading && goodsSfInventoryRows.length === 0)
       return { mode: 'loading', rows: [] }
     const mapped = (goodsSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
@@ -4295,17 +4304,15 @@ export default function AdminHub({
     goodsSfInventoryRows,
     goodsSfInventoryLoading,
     goodsSfInventoryFetchErr,
-    goodsDetailStockLedgerRows,
   ])
 
   const soloMergedInventoryLedgerRows = useMemo(() => {
-    if (!isSupabaseConfigured() || soloSfInventoryFetchErr)
-      return { mode: 'legacy', rows: soloStockLedgerRows }
+    if (!isSupabaseConfigured() || soloSfInventoryFetchErr) return { mode: 'supabase', rows: [] }
     if (soloSfInventoryLoading && soloSfInventoryRows.length === 0)
       return { mode: 'loading', rows: [] }
     const mapped = (soloSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
     return { mode: 'supabase', rows: mapped }
-  }, [soloSfInventoryRows, soloSfInventoryLoading, soloSfInventoryFetchErr, soloStockLedgerRows])
+  }, [soloSfInventoryRows, soloSfInventoryLoading, soloSfInventoryFetchErr])
 
   const goodsInventoryPreviewRows = useMemo(() => {
     const r = goodsMergedInventoryLedgerRows.rows
@@ -6761,9 +6768,7 @@ export default function AdminHub({
                         ) : soloMergedInventoryLedgerRows.rows?.length === 0 ? (
                           <tr>
                             <td colSpan={6} className="admin-hub-muted">
-                              {soloMergedInventoryLedgerRows.mode === 'legacy'
-                                ? 'Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).'
-                                : 'Chưa có dòng nào trên máy chủ — thực hiện giao dịch sau khi bật nhật ký để đổ dữ liệu.'}
+                              {'Chưa có dòng nào trên Supabase cho biến thể này.'}
                             </td>
                           </tr>
                         ) : (

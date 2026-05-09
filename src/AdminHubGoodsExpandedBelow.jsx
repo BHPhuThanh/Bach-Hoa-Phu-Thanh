@@ -45,10 +45,7 @@ export function AdminHubGoodsExpandedBelow(props) {
   const glMerged = goodsStockLedgerMerged || { mode: 'legacy', rows: [] }
   const glRows = Array.isArray(glMerged.rows) ? glMerged.rows : []
   const glLoading = glMerged.mode === 'loading'
-  const glLegacyEmptyMsg =
-    glMerged.mode === 'legacy'
-      ? 'Chưa có biến động kho ghi nhận cho biến thể này (hoặc chưa có đơn bán / nhập / hoàn trả).'
-      : 'Chưa có dòng nào trên máy chủ — thực hiện giao dịch sau khi bật Supabase nhật ký kho để đổ dữ liệu.'
+  const glLegacyEmptyMsg = 'Chưa có dòng nào trên Supabase cho biến thể này.'
 
   return (
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
