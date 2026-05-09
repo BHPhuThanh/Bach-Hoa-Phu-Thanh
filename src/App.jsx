@@ -2793,7 +2793,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               const rows = buildStockAdjustInventoryLogRows(man.prev, man.next, man.ids, {
                 staffName: staffNameForInventoryLog(),
               })
-              void insertInventoryLogRows(rows)
+              await insertInventoryLogRows(rows)
             }
           } else {
             pendingInventoryManualLogRef.current = null
@@ -2854,7 +2854,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           inboundOrderId: ib.inboundOrderId ?? '',
           staffName: staffNameForInventoryLog(),
         })
-        void insertInventoryLogRows(logRows)
+        await insertInventoryLogRows(logRows)
       }
       return { ok: true, updatedCount }
     } catch (e) {
@@ -4077,7 +4077,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               await applyServerCatalogAfterPersist()
               if (isSupabaseConfigured()) {
                 const invRows = buildPosSaleInventoryLogRows(prev, next, order, cartForStock)
-                void insertInventoryLogRows(invRows)
+                await insertInventoryLogRows(invRows)
               }
             }
           })()

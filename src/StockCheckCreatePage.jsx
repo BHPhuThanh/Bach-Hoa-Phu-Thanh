@@ -401,7 +401,7 @@ export default function StockCheckCreatePage() {
           documentCode: 'Sửa thủ công',
           staffName: stockCheckStaffNameForLog(),
         })
-        void insertInventoryLogRows(logRows)
+        await insertInventoryLogRows(logRows)
       }
       const prev = loadStockCheckVouchers()
       const voucher = createHoanThanhStockCheckVoucher(prev, {

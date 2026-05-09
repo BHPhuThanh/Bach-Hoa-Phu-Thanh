@@ -3308,7 +3308,7 @@ export default function AdminHub({
             inboundOrderId: inventoryMetaForLog.inboundOrderId ?? '',
             staffName: inventoryMetaForLog.staffName ?? staffNameForInventoryLog(),
           })
-          void insertInventoryLogRows(logRows)
+          await insertInventoryLogRows(logRows)
         }
         return { ok: true, updatedCount: n }
       }

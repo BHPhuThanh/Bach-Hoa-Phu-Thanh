@@ -236,10 +236,18 @@ export async function insertInventoryLogRows(rows) {
   if (!isSupabaseConfigured() || !rows?.length) return { ok: true, skipped: true }
   const sb = getSupabaseClient()
   if (!sb) return { ok: false, skipped: true }
+  const cleanedRows = rows
+    .filter((row) => row && typeof row === 'object')
+    .map((row) => {
+      const out = {}
+      for (const [k, v] of Object.entries(row)) out[k] = v === undefined ? null : v
+      return out
+    })
+  if (!cleanedRows.length) return { ok: true, skipped: true }
   try {
-    const { error } = await sb.from(INVENTORY_LOG_TABLE).insert(rows)
+    const { error } = await sb.from(INVENTORY_LOG_TABLE).insert(cleanedRows)
     if (error) {
-      console.warn('[inventory_log] insert:', error.message || error)
+      console.error('Lỗi lưu lịch sử kho:', error.message, error.details, error.hint)
       return { ok: false, error }
     }
     if (typeof window !== 'undefined') {
@@ -247,7 +255,13 @@ export async function insertInventoryLogRows(rows) {
     }
     return { ok: true }
   } catch (e) {
-    console.warn('[inventory_log]', e)
+    const error = e && typeof e === 'object' ? e : null
+    console.error(
+      'Lỗi lưu lịch sử kho:',
+      error?.message ?? String(e ?? ''),
+      error?.details,
+      error?.hint
+    )
     return { ok: false, error: e }
   }
 }
