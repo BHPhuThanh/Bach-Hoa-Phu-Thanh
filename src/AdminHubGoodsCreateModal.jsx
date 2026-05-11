@@ -16,6 +16,7 @@ import {
   validateUnitModalLines,
 } from './goodsUnitSetupModalLogic.js'
 import InboundThuongHieuAutocomplete from './InboundThuongHieuAutocomplete.jsx'
+import { formatPostgrestErrorForUser } from './entityContactsRepository.js'
 import './adminHub.css'
 
 /** Giá trong ô chỉnh sửa: phân tách hàng nghìn bằng dấu phẩy (vd. 132,000). */
@@ -121,6 +122,7 @@ export default function AdminHubGoodsCreateModal({
   const [goodsNewExpiryYmd, setGoodsNewExpiryYmd] = useState('')
   const [goodsNewMultiVariants, setGoodsNewMultiVariants] = useState(null)
   const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
+  const [goodsCreateSaving, setGoodsCreateSaving] = useState(false)
   const [gcUnitModal, setGcUnitModal] = useState(null)
 
   const resetFormFields = useCallback(() => {
@@ -145,10 +147,11 @@ export default function AdminHubGoodsCreateModal({
   }, [open, resetFormFields])
 
   const handleClose = useCallback(() => {
+    if (goodsCreateSaving) return
     resetFormFields()
     goodsCreateScanBufferRef.current = { buf: '', times: [] }
     onClose()
-  }, [onClose, resetFormFields])
+  }, [goodsCreateSaving, onClose, resetFormFields])
 
   const revalidateGoodsNewBarcode = useCallback(() => {
     const raw = goodsNewBarcodeRef.current?.value ?? ''
@@ -192,7 +195,7 @@ export default function AdminHubGoodsCreateModal({
   )
 
   const submitGoodsCreateModal = useCallback(() => {
-    if (revenueReadOnly) return
+    if (revenueReadOnly || goodsCreateSaving) return
     const name = String(goodsNewNameRef.current?.value ?? '')
       .replace(/\u00A0/g, ' ')
       .replace(/\s+/g, ' ')
@@ -217,6 +220,57 @@ export default function AdminHubGoodsCreateModal({
       return
     }
 
+    const flushRows = async (rowsForUpsert) => {
+      if (!Array.isArray(rowsForUpsert) || rowsForUpsert.length === 0) return false
+      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rowsForUpsert])
+      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
+
+      if (persistStandaloneProducts) {
+        try {
+          const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
+          if (!res || res.ok === false) {
+            window.alert(String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).'))
+            return false
+          }
+        } catch (e) {
+          console.error(e)
+          window.alert(formatPostgrestErrorForUser(e))
+          return false
+        }
+      }
+
+      if (onAppendCatalogVariants) {
+        try {
+          onAppendCatalogVariants(rowsForUpsert)
+        } catch (e) {
+          console.error(e)
+          window.alert(formatPostgrestErrorForUser(e))
+          return false
+        }
+      }
+
+      if (!persistStandaloneProducts && !onAppendCatalogVariants) {
+        window.alert('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
+        return false
+      }
+      return true
+    }
+
+    const finish = async (rowsForUpsert) => {
+      setGoodsCreateSaving(true)
+      try {
+        const ok = await flushRows(rowsForUpsert)
+        if (ok) {
+          resetFormFields()
+          goodsCreateScanBufferRef.current = { buf: '', times: [] }
+          onClose()
+          onSaved?.()
+        }
+      } finally {
+        setGoodsCreateSaving(false)
+      }
+    }
+
     if (goodsNewMultiVariants?.length) {
       for (const v of goodsNewMultiVariants) {
         const c = String(v.code ?? '').trim().toLowerCase()
@@ -239,15 +293,7 @@ export default function AdminHubGoodsCreateModal({
           brand: brandTrim || String(v.brand ?? '').trim(),
         }))
       )
-      if (onAppendCatalogVariants) {
-        onAppendCatalogVariants(rows)
-      } else if (persistStandaloneProducts) {
-        const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rows])
-        const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-        void persistStandaloneProducts(nextProducts, fileNameHint, rows)
-      }
-      handleClose()
-      onSaved?.()
+      void finish(rows)
       return
     }
 
@@ -307,17 +353,10 @@ export default function AdminHubGoodsCreateModal({
           })()
         : {}),
     }
-    if (onAppendCatalogVariants) {
-      onAppendCatalogVariants([row])
-    } else if (persistStandaloneProducts) {
-      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, row])
-      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-      void persistStandaloneProducts(nextProducts, fileNameHint, [row])
-    }
-    handleClose()
-    onSaved?.()
+    void finish([row])
   }, [
     revenueReadOnly,
+    goodsCreateSaving,
     goodsNewUnit,
     goodsNewBrand,
     goodsNewPrice,
@@ -333,7 +372,8 @@ export default function AdminHubGoodsCreateModal({
     fileNameHint,
     onSaved,
     applyExpiryToVariants,
-    handleClose,
+    onClose,
+    resetFormFields,
   ])
 
   const openGoodsCreateUnitModal = useCallback(() => {
@@ -868,10 +908,10 @@ export default function AdminHubGoodsCreateModal({
               <button
                 type="button"
                 className="ah-goods-create-btn ah-goods-create-btn--primary"
-                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg}
+                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg || goodsCreateSaving}
                 onClick={submitGoodsCreateModal}
               >
-                Lưu
+                {goodsCreateSaving ? 'Đang lưu…' : 'Lưu'}
               </button>
             </footer>
           </div>

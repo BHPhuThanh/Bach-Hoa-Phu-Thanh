@@ -1,0 +1,122 @@
+.barcode-scan-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100080;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0)
+    env(safe-area-inset-left, 0);
+}
+
+.barcode-scan-dialog {
+  width: 100%;
+  max-width: 480px;
+  max-height: min(92vh, 720px);
+  background: #0f172a;
+  border-radius: 16px 16px 0 0;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.barcode-scan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.barcode-scan-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.barcode-scan-close {
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.barcode-scan-hint {
+  margin: 0.5rem 0.75rem 0;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.barcode-scan-viewport {
+  min-height: 220px;
+  margin: 0.5rem 0.75rem;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #020617;
+}
+
+.barcode-scan-viewport video {
+  border-radius: 12px;
+}
+
+.barcode-scan-err {
+  margin: 0 0.75rem 0.5rem;
+  color: #fecaca;
+  font-size: 0.88rem;
+}
+
+.barcode-scan-foot {
+  padding: 0.5rem 0.75rem 0.85rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.barcode-scan-btn {
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.barcode-scan-btn--ghost {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: #e2e8f0;
+}
+
+/* Nút camera cạnh ô tìm — dùng chung */
+.barcode-scan-trigger {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #bae6fd;
+  cursor: pointer;
+}
+
+.barcode-scan-trigger:hover {
+  background: rgba(56, 189, 248, 0.18);
+}
+
+.barcode-scan-trigger svg {
+  display: block;
+}

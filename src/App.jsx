@@ -36,6 +36,7 @@ import {
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
+import BarcodeScanModal from './BarcodeScanModal.jsx'
 import {
   parseAdminHubDeepLinkFromWindow,
   parseAhOpenProductVariantIdFromLocation,
@@ -2414,6 +2415,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [batchSearch, setBatchSearch] = useState('')
   /** Modal tạo nhanh hàng hóa từ gợi ý ô tìm POS — tái sử dụng AdminHubGoodsCreateModal. */
   const [posGoodsCreateModalOpen, setPosGoodsCreateModalOpen] = useState(false)
+  const [posBarcodeScanOpen, setPosBarcodeScanOpen] = useState(false)
   /** Modal nhóm quy đổi theo «ma_hh_lien_quan» (CSV) — `groupProducts` = biến thể thu được từ danh mục. */
   const [posMaHhLienConvModal, setPosMaHhLienConvModal] = useState(null)
   /**
@@ -2731,6 +2733,24 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return next
     })
   }, [applyServerCatalogAfterPersist])
+
+  /** Modal tạo SP (POS): lưu Supabase trước, rồi append — đồng bộ tab Hàng hóa AdminHub. */
+  const persistCatalogForModalNewVariants = useCallback(
+    async (nextProducts, fileNameHint, upsertOnlyVariants) => {
+      if (!upsertOnlyVariants?.length) {
+        return { ok: false, error: 'Thiếu biến thể để ghi lên Supabase.' }
+      }
+      const r = await persistCatalogSnapshotAndProducts(
+        nextProducts,
+        catalogFileNameRef.current || fileNameHint || '',
+        { upsertOnlyVariants }
+      )
+      if (!r.ok) return { ok: false, error: describeCatalogPersistError(r.error) }
+      await applyServerCatalogAfterPersist()
+      return { ok: true }
+    },
+    [applyServerCatalogAfterPersist]
+  )
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
@@ -3634,8 +3654,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     posGoodsCreateModalOpen,
   ])
 
-  const tryAddProductFromHeader = useCallback(() => {
-    const raw = headerSearch.trim()
+  const tryAddProductFromHeader = useCallback((rawOverride) => {
+    const raw = String(rawOverride !== undefined && rawOverride !== null ? rawOverride : headerSearch).trim()
     if (!raw) {
       setHeaderSearchInvalid(false)
       setHeaderSearchFeedback('')
@@ -3804,6 +3824,22 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       posHeaderSuggestTotalRows,
       showPosQuickAddProductRow,
     ]
+  )
+
+  const onPosBarcodeScanned = useCallback(
+    (text) => {
+      const t = String(text || '').trim()
+      if (!t) return
+      setHeaderSearch(t)
+      setHeaderSearchInvalid(false)
+      setHeaderSearchFeedback('')
+      setHeaderSuggestOpen(true)
+      setHeaderHighlightIndex(0)
+      queueMicrotask(() => {
+        tryAddProductFromHeader(t)
+      })
+    },
+    [tryAddProductFromHeader]
   )
 
   const setLineVariant = useCallback((lineId, variantId) => {
@@ -4976,6 +5012,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       ×
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="barcode-scan-trigger"
+                    aria-label="Quét mã vạch bằng camera"
+                    title="Quét mã vạch"
+                    onClick={() => setPosBarcodeScanOpen(true)}
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
                 </div>
                 {headerSearchFeedback ? (
                   <p className="pos-header-search-feedback" role="alert">
@@ -5363,7 +5416,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           brandAutocompleteOptions={posGoodsBrandOptions}
           revenueReadOnly={activeSellerId !== 'admin'}
           onAppendCatalogVariants={handleAppendCatalogVariants}
+          persistStandaloneProducts={persistCatalogForModalNewVariants}
           fileNameHint={fileName || 'hang-hoa-thu-cong'}
+        />
+      )}
+
+      {activeView === 'sell' && (
+        <BarcodeScanModal
+          open={posBarcodeScanOpen}
+          onClose={() => setPosBarcodeScanOpen(false)}
+          title="Quét mã — thêm vào đơn"
+          onScan={onPosBarcodeScanned}
         />
       )}
 

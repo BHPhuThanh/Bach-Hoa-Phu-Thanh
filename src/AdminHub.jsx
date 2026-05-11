@@ -16,6 +16,7 @@ import AdminHubTabErrorBoundary from './AdminHubTabErrorBoundary.jsx'
 import { AdminHubMobileChrome } from './AdminHubMobileChrome.jsx'
 import { AdminHubComboModal } from './AdminHubComboModal.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
+import BarcodeScanModal from './BarcodeScanModal.jsx'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
 import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
 import { AutoSizer } from 'react-virtualized-auto-sizer'
@@ -132,6 +133,7 @@ import {
 import './dashboard.css'
 import './dashboard-dark.css'
 import './adminHub.css'
+import './barcodeScan.css'
 import './costAdjustCreatePage.css'
 import {
   CATALOG_SNAPSHOT_STORAGE_KEY,
@@ -1527,6 +1529,8 @@ export default function AdminHub({
   const [goodsSaveToastGen, setGoodsSaveToastGen] = useState(0)
 
   const [goodsNewModalOpen, setGoodsNewModalOpen] = useState(false)
+  const [barcodeScanOpen, setBarcodeScanOpen] = useState(false)
+  const [barcodeScanMode, setBarcodeScanMode] = useState('goods')
   /** null | { mode: 'create' } | { mode: 'edit', product } */
   const [comboModal, setComboModal] = useState(null)
 
@@ -3095,6 +3099,52 @@ export default function AdminHub({
       setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : hint))
       setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : hint))
     }
+  }, [])
+
+  const applyInboundScannedCode = useCallback(
+    (raw) => {
+      const q = String(raw || '').trim()
+      if (!q) return
+      setInboundFormProductQ(q)
+      setInboundProductSuggestIdx(0)
+      if (!catalogListForInbound.length) return
+      if (posQueryLooksLikeBarcodeKeyInput(q)) {
+        const needle = String(normalizeBarcodeValue(q))
+        for (const p of catalogListForInbound) {
+          for (const v of p.groupVariants || [p]) {
+            if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
+              addInboundFormLine(p, v)
+              return
+            }
+          }
+        }
+      }
+      const hits = suggestCatalogVariantPairsV9(catalogListForInbound, q, {
+        maxHits: 20,
+        surface: 'admin-inbound-barcode-scan',
+      })
+      if (hits.length > 0) {
+        addInboundFormLine(hits[0].product, hits[0].variant)
+      }
+    },
+    [catalogListForInbound, addInboundFormLine]
+  )
+
+  const applyGoodsScannedCode = useCallback((raw) => {
+    const q = String(raw || '').trim()
+    if (!q) return
+    setGoodsQ(q)
+    setHangHoaDeepLinkListScope('all')
+  }, [])
+
+  const openInboundBarcodeScan = useCallback(() => {
+    setBarcodeScanMode('inbound')
+    setBarcodeScanOpen(true)
+  }, [])
+
+  const openGoodsBarcodeScan = useCallback(() => {
+    setBarcodeScanMode('goods')
+    setBarcodeScanOpen(true)
   }, [])
 
   /** Modal «Tạo mới»: đồng bộ staging + một dòng lưới (SL=1); gọi App append — chỉ trong tab nháp nhập hàng. */
@@ -5785,6 +5835,23 @@ export default function AdminHub({
                   </div>
                   <button
                     type="button"
+                    className="barcode-scan-trigger"
+                    aria-label="Quét mã vạch bằng camera"
+                    title="Quét mã"
+                    onClick={openGoodsBarcodeScan}
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
                     className="ah-goods-mobile-filter-open"
                     onClick={() => setGoodsMobileFiltersOpen(true)}
                   >
@@ -8058,6 +8125,23 @@ export default function AdminHub({
                   </div>
                   <button
                     type="button"
+                    className="barcode-scan-trigger"
+                    aria-label="Quét mã vạch bằng camera"
+                    title="Quét mã"
+                    onClick={openInboundBarcodeScan}
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
                     className="ah-inbound-quick-pick-btn"
                     onClick={() => {
                       setInboundQuickPickSelected(new Set())
@@ -8955,6 +9039,16 @@ export default function AdminHub({
           revenueReadOnly={revenueReadOnly}
         />
       )}
+
+      <BarcodeScanModal
+        open={barcodeScanOpen}
+        onClose={() => setBarcodeScanOpen(false)}
+        title={barcodeScanMode === 'inbound' ? 'Quét mã — thêm dòng nhập' : 'Quét mã — lọc hàng hóa'}
+        onScan={(t) => {
+          if (barcodeScanMode === 'inbound') applyInboundScannedCode(t)
+          else applyGoodsScannedCode(t)
+        }}
+      />
 
       <AdminHubGoodsCreateModal
         open={goodsNewModalOpen}
