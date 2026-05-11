@@ -2607,9 +2607,11 @@ export default function AdminHub({
     }
   }, [])
 
+  /** Bootstrap danh sách phiếu nhập (đọc Supabase): một lần khi Hub mount — không đặt state đọc được vào dependency (tránh vòng lặp). */
   useEffect(() => {
     void refreshInboundInvoices()
-  }, [refreshInboundInvoices])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy khi mount; refreshInboundInvoices ổn định useCallback([])
+  }, [])
 
   const inboundRowsFiltered = useMemo(() => {
     const q = inboundDebounced.trim().toLowerCase()
@@ -4250,7 +4252,6 @@ export default function AdminHub({
     goodsExpandedId,
     goodsDetailVariant?.code,
     goodsDetailShelfTab,
-    goodsSaveToastGen,
     inventoryLogRefreshTick,
     goodsInvLedgerDateFrom,
     goodsInvLedgerDateTo,
@@ -4295,7 +4296,6 @@ export default function AdminHub({
     soloActiveVariantId,
     soloGoodsVariant?.code,
     soloGoodsUiTab,
-    goodsSaveToastGen,
     inventoryLogRefreshTick,
     soloInvLedgerDateFrom,
     soloInvLedgerDateTo,
