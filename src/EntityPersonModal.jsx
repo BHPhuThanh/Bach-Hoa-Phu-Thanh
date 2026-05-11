@@ -12,12 +12,25 @@ export default function EntityPersonModal({
   isSaving = false,
   onClose,
   onSubmit,
+  /** Tiền điền khi mở (sửa). Không truyền hoặc `null` = form trống (thêm mới). */
+  seedDraft = null,
 }) {
   const [draft, setDraft] = useState(EMPTY)
 
   useEffect(() => {
-    if (open) setDraft(EMPTY)
-  }, [open])
+    if (!open) return
+    if (seedDraft != null && typeof seedDraft === 'object') {
+      setDraft({
+        name: String(seedDraft.name ?? ''),
+        phone: String(seedDraft.phone ?? ''),
+        address: String(seedDraft.address ?? ''),
+        cccd: String(seedDraft.cccd ?? ''),
+        mail: String(seedDraft.mail ?? ''),
+      })
+    } else {
+      setDraft({ ...EMPTY })
+    }
+  }, [open, seedDraft])
 
   if (!open) return null
 

@@ -46,6 +46,7 @@ import InboundThuongHieuAutocomplete, {
 } from './InboundThuongHieuAutocomplete.jsx'
 import { GOODS_DATE_PRESET_OPTIONS, resolveGoodsCreatedAtRangeMs } from './adminHubGoodsDateRange.js'
 import EntityPersonModal from './EntityPersonModal.jsx'
+import SupplierManager from './SupplierManager.jsx'
 import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
@@ -347,6 +348,7 @@ const TAB_INBOUND_DRAFT = 'inbound_draft'
 const TAB_ORDERS = 'orders'
 const TAB_CUSTOMERS = 'customers'
 const TAB_STAFF = 'staff'
+const TAB_SUPPLIER = 'supplier'
 
 const NAV_ITEMS = [
   { id: TAB_OVERVIEW, label: 'Doanh thu' },
@@ -357,6 +359,7 @@ const NAV_ITEMS = [
   { id: TAB_ORDERS, label: 'Đơn hàng' },
   { id: TAB_CUSTOMERS, label: 'Khách hàng' },
   { id: TAB_STAFF, label: 'Nhân viên' },
+  { id: TAB_SUPPLIER, label: 'Nhà cung cấp' },
 ]
 
 /** Tab chi tiết SP động: `solo_product:<encodeURIComponent(variantId)>` — có thể mở nhiều tab cạnh nhau. */
@@ -6562,6 +6565,8 @@ export default function AdminHub({
             </p>
           </section>
         )}
+
+        {activeTab === TAB_SUPPLIER && <SupplierManager revenueReadOnly={revenueReadOnly} />}
 
         {isSoloProductTabId(activeTab) &&
           (soloGoodsCtx && soloGoodsVariant && soloGoodsDraft ? (

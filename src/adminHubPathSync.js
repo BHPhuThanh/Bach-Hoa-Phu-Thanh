@@ -32,6 +32,7 @@ export function hubMainTabFromPathname(pathname) {
     'don-hang': 'orders',
     'khach-hang': 'customers',
     'nhan-vien': 'staff',
+    'nha-cung-cap': 'supplier',
   }
   const tab = map[slug]
   return tab ?? null
@@ -53,6 +54,7 @@ export function pathForMainNavTab(tabId) {
     orders: '/don-hang',
     customers: '/khach-hang',
     staff: '/nhan-vien',
+    supplier: '/nha-cung-cap',
   }
   const p = map[id]
   return p ?? null
@@ -74,6 +76,7 @@ export function pathnameOpensHubStandaloneDashboard(pathname) {
     'don-hang',
     'khach-hang',
     'nhan-vien',
+    'nha-cung-cap',
     'dieu-chinh-gia',
   ])
   if (segs.some((s) => hub.has(s))) return true

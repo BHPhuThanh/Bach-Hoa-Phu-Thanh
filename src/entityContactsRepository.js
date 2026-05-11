@@ -104,6 +104,52 @@ export async function insertEmployeeSupabase(payload) {
   return insertPerson('employees', payload)
 }
 
+/** @param {'suppliers'|'customers'|'employees'} table */
+async function updatePerson(table, id, payload) {
+  const sb = getSupabaseClient()
+  if (!sb || !isSupabaseConfigured()) {
+    return { ok: false, skipped: true, error: new Error('Supabase chưa cấu hình') }
+  }
+  const idStr = String(id ?? '').trim()
+  if (!idStr) {
+    return { ok: false, error: new Error('Thiếu mã (id)') }
+  }
+  const row = {
+    name: String(payload.name ?? '').trim(),
+    phone: String(payload.phone ?? '').trim() || null,
+    address: String(payload.address ?? '').trim() || null,
+    cccd: String(payload.cccd ?? '').trim() || null,
+    mail: String(payload.mail ?? '').trim() || null,
+  }
+  if (!row.name) {
+    return { ok: false, error: new Error('Thiếu tên') }
+  }
+  try {
+    const { data, error } = await sb.from(table).update(row).eq('id', idStr).select('*').single()
+    if (error) {
+      return { ok: false, error, code: error.code, message: error.message }
+    }
+    return { ok: true, row: normalizePersonRow(data) }
+  } catch (e) {
+    const err = /** @type {Error & { code?: string }} */ (e)
+    return {
+      ok: false,
+      error: err,
+      code: err?.code,
+      message: err?.message ?? String(e),
+    }
+  }
+}
+
+/**
+ * Cập nhật một nhà cung cấp theo `id` (UUID).
+ * @param {string} id
+ * @param {{ name?: string, phone?: string, address?: string, cccd?: string, mail?: string }} payload
+ */
+export async function updateSupplierSupabase(id, payload) {
+  return updatePerson('suppliers', id, payload)
+}
+
 /** Gộp danh sách (ưu tiên thứ tự `remote` trước), tránh trùng cặp (phone + name). */
 export function mergeCustomerListsDedupe(remote, local) {
   const seen = new Set()
