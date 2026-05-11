@@ -661,19 +661,30 @@ function inboundLineThuongHieuResolved(line, catalogList) {
 function createInboundFormLineFromProductVariant(product, variant) {
   const v = variant || product
   const unit = normalizeCatalogUnitLabel(v.unitLabel)
-  const price = Number(v.cost) > 0 ? Number(v.cost) : Number(v.price) || 0
+  const rawCost = Number(v.cost)
+  const rawPrice = Number(v.price)
+  const effective = Number.isFinite(rawCost) && rawCost > 0 ? rawCost : Number.isFinite(rawPrice) && rawPrice > 0 ? rawPrice : 0
+  const priceRounded = Math.max(0, Math.round(effective))
   const thuong_hieu = brandThuongHieuFromProductVariant(product, variant)
+  const maHang = String(v.code || '').trim()
+  const convRaw = Number(v?.conversionValue ?? v?.conversion ?? v?.quy_doi)
+  const quy_doi = Number.isFinite(convRaw) && convRaw > 0 ? convRaw : 1
   return {
     lineId: `il-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    variantId: String(v.id),
-    code: String(v.code || '').trim(),
+    variantId: String(v.id ?? ''),
+    code: maHang,
+    ma_hang: maHang,
     name: String(product.name || v.name || '').trim(),
     unitLabel: unit,
+    dvt: unit,
     thuong_hieu,
     qty: 1,
+    so_luong: 1,
     returnedQty: 0,
-    unitPrice: Math.round(price),
+    unitPrice: priceRounded,
+    gia_nhap: priceRounded,
     lineDiscount: 0,
+    quy_doi,
   }
 }
 
@@ -1226,6 +1237,12 @@ export default function AdminHub({
     }
     return catalogList.length === 0 ? injected : [...catalogList, ...injected]
   }, [catalogList, inboundPendingNewFlatVariants])
+
+  const catalogForInboundRef = useRef(catalogListForInbound)
+  catalogForInboundRef.current = catalogListForInbound
+  useEffect(() => {
+    catalogForInboundRef.current = catalogListForInbound
+  }, [catalogListForInbound])
 
   const catalogListRef = useRef(catalogList)
   catalogListRef.current = catalogList
@@ -2812,6 +2829,8 @@ export default function AdminHub({
   /** Đang ghi danh mục sau nhập hàng (Supabase / standalone) — chặn đóng tab cho đến khi xong. */
   const [inboundCatalogBulkSaving, setInboundCatalogBulkSaving] = useState(false)
   const [inboundFormLines, setInboundFormLines] = useState([])
+  const inboundFormLinesRef = useRef(inboundFormLines)
+  inboundFormLinesRef.current = inboundFormLines
   const [inboundFormProductQ, setInboundFormProductQ] = useState('')
   const [inboundProductSuggestIdx, setInboundProductSuggestIdx] = useState(0)
   const inboundProductSearchRef = useRef(null)
@@ -3546,15 +3565,20 @@ export default function AdminHub({
       alert('Thêm ít nhất một dòng hàng với số lượng > 0 để hoàn thành phiếu.')
       return
     }
-    if (catalogListForInbound.length === 0) {
+    const catalogSnap = catalogForInboundRef.current
+    if (!catalogSnap?.length) {
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
     void (async () => {
+      const linesSnap = inboundFormLinesRef.current
+      const catSnap = catalogForInboundRef.current
+      // eslint-disable-next-line no-console -- xác minh submit không đọc stale trước compute
+      console.log('Submit Lines:', linesSnap, 'Submit Catalog:', catSnap)
       const priorLines = inboundFormEditOrderId
         ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
         : null
-      const codes = collectInboundMaHangCodes(catalogListForInbound, inboundFormLines)
+      const codes = collectInboundMaHangCodes(catSnap, linesSnap)
       let serverMap = new Map()
       if (codes.length > 0 && isSupabaseConfigured()) {
         try {
@@ -3568,8 +3592,8 @@ export default function AdminHub({
         }
       }
       const { diffs, patches } = computeInboundFulfillmentPlan(
-        catalogListForInbound,
-        inboundFormLines,
+        catSnap,
+        linesSnap,
         serverMap,
         priorLines || undefined
       )
@@ -3596,8 +3620,6 @@ export default function AdminHub({
     })()
   }, [
     inboundFormSupplierName,
-    inboundFormLines,
-    catalogListForInbound,
     inboundOrders,
     inboundFormEditOrderId,
     finalizeInboundCompleted,
@@ -4016,7 +4038,7 @@ export default function AdminHub({
     if (!draft) return
     const prevRow = inboundOrders.find((o) => o.id === oid)
     if (!prevRow) return
-    if (catalogListForInbound.length === 0) {
+    if (!catalogForInboundRef.current?.length) {
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
@@ -4038,10 +4060,13 @@ export default function AdminHub({
       status: computeInboundStatusAfterLines(normLines),
     })
     void (async () => {
+      const catSnap = catalogForInboundRef.current
+      // eslint-disable-next-line no-console -- xác minh chi tiết phiếu nhập + catalog mới nhất
+      console.log('Submit detail normLines:', normLines, 'Submit Catalog:', catSnap)
       const codes = [
         ...new Set([
-          ...collectInboundMaHangCodes(catalogListForInbound, normLines),
-          ...collectInboundMaHangCodes(catalogListForInbound, prevRow.lines || []),
+          ...collectInboundMaHangCodes(catSnap, normLines),
+          ...collectInboundMaHangCodes(catSnap, prevRow.lines || []),
         ]),
       ]
       let serverMap = new Map()
@@ -4057,7 +4082,7 @@ export default function AdminHub({
         }
       }
       const { diffs, patches } = computeInboundFulfillmentPlan(
-        catalogListForInbound,
+        catSnap,
         normLines,
         serverMap,
         prevRow.lines
@@ -4106,7 +4131,6 @@ export default function AdminHub({
     activeTab,
     inboundDetailLineDrafts,
     inboundOrders,
-    catalogListForInbound,
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
     triggerInboundSaveToast,
