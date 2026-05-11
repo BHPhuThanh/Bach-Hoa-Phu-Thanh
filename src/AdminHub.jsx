@@ -904,11 +904,10 @@ export default function AdminHub({
   const location = useLocation()
   const syncHubUrlToMainTab = useCallback(
     (tabId) => {
-      if (standaloneInboundCreate) return
       const p = pathForMainNavTab(tabId)
       if (p) navigate(p, { replace: true })
     },
-    [navigate, standaloneInboundCreate]
+    [navigate]
   )
   const onAdminHubNavItemActivate = useCallback(
     (tabId) => {
@@ -2882,6 +2881,14 @@ export default function AdminHub({
     setSupplierModalOpen(false)
   }, [])
 
+  /** Sau khi lưu phiếu nhập: thoát form nháp, đưa tab + URL về danh sách `/nhap-hang` (tránh kẹt `/nhap-hang/tao-moi`). */
+  const completeInboundFlowReturnToList = useCallback(() => {
+    setInboundDraftSession(false)
+    resetInboundForm()
+    setActiveTab(TAB_INBOUND)
+    syncHubUrlToMainTab(TAB_INBOUND)
+  }, [resetInboundForm, syncHubUrlToMainTab])
+
   const openInboundCreateForm = useCallback(() => {
     const url = getInboundCreateAbsUrl()
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
@@ -3351,13 +3358,18 @@ export default function AdminHub({
         }
         await recordInboundCompletionHistory(row)
         setInboundOrders((prev) => [row, ...prev])
-        setActiveTab(TAB_INBOUND)
+        completeInboundFlowReturnToList()
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
       }
     },
-    [buildInboundOrderPayload, applyInboundFulfillmentPatches, recordInboundCompletionHistory]
+    [
+      buildInboundOrderPayload,
+      applyInboundFulfillmentPatches,
+      recordInboundCompletionHistory,
+      completeInboundFlowReturnToList,
+    ]
   )
 
   /** @returns {Promise<boolean>} */
@@ -3388,7 +3400,7 @@ export default function AdminHub({
         await recordInboundCompletionHistory(merged)
         setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
         setInboundFormEditOrderId(null)
-        setActiveTab(TAB_INBOUND)
+        completeInboundFlowReturnToList()
         return true
       } finally {
         setInboundCatalogBulkSaving(false)
@@ -3400,6 +3412,7 @@ export default function AdminHub({
       buildInboundOrderPayload,
       applyInboundFulfillmentPatches,
       recordInboundCompletionHistory,
+      completeInboundFlowReturnToList,
     ]
   )
 
@@ -3495,7 +3508,6 @@ export default function AdminHub({
       inboundCompletePendingRef.current = null
       setInboundCostDiffModal(null)
       appendInboundCostChangeNotifications(diffs)
-      setActiveTab(TAB_INBOUND)
       triggerInboundSaveToast()
     }
 
@@ -3519,6 +3531,7 @@ export default function AdminHub({
           delete n[oid]
           return n
         })
+        completeInboundFlowReturnToList()
         finishInboundCostFlowSuccess()
       } finally {
         setInboundCatalogBulkSaving(false)
@@ -3538,6 +3551,7 @@ export default function AdminHub({
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
     triggerInboundSaveToast,
+    completeInboundFlowReturnToList,
   ])
 
   const focusInboundDraftField = useCallback((lineId, field) => {
@@ -3677,7 +3691,7 @@ export default function AdminHub({
         const row = buildInboundOrderPayload('saved_temp')
         setInboundOrders((p) => p.map((o) => (o.id === inboundFormEditOrderId ? row : o)))
         setInboundFormEditOrderId(null)
-        setActiveTab(TAB_INBOUND)
+        completeInboundFlowReturnToList()
         triggerInboundSaveToast()
         return
       }
@@ -3687,7 +3701,7 @@ export default function AdminHub({
       }
       const row = buildInboundOrderPayload(status)
       setInboundOrders((prev) => [row, ...prev])
-      setActiveTab(TAB_INBOUND)
+      completeInboundFlowReturnToList()
       triggerInboundSaveToast()
     },
     [
@@ -3697,6 +3711,7 @@ export default function AdminHub({
       buildInboundOrderPayload,
       handleInboundCompleteClick,
       triggerInboundSaveToast,
+      completeInboundFlowReturnToList,
     ]
   )
 
@@ -3963,7 +3978,7 @@ export default function AdminHub({
           delete n[oid]
           return n
         })
-        setActiveTab(TAB_INBOUND)
+        completeInboundFlowReturnToList()
       } finally {
         setInboundCatalogBulkSaving(false)
       }
@@ -3976,6 +3991,7 @@ export default function AdminHub({
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
     triggerInboundSaveToast,
+    completeInboundFlowReturnToList,
   ])
 
   const persistPosOrderAndReload = useCallback(async (nextOrder) => {
