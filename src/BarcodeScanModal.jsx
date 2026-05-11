@@ -2,35 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
 import './barcodeScan.css'
 
-/** Tiếng «tít» ngắn khi quét thành công (Web Audio API, không cần file mp3). */
+/** Phản hồi âm thanh khi quét thành công — file `public/beep.mp3` (HTML5 Audio, ổn định hơn Web Audio khi máy im lặng). */
 function playScanSuccessBeep() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext
-    if (!AC) return
-    const ctx = new AC()
-    const run = () => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(800, ctx.currentTime)
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.1)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(ctx.currentTime)
-      osc.stop(ctx.currentTime + 0.1)
-      osc.onended = () => {
-        void ctx.close().catch(() => {})
-      }
-    }
-    if (ctx.state === 'suspended') {
-      void ctx.resume().then(run).catch(() => void ctx.close().catch(() => {}))
-    } else {
-      run()
-    }
-  } catch {
-    /* ignore */
+    const audio = new Audio(`${import.meta.env.BASE_URL}beep.mp3`)
+    audio.preload = 'auto'
+    audio.volume = 1
+    void audio.play().catch((e) => console.log('Audio play failed:', e))
+  } catch (e) {
+    console.log('Audio play failed:', e)
   }
 }
 

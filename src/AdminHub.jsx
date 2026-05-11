@@ -8191,7 +8191,7 @@ export default function AdminHub({
                     </thead>
                     <tbody>
                       {inboundFormLines.length === 0 ? (
-                        <tr>
+                        <tr className="ah-inbound-draft-line-empty">
                           <td colSpan={10} className="admin-hub-muted">
                             Chưa có dòng hàng — tìm và chọn sản phẩm ở ô phía trên.
                           </td>
@@ -8201,7 +8201,7 @@ export default function AdminHub({
                           const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
                           const inboundDvtLocked = inboundDvtOptions.length <= 1
                           return (
-                          <tr key={ln.lineId}>
+                          <tr key={ln.lineId} className="ah-inbound-draft-line-card">
                             <td className="ah-inbound-ln-del ah-inbound-draft-td-del">
                               <button
                                 type="button"

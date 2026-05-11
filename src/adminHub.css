@@ -4608,6 +4608,244 @@ li.ah-inbound-suggest-empty {
   background: #0c1016;
 }
 
+/* —— Phiếu nhập (dòng chi tiết): mobile card — đồng bộ ý tưởng với POS giỏ hàng —— */
+@media (max-width: 768px) {
+  .ah-inbound-draft-lines-table {
+    display: block;
+    width: 100%;
+    table-layout: auto;
+    border-spacing: 0;
+  }
+
+  .ah-inbound-draft-lines-table colgroup {
+    display: none;
+  }
+
+  .ah-inbound-draft-lines-table thead {
+    display: none;
+  }
+
+  .ah-inbound-draft-lines-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-empty {
+    display: block;
+    margin: 0.5rem 0;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-empty td {
+    display: block;
+    padding: 1rem 0.75rem;
+    text-align: center;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(5.25rem, auto);
+    grid-template-rows: auto auto auto auto auto auto auto;
+    column-gap: 0.65rem;
+    row-gap: 0.55rem;
+    align-items: start;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 0.7rem;
+    padding: 0.75rem 0.7rem 0.85rem;
+    border-radius: 12px;
+    background: #161b22;
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td {
+    display: block;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    vertical-align: top;
+    max-width: none;
+    text-align: left;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(2) {
+    display: none;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td.ah-inbound-draft-td-name {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    font-weight: 800;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    color: #f1f5f9;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(1) {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #7dd3fc;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(5) {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    font-size: 0.82rem;
+    color: #cbd5e1;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    max-width: none;
+    text-align: left;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(7) {
+    grid-column: 1;
+    grid-row: 4;
+    min-width: 0;
+    align-self: stretch;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(6) {
+    grid-column: 2;
+    grid-row: 4;
+    min-width: 0;
+    align-self: stretch;
+    text-align: right;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(8) {
+    grid-column: 1 / -1;
+    grid-row: 5;
+    align-self: stretch;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(9) {
+    grid-column: 1 / -1;
+    grid-row: 6;
+    align-self: stretch;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(10) {
+    grid-column: 1 / -1;
+    grid-row: 7;
+    text-align: right;
+    font-size: 0.95rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    margin-top: 0.15rem;
+    padding-top: 0.55rem;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card .ah-inbound-row-del {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 1.35rem;
+    border-radius: 10px;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card .ah-inbound-dvt-select {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 80px;
+    min-height: 44px;
+    padding: 0.45rem 0.5rem;
+    font-size: 0.88rem;
+    line-height: 1.25;
+    border-radius: 10px;
+    text-align: left;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card .ah-inbound-cell-input {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: none;
+    min-height: 44px;
+    padding: 0.45rem 0.55rem;
+    font-size: 0.92rem;
+    border-radius: 10px;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card .ah-inbound-cell-input--qty {
+    max-width: none;
+    text-align: center;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(8) .ah-inbound-cell-input,
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(9) .ah-inbound-cell-input {
+    text-align: right;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(8)::before,
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(9)::before {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.28rem;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(8)::before {
+    content: 'Đơn giá nhập';
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(9)::before {
+    content: 'Giảm giá';
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(6)::before,
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(7)::before {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.28rem;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(6)::before {
+    content: 'ĐVT';
+    text-align: right;
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(7)::before {
+    content: 'Số lượng';
+  }
+
+  .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-card td:nth-child(10)::before {
+    content: 'Thành tiền';
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.25rem;
+    text-align: right;
+  }
+}
+
 .ah-inbound-draft-lines-table thead th.ah-inbound-ln-spread {
   white-space: normal;
   line-height: 1.25;
