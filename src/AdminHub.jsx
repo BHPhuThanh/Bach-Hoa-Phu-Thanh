@@ -714,6 +714,50 @@ function flattenCatalogVariantIdsForInboundMerge(catalog) {
   return new Set(out)
 }
 
+/** Sau revalidate, id biến thể đổi (`sb-index-ma`) nhưng mã hàng trùng — lọc pending theo mã để không trùng dòng. */
+function flattenCatalogMaHangCodesLcForInboundMerge(catalog) {
+  const out = new Set()
+  for (const p of catalog || []) {
+    const vars = Array.isArray(p.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    for (const v of vars) {
+      const k = String(v?.code ?? '').trim().toLowerCase()
+      if (k) out.add(k)
+    }
+  }
+  return out
+}
+
+/** Chuẩn hóa tồn / giá / quy đổi trước khi buildDisplayCatalog — tránh NaN khi tính vốn nhập. */
+function applyInboundStagingCatalogNumericDefaults(flatRow) {
+  if (!flatRow || typeof flatRow !== 'object') return flatRow
+  const out = { ...flatRow }
+  let ton = out.stockQty
+  if (ton === undefined || ton === null) ton = out.ton_kho
+  const tonN = Number(ton)
+  out.stockQty = Number.isFinite(tonN) ? Math.max(0, tonN) : 0
+
+  let gv = out.cost
+  if (gv === undefined || gv === null) gv = out.gia_von
+  const gvN = Number(gv)
+  out.cost = Number.isFinite(gvN) ? Math.max(0, gvN) : 0
+
+  let qd = out.conversionValue ?? out.conversion ?? out.quy_doi
+  const qdN = Number(qd)
+  const quy = Number.isFinite(qdN) && qdN > 0 ? qdN : 1
+  out.conversionValue = quy
+  out.conversion = quy
+  out.quy_doi = quy
+
+  const rawBase = out.raw && typeof out.raw === 'object' ? out.raw : {}
+  out.raw = {
+    ...rawBase,
+    ton_kho: out.stockQty,
+    gia_von: out.cost,
+    quy_doi: quy,
+  }
+  return out
+}
+
 function appendInboundDraftLinesFromFlatRows(setInboundFormLines, flatRows) {
   if (!flatRows?.length) return
   let display = []
@@ -949,6 +993,8 @@ export default function AdminHub({
   onHangHoaGoodsOpenConsumed,
   /** Route `/nhap-hang/tao-moi` — form nhập mở sẵn; Đóng = `window.close()`. */
   standaloneInboundCreate = false,
+  /** App: sau upsert + `select`, nhận biến thể đã map để thay id dòng phiếu nhập (UUID client → sb-…). */
+  registerInboundCatalogUpsertReconcile,
 }) {
   /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
   const [returnDayLedger, setReturnDayLedger] = useState(() => {
@@ -1217,8 +1263,15 @@ export default function AdminHub({
   useLayoutEffect(() => {
     if (!inboundPendingNewFlatVariants.length) return
     const inCat = flattenCatalogVariantIdsForInboundMerge(catalogList)
+    const codesInCat = flattenCatalogMaHangCodesLcForInboundMerge(catalogList)
     setInboundPendingNewFlatVariants((prev) => {
-      const next = prev.filter((r) => r && !inCat.has(String(r.id)))
+      const next = prev.filter((r) => {
+        if (!r) return false
+        if (inCat.has(String(r.id))) return false
+        const k = String(r.code ?? '').trim().toLowerCase()
+        if (k && codesInCat.has(k)) return false
+        return true
+      })
       return next.length === prev.length ? prev : next
     })
   }, [catalogList, inboundPendingNewFlatVariants])
@@ -1226,7 +1279,16 @@ export default function AdminHub({
   const catalogListForInbound = useMemo(() => {
     if (!inboundPendingNewFlatVariants.length) return catalogList
     const inCat = flattenCatalogVariantIdsForInboundMerge(catalogList)
-    const extra = inboundPendingNewFlatVariants.filter((r) => r && !inCat.has(String(r.id)))
+    const codesInCat = flattenCatalogMaHangCodesLcForInboundMerge(catalogList)
+    const extra = inboundPendingNewFlatVariants
+      .filter((r) => {
+        if (!r) return false
+        if (inCat.has(String(r.id))) return false
+        const k = String(r.code ?? '').trim().toLowerCase()
+        if (k && codesInCat.has(k)) return false
+        return true
+      })
+      .map(applyInboundStagingCatalogNumericDefaults)
     if (!extra.length) return catalogList
     let injected = []
     try {
@@ -3052,6 +3114,60 @@ export default function AdminHub({
     },
     [persistStandaloneProducts]
   )
+
+  /**
+   * Sau khi App gọi `persistCatalogSnapshotAndProducts` + revalidate: thay id client (modal) bằng id catalog từ DB
+   * (`sb-…-{ma_hang}`) — khớp lưới phiếu nhập + staging với `catalogListForInbound`.
+   */
+  const handleInboundCatalogUpsertReconcile = useCallback(({ requested, returned }) => {
+    if (!Array.isArray(returned) || returned.length === 0 || !Array.isArray(requested)) return
+    const byCode = new Map()
+    for (const v of returned) {
+      const k = String(v?.code ?? '').trim().toLowerCase()
+      if (!k) continue
+      byCode.set(k, applyInboundStagingCatalogNumericDefaults(v))
+    }
+    if (byCode.size === 0) return
+
+    const oldIdByCode = new Map()
+    for (const v of requested) {
+      const k = String(v?.code ?? '').trim().toLowerCase()
+      if (k && v.id != null) oldIdByCode.set(k, String(v.id))
+    }
+
+    setInboundPendingNewFlatVariants((prev) => {
+      const withoutOldClient = (prev || []).filter((r) => {
+        const k = String(r?.code ?? '').trim().toLowerCase()
+        if (!k) return true
+        const oldId = oldIdByCode.get(k)
+        const nv = byCode.get(k)
+        if (!nv || !oldId) return true
+        if (String(r.id) === oldId) return false
+        return true
+      })
+      return mergeInboundPendingFlatVariantsById(withoutOldClient, [...byCode.values()])
+    })
+
+    setInboundFormLines((lines) =>
+      lines.map((ln) => {
+        const k = String(ln.ma_hang || ln.code || '')
+          .trim()
+          .toLowerCase()
+        const nv = k ? byCode.get(k) : null
+        const oldId = k ? oldIdByCode.get(k) : null
+        if (!nv || !oldId || String(ln.variantId) !== oldId) return ln
+        return { ...ln, variantId: String(nv.id) }
+      })
+    )
+  }, [])
+
+  useEffect(() => {
+    if (typeof registerInboundCatalogUpsertReconcile !== 'function') return undefined
+    registerInboundCatalogUpsertReconcile(handleInboundCatalogUpsertReconcile)
+    return () => {
+      registerInboundCatalogUpsertReconcile(null)
+    }
+  }, [registerInboundCatalogUpsertReconcile, handleInboundCatalogUpsertReconcile])
 
   const toggleInboundQuickPickSel = useCallback((vid) => {
     const id = String(vid)

@@ -374,8 +374,18 @@ function catalogSnapshotDedupeKey(products, fileName) {
  * @returns {{ written: number, skipped: number, lastError?: object }}
  */
 async function upsertProductChunkResilient(sb, part) {
-  const { error: bulkError } = await sb.from(PRODUCTS_TABLE).upsert(part, { onConflict: PRODUCT_PK_COLUMN })
-  if (!bulkError) return { written: part.length, skipped: 0, lastError: null }
+  const { data: upsertedRows, error: bulkError } = await sb
+    .from(PRODUCTS_TABLE)
+    .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
+    .select('*')
+  if (!bulkError) {
+    if (Array.isArray(upsertedRows) && upsertedRows.length > 0) {
+      /* Dữ liệu thật từ Postgres (uuid/cột đầy đủ) — hữu ích khi debug lệch id client vs server. */
+      // eslint-disable-next-line no-console
+      console.log('[saveProductsToSupabase] Upsert trả về (select):', upsertedRows.length, 'dòng')
+    }
+    return { written: part.length, skipped: 0, lastError: null, returnedRows: upsertedRows ?? [] }
+  }
   if (part.length <= 1) {
     const row = part[0]
     console.warn('[saveProductsToSupabase] Bỏ qua 1 dòng lỗi', {
@@ -383,7 +393,7 @@ async function upsertProductChunkResilient(sb, part) {
       ten_hang: row?.ten_hang,
       supabase: formatSupabaseWriteError(bulkError),
     })
-    return { written: 0, skipped: 1, lastError: bulkError }
+    return { written: 0, skipped: 1, lastError: bulkError, returnedRows: [] }
   }
   console.warn(
     `[saveProductsToSupabase] Đợt ${part.length} dòng lỗi — thử upsert từng dòng (${PRODUCT_PK_COLUMN} "${part[0]?.[PRODUCT_PK_COLUMN]}" … "${part[part.length - 1]?.[PRODUCT_PK_COLUMN]}")`,
@@ -392,8 +402,10 @@ async function upsertProductChunkResilient(sb, part) {
   let written = 0
   let skipped = 0
   let firstRowError = null
+  /** @type {Array<Record<string, unknown>>} */
+  const returnedRows = []
   for (const row of part) {
-    const r = await sb.from(PRODUCTS_TABLE).upsert([row], { onConflict: PRODUCT_PK_COLUMN })
+    const r = await sb.from(PRODUCTS_TABLE).upsert([row], { onConflict: PRODUCT_PK_COLUMN }).select('*')
     if (r.error) {
       skipped += 1
       if (!firstRowError) firstRowError = r.error
@@ -404,9 +416,14 @@ async function upsertProductChunkResilient(sb, part) {
       )
     } else {
       written += 1
+      if (Array.isArray(r.data) && r.data.length) {
+        returnedRows.push(...r.data)
+        // eslint-disable-next-line no-console
+        console.log('[saveProductsToSupabase] Upsert 1 dòng (select):', r.data[0]?.[PRODUCT_PK_COLUMN])
+      }
     }
   }
-  return { written, skipped, lastError: firstRowError || bulkError }
+  return { written, skipped, lastError: firstRowError || bulkError, returnedRows }
 }
 
 /**
@@ -435,11 +452,13 @@ async function upsertRawProductRows(sb, rawRows) {
   }
   const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
   const rows = deduped.map((row) => finalizeProductRowForSupabase(pickProductRowDbColumns(row), allow))
-  if (rows.length === 0) return { written: 0, skippedUpsert: 0, lastSupabaseError: null }
+  if (rows.length === 0) return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
   const total = rows.length
   let written = 0
   let skippedUpsert = 0
   let lastSupabaseError = null
+  /** @type {Array<Record<string, unknown>>} */
+  const returnedProductRows = []
   for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
     const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK)
     const batchEnd = Math.min(i + part.length, total)
@@ -450,13 +469,14 @@ async function upsertRawProductRows(sb, rawRows) {
     written += r.written
     skippedUpsert += r.skipped
     if (r.lastError != null && lastSupabaseError == null) lastSupabaseError = r.lastError
+    if (Array.isArray(r.returnedRows) && r.returnedRows.length) returnedProductRows.push(...r.returnedRows)
   }
   if (skippedUpsert > 0) {
     console.warn(
       `[saveProductsToSupabase] Đồng bộ xong: đã ghi ${written}/${total} dòng; ${skippedUpsert} dòng bị bỏ qua do lỗi API.`
     )
   }
-  return { written, skippedUpsert, lastSupabaseError }
+  return { written, skippedUpsert, lastSupabaseError, returnedProductRows }
 }
 
 async function upsertProductRowsFromDisplayCatalog(sb, products) {
@@ -497,10 +517,8 @@ export async function saveProductsToSupabase(products) {
       `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (${PRODUCT_PK_COLUMN} hợp lệ, đã gộp trùng), ` +
         `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; giá/tồn/quy đổi là số JSON; đợt lỗi sẽ thử từng dòng.`
     )
-    const { written, skippedUpsert, lastSupabaseError } = await upsertProductRowsFromDisplayCatalog(
-      sb,
-      products || []
-    )
+    const { written, skippedUpsert, lastSupabaseError } =
+      await upsertProductRowsFromDisplayCatalog(sb, products || [])
     if (toSend.length > 0 && written === 0) {
       const fromApi =
         lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
@@ -612,7 +630,10 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
     console.log(
       `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
     )
-    const { written, skippedUpsert, lastSupabaseError } = await upsertRawProductRows(sb, rawRows)
+    const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await upsertRawProductRows(
+      sb,
+      rawRows
+    )
     if (written === 0) {
       const fromApi =
         lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
@@ -624,7 +645,10 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
       notifySupabasePersistFailure(err, lastSupabaseError)
       return { ok: false, error: err, written, skippedUpsert }
     }
-    return { ok: true, written, skippedUpsert }
+    const returnedDisplayVariants = (returnedProductRows || [])
+      .map((row, i) => supabaseProductRowToFlatCatalogRow(row, i))
+      .filter(Boolean)
+    return { ok: true, written, skippedUpsert, returnedDisplayVariants }
   } catch (error) {
     if (error && typeof error === 'object') {
       const { message: m, details: d, hint: h } = error
@@ -655,7 +679,9 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
   }
   if (options?.upsertOnlyVariants?.length) {
     const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
-    return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
+    return r.ok
+      ? { ok: true, snapshotSaved: true, returnedDisplayVariants: r.returnedDisplayVariants }
+      : { ok: false, error: r.error, snapshotSaved: true }
   }
   const r = await saveProductsToSupabase(products)
   return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }

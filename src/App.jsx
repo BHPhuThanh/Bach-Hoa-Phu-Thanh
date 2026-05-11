@@ -2649,6 +2649,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
+  /** AdminHub đăng ký — sau `upsert` + `select('*')` đồng bộ lại id dòng phiếu nhập với biến thể catalog (sb-…). */
+  const inboundCatalogUpsertReconcileRef = useRef(null)
+  const registerInboundCatalogUpsertReconcile = useCallback((fn) => {
+    inboundCatalogUpsertReconcileRef.current = fn
+  }, [])
+
   const handleRemoveCatalogVariants = useCallback((variantIds) => {
     if (!variantIds?.length) return
     setProducts((prev) => {
@@ -2709,7 +2715,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
             upsertOnlyVariants: variants,
           })
-          if (r.ok) await applyServerCatalogAfterPersist()
+          if (r.ok) {
+            await applyServerCatalogAfterPersist()
+            try {
+              inboundCatalogUpsertReconcileRef.current?.({
+                requested: variants,
+                returned: r.returnedDisplayVariants,
+              })
+            } catch (e) {
+              console.warn('[App] Đồng bộ id nhập hàng sau upsert', e)
+            }
+          }
         })()
       })
       return next
@@ -5363,6 +5379,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           onBulkPatchCatalogVariants={handleBulkPatchCatalogVariants}
           onReplaceCatalogGroup={handleReplaceCatalogGroup}
           onAppendCatalogVariants={handleAppendCatalogVariants}
+          registerInboundCatalogUpsertReconcile={registerInboundCatalogUpsertReconcile}
           hubDeepLink={adminHubDeepLink}
           onHubDeepLinkConsumed={clearAdminHubDeepLink}
           hangHoaGoodsOpenRequest={pendingHangHoaGoodsOpen}

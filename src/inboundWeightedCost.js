@@ -123,6 +123,22 @@ function conversionToBaseForVariant(v, serverRow) {
   )
 }
 
+/** Ghép dòng phiếu ↔ biến thể danh mục — ưu tiên `variantId`; nếu lệch id (vd. UUID client vs `sb-…` sau revalidate Supabase) thì khớp theo mã hàng. */
+function findCatalogVariantForInboundLine(ln, byVid, flat) {
+  const vid = String(ln.variantId || '').trim()
+  if (vid) {
+    const hit = byVid.get(vid)
+    if (hit) return hit
+  }
+  const code = String(ln.code ?? '').trim()
+  if (!code) return null
+  const codeLc = code.toLowerCase()
+  for (const vv of flat || []) {
+    if (String(vv?.code ?? '').trim().toLowerCase() === codeLc) return vv
+  }
+  return null
+}
+
 function parseGroupServerSnapshot(primaryMember, members, serverByMaHang) {
   const ordered = []
   if (primaryMember) ordered.push(primaryMember)
@@ -149,16 +165,39 @@ function parseGroupServerSnapshot(primaryMember, members, serverByMaHang) {
   return { hasServer: false, baseQty: 0, baseCost: 0 }
 }
 
-function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang) {
+function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang, flat) {
   const m = new Map()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
     const q = inboundLineReturnableQtyForCost(ln)
-    if (q <= 0 || !ln.variantId) continue
-    const v = byVid.get(ln.variantId)
-    if (!v) continue
+    if (q <= 0) continue
+    if (!ln.variantId) {
+      // eslint-disable-next-line no-console
+      console.warn('Dòng bị từ chối:', raw, 'Lý do: thiếu variantId')
+      continue
+    }
+    const v = findCatalogVariantForInboundLine(ln, byVid, flat)
+    if (!v) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Dòng bị từ chối:',
+        raw,
+        'Lý do: không tìm thấy biến thể trong danh mục (sai ID sau đồng bộ Supabase hoặc lệch ma_hang)',
+        { variantId: ln.variantId, ma_hang_line: ln.code }
+      )
+      continue
+    }
     const root = lineGroupRootOfVariant(v, ln.code)
-    if (!root) continue
+    if (!root) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Dòng bị từ chối:',
+        raw,
+        'Lý do: không tính được nhóm mã (thiếu/không hợp lệ ma_hang trên danh mục)',
+        { catalog_ma_hang: v?.code }
+      )
+      continue
+    }
     const net = inboundLineNetPurchaseTotal(ln)
     const srv = serverByMaHang?.get(String(v.code || '').trim())
     const conv = conversionToBaseForVariant(v, srv)
@@ -190,7 +229,7 @@ export function parseServerTonAndCost(row) {
  */
 export function collectInboundMaHangCodes(catalogList, lines) {
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
-  const byId = new Map(flat.map((v) => [v.id, v]))
+  const byId = new Map(flat.map((v) => [String(v.id), v]))
   const byRoot = new Map()
   for (const v of flat) {
     const root = lineGroupRootOfVariant(v)
@@ -202,7 +241,11 @@ export function collectInboundMaHangCodes(catalogList, lines) {
   const s = new Set()
   for (const raw of lines || []) {
     const ln = normalizeInboundLineForCost(raw)
-    const v = byId.get(ln.variantId)
+    let v = byId.get(String(ln.variantId)) ?? byId.get(ln.variantId)
+    if (!v) {
+      const codeLc = String(ln.code ?? '').trim().toLowerCase()
+      if (codeLc) v = flat.find((x) => String(x?.code ?? '').trim().toLowerCase() === codeLc)
+    }
     const root = v ? lineGroupRootOfVariant(v, ln.code) : ''
     if (!root) {
       const c = String(v?.code || ln.code || '').trim()
@@ -224,7 +267,7 @@ export function computeInboundFulfillmentPlan(
   priorOrderLines
 ) {
   const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
-  const byVid = new Map(flat.map((v) => [v.id, v]))
+  const byVid = new Map(flat.map((v) => [String(v.id), v]))
   const groupMembers = new Map()
   for (const v of flat) {
     const root = lineGroupRootOfVariant(v)
@@ -234,9 +277,9 @@ export function computeInboundFulfillmentPlan(
     groupMembers.set(root, prev)
   }
 
-  const aggNew = aggregateInboundPurchaseByGroupRoot(inboundFormLines, byVid, serverByMaHang)
+  const aggNew = aggregateInboundPurchaseByGroupRoot(inboundFormLines, byVid, serverByMaHang, flat)
   const aggOld = priorOrderLines?.length
-    ? aggregateInboundPurchaseByGroupRoot(priorOrderLines, byVid, serverByMaHang)
+    ? aggregateInboundPurchaseByGroupRoot(priorOrderLines, byVid, serverByMaHang, flat)
     : { byRoot: new Map() }
 
   const keys = new Set([...aggNew.byRoot.keys(), ...aggOld.byRoot.keys()])
