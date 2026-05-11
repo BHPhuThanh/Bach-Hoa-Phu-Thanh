@@ -32,6 +32,7 @@ const SPA_PATH_SUFFIXES = [
   '/dieu-chinh-gia',
   '/khach-hang',
   '/nhan-vien',
+  '/nha-cung-cap',
 ]
 
 function applyDoanhThuFallback(req, next) {

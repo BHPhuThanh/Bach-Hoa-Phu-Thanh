@@ -13,6 +13,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { buildK80ReceiptHtml, RECEIPT_STORE_NAME } from './receiptHtml.js'
 import AdminHubRevenuePanel from './AdminHubRevenuePanel.jsx'
 import AdminHubTabErrorBoundary from './AdminHubTabErrorBoundary.jsx'
+import { AdminHubMobileChrome } from './AdminHubMobileChrome.jsx'
 import { AdminHubComboModal } from './AdminHubComboModal.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
@@ -47,6 +48,7 @@ import InboundThuongHieuAutocomplete, {
 import { GOODS_DATE_PRESET_OPTIONS, resolveGoodsCreatedAtRangeMs } from './adminHubGoodsDateRange.js'
 import EntityPersonModal from './EntityPersonModal.jsx'
 import SupplierManager from './SupplierManager.jsx'
+import { SimpleVirtualList } from './SimpleVirtualList.jsx'
 import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
@@ -1416,6 +1418,19 @@ export default function AdminHub({
   const [hangHoaDeepLinkListScope, setHangHoaDeepLinkListScope] = useState('all')
   const [hangHoaDeepLinkVid, setHangHoaDeepLinkVid] = useState(null)
   const [goodsQ, setGoodsQ] = useState('')
+  /** Mobile tab Hàng hóa: bộ lọc trong drawer — chỉ UI. */
+  const [goodsMobileFiltersOpen, setGoodsMobileFiltersOpen] = useState(false)
+  useEffect(() => {
+    if (activeTab !== TAB_GOODS) setGoodsMobileFiltersOpen(false)
+  }, [activeTab])
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const on = () => {
+      if (!mq.matches) setGoodsMobileFiltersOpen(false)
+    }
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
   const goodsDeferred = useDeferredValue(goodsQ)
 
   const expandHangHoaGoodsListToFull = useCallback(() => {
@@ -5220,6 +5235,18 @@ export default function AdminHub({
     )
   }, [customers, custDebounced])
 
+  const renderCustomerVirtualRow = useCallback((c) => {
+    return (
+      <div className="ah-cust-virt-row">
+        <div className="ah-cust-virt-cell ah-cust-virt-name">{c.name}</div>
+        <div className="ah-cust-virt-cell ah-cust-virt-phone">{c.phone || '—'}</div>
+        <div className="ah-cust-virt-cell ah-cust-virt-addr ah-cust-virt-muted">{c.address || '—'}</div>
+        <div className="ah-cust-virt-cell ah-cust-virt-cccd">{c.cccd || '—'}</div>
+        <div className="ah-cust-virt-cell ah-cust-virt-mail ah-cust-virt-muted">{c.mail || '—'}</div>
+      </div>
+    )
+  }, [])
+
   const [staffQ, setStaffQ] = useState('')
   const staffDebounced = useDebounced(staffQ, 120)
   const [staffRows, setStaffRows] = useState(STAFF_ROWS_DEFAULT)
@@ -5497,6 +5524,15 @@ export default function AdminHub({
       }${activeTab === TAB_COST_ADJUST ? ' admin-hub--cost-adjust-tab' : ''}`}
     >
       <nav className="admin-hub-nav" aria-label="Menu quản trị">
+        <AdminHubMobileChrome
+          adminHubNavTabs={adminHubNavTabs}
+          activeTab={activeTab}
+          onAdminHubNavItemActivate={onAdminHubNavItemActivate}
+          closeSoloProductTabByVariantId={closeSoloProductTabByVariantId}
+          closeInboundDetailTabByOrderId={closeInboundDetailTabByOrderId}
+          closePosDetailTabByOrderId={closePosDetailTabByOrderId}
+          closePosReturnDetailTabByLedgerId={closePosReturnDetailTabByLedgerId}
+        />
         <div className="admin-hub-nav-inner">
           <div className="admin-hub-nav-brand" title={RECEIPT_STORE_NAME}>
             <span className="admin-hub-nav-store">{RECEIPT_STORE_NAME}</span>
@@ -5731,22 +5767,54 @@ export default function AdminHub({
 
             <div className="ah-goods-toolbar">
               <div className="ah-goods-toolbar-left ah-goods-toolbar-left--with-filters">
-                <div className="ah-goods-search-wrap ah-goods-search-wrap--solo">
-                  <input
-                    className="ah-goods-search"
-                    type="search"
-                    placeholder="Theo mã, tên hàng"
-                    value={goodsQ}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      setGoodsQ(v)
-                      if (v.trim()) setHangHoaDeepLinkListScope('all')
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
+                <div className="ah-goods-search-filter-trigger-row">
+                  <div className="ah-goods-search-wrap ah-goods-search-wrap--solo">
+                    <input
+                      className="ah-goods-search"
+                      type="search"
+                      placeholder="Theo mã, tên hàng"
+                      value={goodsQ}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setGoodsQ(v)
+                        if (v.trim()) setHangHoaDeepLinkListScope('all')
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="ah-goods-mobile-filter-open"
+                    onClick={() => setGoodsMobileFiltersOpen(true)}
+                  >
+                    Lọc
+                  </button>
                 </div>
-                <div className="ah-goods-toolbar-filters" aria-label="Bộ lọc danh mục">
+                {goodsMobileFiltersOpen ? (
+                  <button
+                    type="button"
+                    className="ah-goods-filter-drawer-backdrop"
+                    aria-label="Đóng bộ lọc"
+                    onClick={() => setGoodsMobileFiltersOpen(false)}
+                  />
+                ) : null}
+                <div
+                  className={`ah-goods-toolbar-filters ah-goods-filters-drawer-target${
+                    goodsMobileFiltersOpen ? ' is-open' : ''
+                  }`}
+                  aria-label="Bộ lọc danh mục"
+                >
+                  <div className="ah-goods-filter-drawer-head">
+                    <span className="ah-goods-filter-drawer-title">Bộ lọc</span>
+                    <button
+                      type="button"
+                      className="ah-goods-filter-drawer-done"
+                      onClick={() => setGoodsMobileFiltersOpen(false)}
+                    >
+                      Xong
+                    </button>
+                  </div>
                   <div className="ah-goods-filter-field">
                     <label className="ah-goods-filter-lbl" htmlFor="ah-goods-date-preset">
                       Ngày tạo
@@ -6461,25 +6529,20 @@ export default function AdminHub({
                 + Thêm khách hàng mới
               </button>
             </div>
-            <div className="admin-hub-table-wrap">
-              <table className="admin-hub-table">
-                <thead>
-                  <tr>
-                    <th>Họ tên</th>
-                    <th>Số điện thoại</th>
-                    <th>Địa chỉ</th>
-                    <th>Số CCCD</th>
-                    <th>Mail</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customersRemoteLoading && isSupabaseConfigured() ? (
+            <div className="admin-hub-table-wrap ah-cust-table-wrap">
+              {customersRemoteLoading && isSupabaseConfigured() ? (
+                <table className="admin-hub-table">
+                  <tbody>
                     <tr>
                       <td colSpan={5} className="admin-hub-muted">
                         Đang tải danh sách từ Supabase (một lần)…
                       </td>
                     </tr>
-                  ) : custFiltered.length === 0 ? (
+                  </tbody>
+                </table>
+              ) : custFiltered.length === 0 ? (
+                <table className="admin-hub-table">
+                  <tbody>
                     <tr>
                       <td colSpan={5} className="admin-hub-muted">
                         {customers.length === 0
@@ -6487,8 +6550,43 @@ export default function AdminHub({
                           : 'Không có khách khớp tìm kiếm.'}
                       </td>
                     </tr>
-                  ) : (
-                    custFiltered.map((c, i) => (
+                  </tbody>
+                </table>
+              ) : custFiltered.length > 120 ? (
+                <div className="ah-cust-virt-host">
+                  <div className="ah-cust-virt-header" aria-hidden>
+                    <span>Họ tên</span>
+                    <span>Số điện thoại</span>
+                    <span>Địa chỉ</span>
+                    <span>Số CCCD</span>
+                    <span>Mail</span>
+                  </div>
+                  <AutoSizer>
+                    {({ height, width }) => (
+                      <SimpleVirtualList
+                        height={height}
+                        width={width}
+                        rows={custFiltered}
+                        rowHeight={52}
+                        renderRow={renderCustomerVirtualRow}
+                        overscanCount={12}
+                      />
+                    )}
+                  </AutoSizer>
+                </div>
+              ) : (
+                <table className="admin-hub-table">
+                  <thead>
+                    <tr>
+                      <th>Họ tên</th>
+                      <th>Số điện thoại</th>
+                      <th>Địa chỉ</th>
+                      <th>Số CCCD</th>
+                      <th>Mail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {custFiltered.map((c, i) => (
                       <tr key={`${c.name}-${c.phone}-${i}`}>
                         <td>{c.name}</td>
                         <td>{c.phone || '—'}</td>
@@ -6496,10 +6594,10 @@ export default function AdminHub({
                         <td>{c.cccd || '—'}</td>
                         <td>{c.mail || '—'}</td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </section>
         )}
@@ -7016,7 +7114,7 @@ export default function AdminHub({
                       />
                     </div>
                   </div>
-                  <div className="admin-hub-table-wrap ah-solo-stock-table-wrap">
+                  <div className="admin-hub-table-wrap ah-solo-stock-table-wrap ah-solo-stock-table-wrap--bounded">
                     <table className="admin-hub-table ah-solo-stock-table">
                       <thead>
                         <tr>

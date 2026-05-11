@@ -6918,3 +6918,568 @@ li.ah-inbound-suggest-empty {
     transform: rotate(360deg);
   }
 }
+
+/* ——— PWA / Mobile shell: dock + hamburger + touch targets ——— */
+.ah-mnav-burger {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin-right: 0.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ah-mnav-burger-lines {
+  display: block;
+  width: 1.35rem;
+  height: 2px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 7px 0 #fff, 0 -7px 0 #fff;
+}
+
+.ah-mnav-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100050;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.ah-mnav-sheet {
+  width: 100%;
+  max-width: 520px;
+  max-height: min(88vh, 720px);
+  background: #0f172a;
+  border-radius: 16px 16px 0 0;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  color: #e2e8f0;
+}
+
+.ah-mnav-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.ah-mnav-sheet-title {
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+.ah-mnav-sheet-close {
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ah-mnav-sheet-scroll {
+  overflow-y: auto;
+  padding: 0.5rem 0.65rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ah-mnav-sheet-tab,
+.ah-mnav-sheet-tab--plain {
+  min-height: 48px;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f1f5f9;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.ah-mnav-sheet-tab.is-active,
+.ah-mnav-sheet-tab--plain.is-active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #fff;
+}
+
+.ah-mnav-sheet-pill {
+  display: flex;
+  align-items: stretch;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.ah-mnav-sheet-pill.is-active {
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+.ah-mnav-sheet-pill .ah-mnav-sheet-tab {
+  flex: 1 1 auto;
+  border-radius: 0;
+  border: none;
+}
+
+.ah-mnav-sheet-tab-x {
+  min-width: 48px;
+  border: none;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fecaca;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.ah-mnav-dock {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .ah-mnav-burger {
+    display: inline-flex;
+  }
+
+  .admin-hub-nav-inner {
+    display: none !important;
+  }
+
+  .admin-hub-nav {
+    flex-wrap: nowrap;
+    padding-bottom: max(0.35rem, env(safe-area-inset-top, 0px));
+  }
+
+  .admin-hub-main {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .ah-mnav-dock {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100040;
+    padding: 0.35rem 0.4rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, #0b1220 100%);
+    border-top: 1px solid rgba(148, 163, 184, 0.22);
+    gap: 0.2rem;
+    justify-content: space-between;
+    box-sizing: border-box;
+  }
+
+  .ah-mnav-dock-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.08rem;
+    padding: 0.2rem 0.15rem;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #94a3b8;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .ah-mnav-dock-btn.is-active {
+    background: rgba(56, 189, 248, 0.15);
+    color: #e0f2fe;
+  }
+
+  .ah-mnav-dock-short {
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  .ah-mnav-dock-label {
+    font-size: 0.62rem;
+    font-weight: 600;
+    line-height: 1.1;
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-hub-tab,
+  .admin-hub-tab-x,
+  .ah-hub-add-entity-btn,
+  .admin-hub-sell {
+    min-height: 44px;
+  }
+
+  .admin-hub-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Hàng hóa — drawer lọc (mobile) */
+.ah-goods-search-filter-trigger-row {
+  display: contents;
+}
+
+.ah-goods-mobile-filter-open {
+  display: none;
+}
+
+.ah-goods-filter-drawer-backdrop {
+  display: none;
+}
+
+.ah-goods-filter-drawer-head {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .ah-goods-search-filter-trigger-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .ah-goods-search-filter-trigger-row .ah-goods-search-wrap--solo {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .ah-goods-mobile-filter-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 52px;
+    min-height: 48px;
+    padding: 0 0.75rem;
+    border-radius: 10px;
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    background: rgba(56, 189, 248, 0.12);
+    color: #bae6fd;
+    font-weight: 700;
+    font-size: 0.88rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .ah-goods-filter-drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 100030;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: rgba(15, 23, 42, 0.45);
+    cursor: pointer;
+  }
+
+  .ah-goods-toolbar-filters.ah-goods-filters-drawer-target {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100035;
+    max-height: 78vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0;
+    padding: 0.75rem 0.85rem 1rem;
+    border-radius: 16px 16px 0 0;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.5);
+    transform: translateY(110%);
+    transition: transform 0.22s ease;
+  }
+
+  .ah-goods-toolbar-filters.ah-goods-filters-drawer-target.is-open {
+    transform: translateY(0);
+  }
+
+  .ah-goods-filter-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.65rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  }
+
+  .ah-goods-filter-drawer-title {
+    font-weight: 800;
+    font-size: 1rem;
+    color: #f8fafc;
+  }
+
+  .ah-goods-filter-drawer-done {
+    min-height: 44px;
+    padding: 0 0.85rem;
+    border-radius: 10px;
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    background: rgba(56, 189, 248, 0.15);
+    color: #e0f2fe;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+  }
+}
+
+/* Khách hàng — virtual list */
+.ah-cust-virt-host {
+  display: flex;
+  flex-direction: column;
+  height: min(62vh, 560px);
+  min-height: 220px;
+  width: 100%;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1419;
+}
+
+.ah-cust-virt-host > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.ah-cust-virt-header {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 1.4fr 0.75fr 1fr;
+  gap: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.15);
+  flex-shrink: 0;
+}
+
+.ah-cust-virt-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 1.4fr 0.75fr 1fr;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0 0.55rem;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+  font-size: 0.82rem;
+}
+
+.ah-cust-virt-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ah-cust-virt-name {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.ah-cust-virt-muted {
+  color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  .ah-cust-virt-header {
+    display: none;
+  }
+
+  .ah-cust-virt-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    padding: 0.55rem 0.65rem;
+    white-space: normal;
+  }
+
+  .ah-cust-virt-cell {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .ah-cust-virt-cell::before {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.08rem;
+  }
+
+  .ah-cust-virt-name::before {
+    content: 'Họ tên';
+  }
+
+  .ah-cust-virt-phone::before {
+    content: 'SĐT';
+  }
+
+  .ah-cust-virt-addr::before {
+    content: 'Địa chỉ';
+  }
+
+  .ah-cust-virt-cccd::before {
+    content: 'CCCD';
+  }
+
+  .ah-cust-virt-mail::before {
+    content: 'Mail';
+  }
+}
+
+/* NCC — virtual + card mobile */
+.ah-sup-virt-host {
+  display: flex;
+  flex-direction: column;
+  height: min(62vh, 560px);
+  min-height: 220px;
+  width: 100%;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1419;
+}
+
+.ah-sup-virt-host > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.ah-sup-virt-header {
+  display: grid;
+  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.15);
+  flex-shrink: 0;
+}
+
+.ah-sup-virt-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0 0.5rem;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+  font-size: 0.8rem;
+}
+
+.ah-sup-virt-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ah-sup-virt-id {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.ah-sup-virt-muted {
+  color: #94a3b8;
+}
+
+.ah-supplier-virt-card {
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0.45rem 0.55rem;
+  margin: 0 0.35rem;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: linear-gradient(165deg, #1a2332 0%, #141a22 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  justify-content: center;
+}
+
+.ah-supplier-virt-card-top {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.ah-supplier-virt-id {
+  font-size: 0.68rem;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.ah-supplier-virt-name-btn {
+  text-align: left;
+  font-size: 0.95rem;
+  min-height: 44px;
+}
+
+.ah-supplier-virt-meta {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.ah-supplier-virt-meta-sep {
+  opacity: 0.5;
+}
+
+.ah-supplier-virt-addr {
+  font-size: 0.76rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+/* Lịch sử kho — giới hạn chiều cao, cuộn mượt */
+.ah-solo-stock-table-wrap--bounded {
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}

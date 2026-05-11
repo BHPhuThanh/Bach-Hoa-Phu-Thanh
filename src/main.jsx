@@ -8,6 +8,7 @@ import DoanhThuPage from './DoanhThuPage.jsx'
 import StockCheckCreatePage from './StockCheckCreatePage.jsx'
 import InboundCreatePage from './InboundCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
+import { registerPwaServiceWorker } from './pwaRegister.js'
 
 function appRouterBasename() {
   const raw = import.meta.env.BASE_URL || '/'
@@ -17,6 +18,7 @@ function appRouterBasename() {
 
 async function boot() {
   await clearCatalogBrowserCacheOnBoot()
+  registerPwaServiceWorker()
   const el = document.getElementById('root')
   if (!el) return
   createRoot(el).render(

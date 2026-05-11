@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AutoSizer } from 'react-virtualized-auto-sizer'
 import EntityPersonModal from './EntityPersonModal.jsx'
 import {
   formatPostgrestErrorForUser,
@@ -6,6 +7,8 @@ import {
   updateSupplierSupabase,
 } from './entityContactsRepository.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { SimpleVirtualList } from './SimpleVirtualList.jsx'
+import { useViewportMaxWidth } from './useViewportMaxWidth.js'
 import './adminHub.css'
 
 function normalizeSupplierRow(row) {
@@ -27,7 +30,10 @@ function localFallbackSupplierId() {
 /**
  * Tab «Nhà cung cấp» — tách khỏi Nhập hàng. Fetch một lần khi mount (tab được chọn lần đầu).
  */
+const SUPPLIER_VIRTUAL_MIN = 50
+
 export default function SupplierManager({ revenueReadOnly = false }) {
+  const isMobileLayout = useViewportMaxWidth(768)
   const [suppliers, setSuppliers] = useState([])
   const [fetchPhase, setFetchPhase] = useState('idle')
   const [searchQ, setSearchQ] = useState('')
@@ -172,6 +178,56 @@ export default function SupplierManager({ revenueReadOnly = false }) {
     }
   }, [editingSupplier])
 
+  const renderSupplierVirtualRow = useCallback(
+    (r) => {
+      if (isMobileLayout) {
+        return (
+          <div className="ah-supplier-virt-card">
+            <div className="ah-supplier-virt-card-top">
+              <span className="ah-supplier-virt-id">{r.id || '—'}</span>
+              <button
+                type="button"
+                className="ah-inbound-code-link ah-supplier-virt-name-btn"
+                onClick={() => openEdit(r)}
+                disabled={revenueReadOnly}
+              >
+                {r.name || '—'}
+              </button>
+            </div>
+            <div className="ah-supplier-virt-meta">
+              <span>{r.phone || '—'}</span>
+              <span className="ah-supplier-virt-meta-sep">·</span>
+              <span>{r.mail || '—'}</span>
+            </div>
+            {r.address ? <div className="ah-supplier-virt-addr">{r.address}</div> : null}
+          </div>
+        )
+      }
+      return (
+        <div className="ah-sup-virt-row">
+          <div className="ah-sup-virt-cell ah-sup-virt-id">{r.id || '—'}</div>
+          <div className="ah-sup-virt-cell">
+            <button
+              type="button"
+              className="ah-inbound-code-link"
+              onClick={() => openEdit(r)}
+              disabled={revenueReadOnly}
+            >
+              {r.name || '—'}
+            </button>
+          </div>
+          <div className="ah-sup-virt-cell">{r.phone || '—'}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.address || '—'}</div>
+          <div className="ah-sup-virt-cell">{r.cccd || '—'}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.mail || '—'}</div>
+        </div>
+      )
+    },
+    [isMobileLayout, openEdit, revenueReadOnly]
+  )
+
+  const supplierVirtRowHeight = isMobileLayout ? 132 : 48
+
   const showLoading = fetchPhase === 'loading' && isSupabaseConfigured()
 
   return (
@@ -199,32 +255,30 @@ export default function SupplierManager({ revenueReadOnly = false }) {
           + Thêm NCC
         </button>
       </div>
-      <div className="admin-hub-table-wrap">
-        <table className="admin-hub-table">
-          <thead>
-            <tr>
-              <th>Mã NCC</th>
-              <th>Tên nhà cung cấp</th>
-              <th>Điện thoại</th>
-              <th>Địa chỉ</th>
-              <th>CCCD</th>
-              <th>Mail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {showLoading ? (
+      <div className="admin-hub-table-wrap ah-supplier-table-wrap">
+        {showLoading ? (
+          <table className="admin-hub-table">
+            <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
                   Đang tải danh sách từ Supabase…
                 </td>
               </tr>
-            ) : fetchPhase === 'error' ? (
+            </tbody>
+          </table>
+        ) : fetchPhase === 'error' ? (
+          <table className="admin-hub-table">
+            <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
                   Không tải được danh sách. Kiểm tra kết nối hoặc quyền đọc bảng «suppliers».
                 </td>
               </tr>
-            ) : filtered.length === 0 ? (
+            </tbody>
+          </table>
+        ) : filtered.length === 0 ? (
+          <table className="admin-hub-table">
+            <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
                   {!isSupabaseConfigured()
@@ -234,8 +288,47 @@ export default function SupplierManager({ revenueReadOnly = false }) {
                       : 'Không có dòng khớp tìm kiếm.'}
                 </td>
               </tr>
-            ) : (
-              filtered.map((r) => (
+            </tbody>
+          </table>
+        ) : filtered.length >= SUPPLIER_VIRTUAL_MIN ? (
+          <div className="ah-sup-virt-host">
+            {!isMobileLayout ? (
+              <div className="ah-sup-virt-header" aria-hidden>
+                <span>Mã NCC</span>
+                <span>Tên NCC</span>
+                <span>Điện thoại</span>
+                <span>Địa chỉ</span>
+                <span>CCCD</span>
+                <span>Mail</span>
+              </div>
+            ) : null}
+            <AutoSizer>
+              {({ height, width }) => (
+                <SimpleVirtualList
+                  height={height}
+                  width={width}
+                  rows={filtered}
+                  rowHeight={supplierVirtRowHeight}
+                  renderRow={renderSupplierVirtualRow}
+                  overscanCount={10}
+                />
+              )}
+            </AutoSizer>
+          </div>
+        ) : (
+          <table className="admin-hub-table">
+            <thead>
+              <tr>
+                <th>Mã NCC</th>
+                <th>Tên nhà cung cấp</th>
+                <th>Điện thoại</th>
+                <th>Địa chỉ</th>
+                <th>CCCD</th>
+                <th>Mail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
                 <tr key={r.id}>
                   <td className="admin-hub-muted" style={{ fontSize: '0.9em' }}>
                     {r.id || '—'}
@@ -256,10 +349,10 @@ export default function SupplierManager({ revenueReadOnly = false }) {
                   <td>{r.cccd || '—'}</td>
                   <td>{r.mail || '—'}</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <EntityPersonModal
