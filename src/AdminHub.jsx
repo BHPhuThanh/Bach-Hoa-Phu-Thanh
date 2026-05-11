@@ -677,6 +677,56 @@ function createInboundFormLineFromProductVariant(product, variant) {
   }
 }
 
+/** Gộp biến thể vừa tạo (modal) chờ đồng bộ props — chỉ trong luồng phiếu nhập. */
+function mergeInboundPendingFlatVariantsById(prev, incoming) {
+  const map = new Map()
+  for (const r of prev || []) {
+    if (!r || r.id == null) continue
+    map.set(String(r.id), r)
+  }
+  for (const r of incoming || []) {
+    if (!r || r.id == null) continue
+    map.set(String(r.id), r)
+  }
+  return [...map.values()]
+}
+
+function flattenCatalogVariantIdsForInboundMerge(catalog) {
+  const out = []
+  for (const p of catalog || []) {
+    const vars = Array.isArray(p.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    for (const v of vars) {
+      if (v?.id == null || !String(v.id).trim()) continue
+      out.push(String(v.id))
+    }
+  }
+  return new Set(out)
+}
+
+function appendInboundDraftLinesFromFlatRows(setInboundFormLines, flatRows) {
+  if (!flatRows?.length) return
+  let display = []
+  try {
+    display = prepareCatalogForPosSearch(buildDisplayCatalog(flatRows))
+  } catch (e) {
+    console.warn('[AdminHub appendInboundDraftLinesFromFlatRows]', e)
+    return
+  }
+  setInboundFormLines((prev) => {
+    const next = [...prev]
+    for (const prod of display) {
+      const vars =
+        Array.isArray(prod.groupVariants) && prod.groupVariants.length > 0
+          ? prod.groupVariants
+          : [prod]
+      for (const v of vars) {
+        next.push(createInboundFormLineFromProductVariant(prod, v))
+      }
+    }
+    return next
+  })
+}
+
 function defaultInboundOrders() {
   const now = Date.now()
   return [
@@ -924,6 +974,9 @@ export default function AdminHub({
     if (hangHoaGoodsOpenRequest?.rawId) return TAB_GOODS
     return TAB_OVERVIEW
   })
+  /** Để callback modal tạo hàng chỉ chỉnh lưới nhập / staging khi đang ở tab nháp nhập hàng */
+  const activeTabForInboundSyncRef = useRef(activeTab)
+  activeTabForInboundSyncRef.current = activeTab
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -1146,6 +1199,34 @@ export default function AdminHub({
   }, [parentCatalogSupplied])
 
   const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+
+  /** Biến thể vừa thêm qua modal «Tạo mới» trên phiếu nhập (chờ `products` từ App kịp cập nhật). Được dọn trong useLayoutEffect khi đã có trong danh mục. */
+  const [inboundPendingNewFlatVariants, setInboundPendingNewFlatVariants] = useState([])
+
+  useLayoutEffect(() => {
+    if (!inboundPendingNewFlatVariants.length) return
+    const inCat = flattenCatalogVariantIdsForInboundMerge(catalogList)
+    setInboundPendingNewFlatVariants((prev) => {
+      const next = prev.filter((r) => r && !inCat.has(String(r.id)))
+      return next.length === prev.length ? prev : next
+    })
+  }, [catalogList, inboundPendingNewFlatVariants])
+
+  const catalogListForInbound = useMemo(() => {
+    if (!inboundPendingNewFlatVariants.length) return catalogList
+    const inCat = flattenCatalogVariantIdsForInboundMerge(catalogList)
+    const extra = inboundPendingNewFlatVariants.filter((r) => r && !inCat.has(String(r.id)))
+    if (!extra.length) return catalogList
+    let injected = []
+    try {
+      injected = prepareCatalogForPosSearch(buildDisplayCatalog(extra))
+    } catch (e) {
+      console.warn('[AdminHub catalogListForInbound]', e)
+      return catalogList
+    }
+    return catalogList.length === 0 ? injected : [...catalogList, ...injected]
+  }, [catalogList, inboundPendingNewFlatVariants])
+
   const catalogListRef = useRef(catalogList)
   catalogListRef.current = catalogList
   const catalogDisplayName = parentCatalogSupplied
@@ -2824,12 +2905,12 @@ export default function AdminHub({
 
   const inboundProductSuggest = useMemo(() => {
     const raw = inboundFormProductDebounced.trim()
-    if (!raw || catalogList.length === 0) return []
-    return suggestCatalogVariantPairsV9(catalogList, raw, {
+    if (!raw || catalogListForInbound.length === 0) return []
+    return suggestCatalogVariantPairsV9(catalogListForInbound, raw, {
       maxHits: 20,
       surface: 'admin-inbound-product-suggest',
     })
-  }, [catalogList, inboundFormProductDebounced])
+  }, [catalogListForInbound, inboundFormProductDebounced])
 
   const inboundDraftProductQuickAdd = !revenueReadOnly
   const inboundProductSuggestPanelOpen = useMemo(
@@ -2917,6 +2998,42 @@ export default function AdminHub({
     }
   }, [])
 
+  /** Modal «Tạo mới»: đồng bộ staging + một dòng lưới (SL=1); gọi App append — chỉ trong tab nháp nhập hàng. */
+  const appendCatalogVariantsFromInboundProductModal = useCallback(
+    (rows) => {
+      const list = Array.isArray(rows) ? rows : []
+      if (
+        activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
+        list.length > 0
+      ) {
+        setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, list))
+        appendInboundDraftLinesFromFlatRows(setInboundFormLines, list)
+      }
+      if (typeof onAppendCatalogVariants === 'function') {
+        onAppendCatalogVariants(rows)
+      }
+    },
+    [onAppendCatalogVariants]
+  )
+
+  /** Nhánh standalone: modal gọi persist — staging + lưới giống trên sau khi lưu thành công. */
+  const persistStandaloneProductsForInboundModal = useCallback(
+    async (nextProducts, fileNameHint, upsertOnlyVariants) => {
+      const result = await persistStandaloneProducts(nextProducts, fileNameHint, upsertOnlyVariants)
+      const extras = upsertOnlyVariants
+      if (
+        activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
+        Array.isArray(extras) &&
+        extras.length > 0
+      ) {
+        setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, extras))
+        appendInboundDraftLinesFromFlatRows(setInboundFormLines, extras)
+      }
+      return result
+    },
+    [persistStandaloneProducts]
+  )
+
   const toggleInboundQuickPickSel = useCallback((vid) => {
     const id = String(vid)
     setInboundQuickPickSelected((prev) => {
@@ -2932,7 +3049,7 @@ export default function AdminHub({
       const have = new Set(cur.map((l) => String(l.variantId)))
       const toAdd = []
       let brandHint = ''
-      for (const r of flattenCatalogToGoodsSearchRows(catalogList)) {
+      for (const r of flattenCatalogToGoodsSearchRows(catalogListForInbound)) {
         const vid = String(r._variant.id)
         if (!inboundQuickPickSelected.has(vid)) continue
         if (have.has(vid)) continue
@@ -2953,7 +3070,7 @@ export default function AdminHub({
     setInboundQuickPickOpen(false)
     setInboundQuickPickSelected(new Set())
     setInboundFormProductQ('')
-  }, [catalogList, inboundQuickPickSelected])
+  }, [catalogListForInbound, inboundQuickPickSelected])
 
   const updateInboundFormLine = useCallback((lineId, patch) => {
     setInboundFormLines((prev) =>
@@ -3202,7 +3319,7 @@ export default function AdminHub({
       })
       if (valid.length === 0) return
       if (onUpdateCatalogVariant) {
-        const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+        const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
         for (const l of valid) {
           const n = normalizeInboundLine(l)
           const v = flat.find((x) => x.id === n.variantId)
@@ -3228,7 +3345,7 @@ export default function AdminHub({
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
     },
     [
-      catalogList,
+      catalogListForInbound,
       onUpdateCatalogVariant,
       standaloneCatalog,
       persistStandaloneProducts,
@@ -3240,7 +3357,7 @@ export default function AdminHub({
     (deltaByVariant) => {
       if (!deltaByVariant || deltaByVariant.size === 0) return
       if (onUpdateCatalogVariant) {
-        const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+        const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
         for (const [variantId, delta] of deltaByVariant) {
           if (!delta) continue
           const v = flat.find((x) => x.id === variantId)
@@ -3265,7 +3382,7 @@ export default function AdminHub({
       const nextProducts = buildDisplayCatalog(nextFlat)
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
     },
-    [catalogList, onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
+    [catalogListForInbound, onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
   )
 
   const applyInboundStockDeltasFromNetMaps = useCallback(
@@ -3429,7 +3546,7 @@ export default function AdminHub({
       alert('Thêm ít nhất một dòng hàng với số lượng > 0 để hoàn thành phiếu.')
       return
     }
-    if (catalogList.length === 0) {
+    if (catalogListForInbound.length === 0) {
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
@@ -3437,7 +3554,7 @@ export default function AdminHub({
       const priorLines = inboundFormEditOrderId
         ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
         : null
-      const codes = collectInboundMaHangCodes(catalogList, inboundFormLines)
+      const codes = collectInboundMaHangCodes(catalogListForInbound, inboundFormLines)
       let serverMap = new Map()
       if (codes.length > 0 && isSupabaseConfigured()) {
         try {
@@ -3451,7 +3568,7 @@ export default function AdminHub({
         }
       }
       const { diffs, patches } = computeInboundFulfillmentPlan(
-        catalogList,
+        catalogListForInbound,
         inboundFormLines,
         serverMap,
         priorLines || undefined
@@ -3480,7 +3597,7 @@ export default function AdminHub({
   }, [
     inboundFormSupplierName,
     inboundFormLines,
-    catalogList,
+    catalogListForInbound,
     inboundOrders,
     inboundFormEditOrderId,
     finalizeInboundCompleted,
@@ -3728,13 +3845,13 @@ export default function AdminHub({
       alert('Không còn dòng hàng để hoàn trả.')
       return
     }
-    if (catalogList.length === 0) {
+    if (catalogListForInbound.length === 0) {
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
     setInboundReturnQtyDraft({})
     setInboundReturnModal(row)
-  }, [catalogList.length])
+  }, [catalogListForInbound.length])
 
   const confirmInboundReturnSubmit = useCallback(() => {
     if (!inboundReturnModal) return
@@ -3880,7 +3997,7 @@ export default function AdminHub({
   }, [])
 
   const changeInboundDetailDraftUnit = useCallback((orderId, line, newLabelRaw) => {
-    const res = applyInboundLineUnitChange(catalogList, line, newLabelRaw)
+    const res = applyInboundLineUnitChange(catalogListForInbound, line, newLabelRaw)
     if (!res.ok || !res.changed) return
     setInboundDetailLineDrafts((prev) => {
       const cur = prev[orderId]
@@ -3890,7 +4007,7 @@ export default function AdminHub({
         [orderId]: cur.map((l) => (l.lineId === line.lineId ? res.line : l)),
       }
     })
-  }, [catalogList])
+  }, [catalogListForInbound])
 
   const submitInboundDetailCommit = useCallback(() => {
     const oid = parseInboundDetailTabId(activeTab)
@@ -3899,7 +4016,7 @@ export default function AdminHub({
     if (!draft) return
     const prevRow = inboundOrders.find((o) => o.id === oid)
     if (!prevRow) return
-    if (catalogList.length === 0) {
+    if (catalogListForInbound.length === 0) {
       alert('Chưa có danh mục hàng — không thể cập nhật tồn kho.')
       return
     }
@@ -3923,8 +4040,8 @@ export default function AdminHub({
     void (async () => {
       const codes = [
         ...new Set([
-          ...collectInboundMaHangCodes(catalogList, normLines),
-          ...collectInboundMaHangCodes(catalogList, prevRow.lines || []),
+          ...collectInboundMaHangCodes(catalogListForInbound, normLines),
+          ...collectInboundMaHangCodes(catalogListForInbound, prevRow.lines || []),
         ]),
       ]
       let serverMap = new Map()
@@ -3940,7 +4057,7 @@ export default function AdminHub({
         }
       }
       const { diffs, patches } = computeInboundFulfillmentPlan(
-        catalogList,
+        catalogListForInbound,
         normLines,
         serverMap,
         prevRow.lines
@@ -3989,7 +4106,7 @@ export default function AdminHub({
     activeTab,
     inboundDetailLineDrafts,
     inboundOrders,
-    catalogList,
+    catalogListForInbound,
     applyInboundFulfillmentPatches,
     recordInboundCompletionHistory,
     triggerInboundSaveToast,
@@ -7036,7 +7153,7 @@ export default function AdminHub({
                         ) : (
                           (inboundDetailDraftLines ?? inboundDetailOrderRow.lines).map((rawLn, idx) => {
                             const ln = normalizeInboundLine(rawLn)
-                            const inboundDvtOptions = buildInboundDvtSelectOptions(catalogList, ln)
+                            const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
                             const inboundDvtLocked = inboundDvtOptions.length <= 1
                             return (
                               <tr key={ln.lineId}>
@@ -7618,12 +7735,12 @@ export default function AdminHub({
                           }
                         }
 
-                        if (catalogList.length === 0) return
+                        if (catalogListForInbound.length === 0) return
 
                         e.preventDefault()
                         if (posQueryLooksLikeBarcodeKeyInput(q)) {
                           const needle = String(normalizeBarcodeValue(q))
-                          for (const p of catalogList) {
+                          for (const p of catalogListForInbound) {
                             for (const v of p.groupVariants || [p]) {
                               if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
                                 addInboundFormLine(p, v)
@@ -7708,7 +7825,7 @@ export default function AdminHub({
                   </button>
                 </div>
 
-                {catalogList.length === 0 && (
+                {catalogListForInbound.length === 0 && (
                   <p className="admin-hub-muted ah-inbound-catalog-warn">
                     Chưa có danh mục hàng trên trình duyệt này — có thể lưu phiếu tạm, nhưng{' '}
                     <strong>Hoàn thành</strong> sẽ không cập nhật được tồn kho.
@@ -7754,7 +7871,7 @@ export default function AdminHub({
                         </tr>
                       ) : (
                         inboundFormLines.map((ln, idx) => {
-                          const inboundDvtOptions = buildInboundDvtSelectOptions(catalogList, ln)
+                          const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
                           const inboundDvtLocked = inboundDvtOptions.length <= 1
                           return (
                           <tr key={ln.lineId}>
@@ -7799,7 +7916,7 @@ export default function AdminHub({
                               className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-td-ncc"
                               title="thuong_hieu (file danh mục / trường brand)"
                             >
-                              {inboundLineThuongHieuResolved(ln, catalogList) || '—'}
+                              {inboundLineThuongHieuResolved(ln, catalogListForInbound) || '—'}
                             </td>
                             <td className="ah-inbound-ln-mid ah-inbound-ln-dvt-cell ah-inbound-ln-spread">
                               <select
@@ -7813,7 +7930,7 @@ export default function AdminHub({
                                 }
                                 value={normalizeCatalogUnitLabel(ln.unitLabel)}
                                 onChange={(e) => {
-                                  const res = applyInboundLineUnitChange(catalogList, ln, e.target.value)
+                                  const res = applyInboundLineUnitChange(catalogListForInbound, ln, e.target.value)
                                   if (!res.ok || !res.changed) return
                                   updateInboundFormLine(ln.lineId, res.line)
                                 }}
@@ -8109,7 +8226,7 @@ export default function AdminHub({
 
       <CostAdjustQuickPickModal
         open={inboundQuickPickOpen && activeTab === TAB_INBOUND_DRAFT}
-        products={catalogList}
+        products={catalogListForInbound}
         selectedIds={inboundQuickPickSelected}
         onToggleId={toggleInboundQuickPickSel}
         onConfirm={confirmInboundQuickPick}
@@ -8599,12 +8716,12 @@ export default function AdminHub({
       <AdminHubGoodsCreateModal
         open={goodsNewModalOpen}
         onClose={() => setGoodsNewModalOpen(false)}
-        catalogList={catalogList}
+        catalogList={activeTab === TAB_INBOUND_DRAFT ? catalogListForInbound : catalogList}
         brandAutocompleteOptions={inboundNccAutocompleteOptions}
         onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
         revenueReadOnly={revenueReadOnly}
-        onAppendCatalogVariants={onAppendCatalogVariants}
-        persistStandaloneProducts={persistStandaloneProducts}
+        onAppendCatalogVariants={appendCatalogVariantsFromInboundProductModal}
+        persistStandaloneProducts={persistStandaloneProductsForInboundModal}
         fileNameHint={standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'}
         onSaved={triggerGoodsSaveSuccessToast}
         disableEnforceFocus={supplierModalOpen}
