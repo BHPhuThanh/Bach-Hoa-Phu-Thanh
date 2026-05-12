@@ -1498,6 +1498,42 @@
   font-size: 0.8rem;
 }
 
+.ah-catalog-sync-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 0.65rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(15, 52, 96, 0.08);
+  border: 1px solid rgba(15, 52, 96, 0.18);
+}
+
+.ah-catalog-sync-banner__text {
+  flex: 1 1 180px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #0f3460;
+}
+
+.ah-catalog-sync-banner__btn {
+  flex-shrink: 0;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: #0f3460;
+}
+
+.ah-catalog-sync-banner__btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .ah-goods-file-input {
   position: absolute;
   width: 1px;

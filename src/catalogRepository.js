@@ -39,8 +39,61 @@ const PRODUCTS_CREATED_AT_COLUMN = 'created_at'
 /** Danh sách cột SELECT — **phải có `quy_doi`** (và các cột catalog) khi đọc `products`. */
 const PRODUCTS_FETCH_COLUMNS = [...CATALOG_PRODUCT_DB_COLUMNS, PRODUCTS_CREATED_AT_COLUMN].join(',')
 
-/** Mỗi request PostgREST chỉ chứa tối đa N dòng (tránh 500 / giới hạn payload). */
-const PRODUCTS_UPSERT_CHUNK = 200
+/** Giới hạn `in('ma_hang', …)` mỗi request (độ dài URL PostgREST). */
+const PRODUCTS_IN_QUERY_CHUNK = 200
+/** Khi một lần upsert toàn bộ lỗi — tách song song (Promise.all). */
+const PRODUCTS_UPSERT_FALLBACK_CHUNK = 1500
+
+/** `ma_hang` → payload đã finalize (JSON ổn định) — chỉ upsert dòng thay đổi thật sự. */
+const productUpsertBaselineByMaHang = new Map()
+
+function stableSerializeFinalizedProductRow(row) {
+  const keys = Object.keys(row).sort()
+  const o = {}
+  for (const k of keys) o[k] = row[k]
+  return JSON.stringify(o)
+}
+
+/** Gọi sau khi đọc được danh mục từ Supabase/IDB (và sau revalidate). */
+export function seedProductUpsertBaselineFromDisplayCatalog(products) {
+  productUpsertBaselineByMaHang.clear()
+  if (!Array.isArray(products) || products.length === 0) return
+  const flat = flattenDisplayCatalogToVariants(products)
+  const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
+  for (const v of flat) {
+    const raw = pickProductRowDbColumns(displayVariantToProductsRow(v))
+    const code = String(raw[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
+    const fin = finalizeProductRowForSupabase(raw, allow)
+    productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
+  }
+}
+
+function filterFinalizedRowsDiffFromBaseline(rows) {
+  if (!rows.length) return rows
+  if (productUpsertBaselineByMaHang.size === 0) return rows
+  const out = []
+  for (const row of rows) {
+    const code = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
+    const ser = stableSerializeFinalizedProductRow(row)
+    if (productUpsertBaselineByMaHang.get(code) === ser) continue
+    out.push(row)
+  }
+  return out
+}
+
+function mergeBaselineFromUpsertReturnedRows(returnedRows) {
+  if (!Array.isArray(returnedRows) || returnedRows.length === 0) return
+  const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
+  for (const dbRow of returnedRows) {
+    const raw = pickProductRowDbColumns(dbRow)
+    const fin = finalizeProductRowForSupabase(raw, allow)
+    const code = String(fin[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
+    productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
+  }
+}
 
 /**
  * Cột tiền/tồn/khối lượng… — dọn chuỗi số Kiot: bỏ `.` phân nghìn, `,` → `.` thập phân, rồi chuẩn hóa thành chữ số.
@@ -302,52 +355,82 @@ export async function saveProductsTonKhoPatchToSupabase(flatDisplayVariants) {
   if (!Array.isArray(flatDisplayVariants) || flatDisplayVariants.length === 0) {
     return { ok: true, written: 0, skippedUpdate: 0 }
   }
-  const rows = []
+  const tonByMa = new Map()
   for (const v of flatDisplayVariants) {
     const ma = String(v?.code ?? '').trim()
     if (!ma) continue
     const tonStr = cleanKiotAmountToDecimalString(v?.stockQty)
     let tonNum = tonStr === '' ? 0 : Number(tonStr)
     if (!Number.isFinite(tonNum)) tonNum = 0
-    rows.push({ [PRODUCT_PK_COLUMN]: ma, ton_kho: tonNum })
+    tonByMa.set(ma, tonNum)
   }
-  if (rows.length === 0) {
+  if (tonByMa.size === 0) {
     const err = new Error('Cập nhật tồn: không có «Mã hàng» hợp lệ.')
     notifySupabasePersistFailure(err)
     return { ok: false, error: err }
   }
-  let written = 0
-  let skippedUpdate = 0
-  for (const row of rows) {
-    const ma = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
-    const { error } = await sb
-      .from(PRODUCTS_TABLE)
-      .update({ ton_kho: row.ton_kho })
-      .eq(PRODUCT_PK_COLUMN, ma)
-    if (error) {
-      skippedUpdate += 1
-      console.warn(
-        '[saveProductsTonKhoPatchToSupabase] Bỏ qua dòng',
-        ma,
-        formatSupabaseWriteError(error)
-      )
-    } else {
-      written += 1
+  const uniq = [...tonByMa.keys()]
+  try {
+    const fetchParts = []
+    for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
+      fetchParts.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
     }
-  }
-  if (skippedUpdate > 0 && written === 0) {
-    const err = new Error(
-      `Cập nhật «ton_kho» trên Supabase: không ghi được dòng nào (${skippedUpdate}/${rows.length}). Kiểm tra RLS và quyền UPDATE.`
+    const fetchedArrays = await Promise.all(
+      fetchParts.map((part) =>
+        sb.from(PRODUCTS_TABLE).select(PRODUCTS_FETCH_COLUMNS).in(PRODUCT_PK_COLUMN, part)
+      )
     )
-    notifySupabasePersistFailure(err)
-    return { ok: false, error: err, written, skippedUpdate }
-  }
-  if (skippedUpdate > 0) {
-    console.warn(
-      `[saveProductsTonKhoPatchToSupabase] Hoàn tất: ${written}/${rows.length} dòng; ${skippedUpdate} lỗi.`
+    const mergedFinal = []
+    const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
+    let fetchErr = null
+    for (const { data, error } of fetchedArrays) {
+      if (error) {
+        fetchErr = error
+        break
+      }
+      for (const dbRow of data || []) {
+        const ma = String(dbRow[PRODUCT_PK_COLUMN] ?? '').trim()
+        if (!ma || !tonByMa.has(ma)) continue
+        const raw = { ...pickProductRowDbColumns(dbRow), ton_kho: tonByMa.get(ma) }
+        mergedFinal.push(finalizeProductRowForSupabase(raw, allow))
+      }
+    }
+    if (fetchErr) {
+      const err = new Error(
+        describeCatalogPersistError(fetchErr) ||
+          'Đọc «products» để cập nhật tồn: lỗi PostgREST (kiểm tra RLS).'
+      )
+      err.cause = fetchErr
+      notifySupabasePersistFailure(err, fetchErr)
+      return { ok: false, error: err, written: 0, skippedUpdate: uniq.length }
+    }
+    if (mergedFinal.length === 0) {
+      const err = new Error(
+        'Cập nhật tồn: không tìm thấy dòng «products» tương ứng các mã hàng (chưa có trên server?).'
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err, written: 0, skippedUpdate: uniq.length }
+    }
+    const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await upsertRawProductRows(
+      sb,
+      mergedFinal
     )
+    const skippedUpdate = uniq.length - written
+    if (written === 0) {
+      const fromApi =
+        lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
+      const err = new Error(
+        fromApi || `Cập nhật «ton_kho» bulk: không ghi được dòng nào (${skippedUpsert} lỗi).`
+      )
+      if (lastSupabaseError) err.cause = lastSupabaseError
+      notifySupabasePersistFailure(err, lastSupabaseError)
+      return { ok: false, error: err, written: 0, skippedUpdate: uniq.length }
+    }
+    return { ok: true, written, skippedUpdate: Math.max(0, skippedUpdate) }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
   }
-  return { ok: true, written, skippedUpdate }
 }
 
 function catalogSnapshotDedupeKey(products, fileName) {
@@ -433,8 +516,8 @@ async function upsertProductChunkResilient(sb, part) {
 const PRODUCT_ROW_KEYS_FOR_DB = new Set(CATALOG_PRODUCT_DB_COLUMNS)
 
 /**
- * Upsert các dòng đã map {@link displayVariantToProductsRow} (chunk + dedupe theo Mã hàng).
- * @returns {{ written: number, skippedUpsert: number, lastSupabaseError?: object }}
+ * Upsert các dòng `products` — một request bulk; diff theo baseline; fallback Promise.all khi payload lớn lỗi.
+ * @returns {{ written: number, skippedUpsert: number, lastSupabaseError?: object, returnedProductRows?: Array }}
  */
 async function upsertRawProductRows(sb, rawRows) {
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
@@ -453,30 +536,60 @@ async function upsertRawProductRows(sb, rawRows) {
   const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
   const rows = deduped.map((row) => finalizeProductRowForSupabase(pickProductRowDbColumns(row), allow))
   if (rows.length === 0) return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
-  const total = rows.length
-  let written = 0
-  let skippedUpsert = 0
-  let lastSupabaseError = null
-  /** @type {Array<Record<string, unknown>>} */
-  const returnedProductRows = []
-  for (let i = 0; i < rows.length; i += PRODUCTS_UPSERT_CHUNK) {
-    const part = rows.slice(i, i + PRODUCTS_UPSERT_CHUNK)
-    const batchEnd = Math.min(i + part.length, total)
-    console.log(
-      `[saveProductsToSupabase] Đang lưu ${batchEnd}/${total}… (${part.length} dòng / đợt, ${PRODUCT_PK_COLUMN})`
-    )
-    const r = await upsertProductChunkResilient(sb, part)
-    written += r.written
-    skippedUpsert += r.skipped
-    if (r.lastError != null && lastSupabaseError == null) lastSupabaseError = r.lastError
-    if (Array.isArray(r.returnedRows) && r.returnedRows.length) returnedProductRows.push(...r.returnedRows)
+
+  const changed = filterFinalizedRowsDiffFromBaseline(rows)
+  if (changed.length === 0) {
+    return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
   }
+
+  const runPart = async (part) => upsertProductChunkResilient(sb, part)
+  let agg = await runPart(changed)
+  /** Chỉ tách song song khi cả đợt đầu không ghi được dòng nào (thường do payload quá lớn) — tránh upsert trùng khi đã ghi một phần. */
+  const shouldParallelRetry =
+    changed.length > PRODUCTS_UPSERT_FALLBACK_CHUNK &&
+    agg.written === 0 &&
+    agg.skipped > 0
+  if (shouldParallelRetry) {
+    const parts = []
+    for (let i = 0; i < changed.length; i += PRODUCTS_UPSERT_FALLBACK_CHUNK) {
+      parts.push(changed.slice(i, i + PRODUCTS_UPSERT_FALLBACK_CHUNK))
+    }
+    if (parts.length > 1) {
+      const mul = await Promise.all(parts.map((p) => runPart(p)))
+      agg = {
+        written: mul.reduce((s, x) => s + x.written, 0),
+        skipped: mul.reduce((s, x) => s + x.skipped, 0),
+        lastError: mul.find((x) => x.lastError)?.lastError ?? null,
+        returnedRows: mul.flatMap((x) => (Array.isArray(x.returnedRows) ? x.returnedRows : [])),
+      }
+    }
+  }
+
+  if (Array.isArray(agg.returnedRows) && agg.returnedRows.length > 0) {
+    mergeBaselineFromUpsertReturnedRows(agg.returnedRows)
+  } else if (agg.written > 0 && agg.skipped === 0) {
+    for (const fin of changed) {
+      const code = String(fin[PRODUCT_PK_COLUMN] ?? '').trim()
+      if (code) productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
+    }
+  }
+
+  const skippedUpsert = agg.skipped ?? 0
   if (skippedUpsert > 0) {
     console.warn(
-      `[saveProductsToSupabase] Đồng bộ xong: đã ghi ${written}/${total} dòng; ${skippedUpsert} dòng bị bỏ qua do lỗi API.`
+      `[saveProductsToSupabase] Đồng bộ xong: đã ghi ${agg.written}/${changed.length} dòng (sau diff); ${skippedUpsert} dòng bị bỏ qua do lỗi API.`
+    )
+  } else {
+    console.log(
+      `[saveProductsToSupabase] Upsert bulk: ${agg.written} dòng thay đổi / ${changed.length} (sau diff), tổng catalog ${rows.length} dòng.`
     )
   }
-  return { written, skippedUpsert, lastSupabaseError, returnedProductRows }
+  return {
+    written: agg.written,
+    skippedUpsert,
+    lastSupabaseError: agg.lastError ?? null,
+    returnedProductRows: agg.returnedRows ?? [],
+  }
 }
 
 async function upsertProductRowsFromDisplayCatalog(sb, products) {
@@ -514,12 +627,12 @@ export async function saveProductsToSupabase(products) {
       return { ok: false, error: err }
     }
     console.log(
-      `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng upsert (${PRODUCT_PK_COLUMN} hợp lệ, đã gộp trùng), ` +
-        `${flat.length} biến thể sau flatten — tối đa ${PRODUCTS_UPSERT_CHUNK} dòng/request; giá/tồn/quy đổi là số JSON; đợt lỗi sẽ thử từng dòng.`
+      `[saveProductsToSupabase] Bắt đầu: ${toSend.length} dòng có mã hợp lệ (đã gộp trùng), ` +
+        `${flat.length} biến thể sau flatten — upsert bulk một lần + diff baseline; lỗi đợt sẽ thử từng dòng.`
     )
     const { written, skippedUpsert, lastSupabaseError } =
       await upsertProductRowsFromDisplayCatalog(sb, products || [])
-    if (toSend.length > 0 && written === 0) {
+    if (toSend.length > 0 && written === 0 && skippedUpsert > 0) {
       const fromApi =
         lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
       const err = new Error(
@@ -583,10 +696,15 @@ export async function deleteProductsFromSupabaseByMaHang(maHangList) {
   const uniq = [...new Set([...maHangList].map((x) => String(x ?? '').trim()).filter(Boolean))]
   if (uniq.length === 0) return { ok: true, deleted: 0 }
   try {
+    const chunks = []
+    for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
+      chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
+    }
+    const results = await Promise.all(
+      chunks.map((chunk) => sb.from(PRODUCTS_TABLE).delete().in(PRODUCT_PK_COLUMN, chunk))
+    )
     let deleted = 0
-    for (let i = 0; i < uniq.length; i += PRODUCTS_UPSERT_CHUNK) {
-      const chunk = uniq.slice(i, i + PRODUCTS_UPSERT_CHUNK)
-      const { error } = await sb.from(PRODUCTS_TABLE).delete().in(PRODUCT_PK_COLUMN, chunk)
+    for (const { error } of results) {
       if (error) {
         const err = new Error(
           describeCatalogPersistError(error) ||
@@ -596,8 +714,8 @@ export async function deleteProductsFromSupabaseByMaHang(maHangList) {
         notifySupabasePersistFailure(err, error)
         return { ok: false, error, deleted }
       }
-      deleted += chunk.length
     }
+    deleted = uniq.length
     console.log(`[deleteProductsFromSupabaseByMaHang] Đã xóa ${deleted} dòng (${PRODUCT_PK_COLUMN}).`)
     return { ok: true, deleted }
   } catch (error) {
@@ -634,7 +752,7 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
       sb,
       rawRows
     )
-    if (written === 0) {
+    if (written === 0 && skippedUpsert > 0) {
       const fromApi =
         lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
       const err = new Error(
@@ -671,18 +789,23 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
  * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean }>}
  */
 export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
-  await saveCatalogSnapshot(products, fileName)
-  if (!isSupabaseConfigured()) return { ok: true }
+  if (!isSupabaseConfigured()) {
+    await saveCatalogSnapshot(products, fileName)
+    return { ok: true }
+  }
   if (options?.tonKhoOnlyVariants != null) {
+    await saveCatalogSnapshot(products, fileName)
     const r = await saveProductsTonKhoPatchToSupabase(options.tonKhoOnlyVariants)
     return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
   }
   if (options?.upsertOnlyVariants?.length) {
+    await saveCatalogSnapshot(products, fileName)
     const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
     return r.ok
       ? { ok: true, snapshotSaved: true, returnedDisplayVariants: r.returnedDisplayVariants }
       : { ok: false, error: r.error, snapshotSaved: true }
   }
+  await saveCatalogSnapshot(products, fileName)
   const r = await saveProductsToSupabase(products)
   return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
 }
@@ -1076,7 +1199,9 @@ export function readCatalogSnapshotSync() {
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function fetchProducts() {
-  return fetchCatalogSnapshotFromPersistentStore()
+  const r = await fetchCatalogSnapshotFromPersistentStore()
+  if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)
+  return r
 }
 
 /**
@@ -1084,7 +1209,9 @@ export async function fetchProducts() {
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function revalidateCatalogFromStore() {
-  return fetchCatalogSnapshotFromPersistentStore()
+  const r = await fetchCatalogSnapshotFromPersistentStore()
+  if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)
+  return r
 }
 
 /**

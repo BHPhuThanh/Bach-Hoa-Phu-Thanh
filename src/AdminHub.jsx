@@ -1002,6 +1002,10 @@ export default function AdminHub({
   standaloneInboundCreate = false,
   /** App: sau upsert + `select`, nhận biến thể đã map để thay id dòng phiếu nhập (UUID client → sb-…). */
   registerInboundCatalogUpsertReconcile,
+  /** App + Supabase: đã sửa danh mục cục bộ — chờ nút «Đồng bộ Supabase». */
+  catalogSupabaseDirty = false,
+  catalogSupabaseFlushBusy = false,
+  onFlushCatalogToSupabase,
 }) {
   /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
   const [returnDayLedger, setReturnDayLedger] = useState(() => {
@@ -2222,7 +2226,7 @@ export default function AdminHub({
     } catch (error) {
       console.error('[AdminHub] Failed to handle goods search query', error)
     }
-  }, [location.pathname, location.search, catalogList])
+  }, [location.pathname, location.search, catalogList.length])
 
   useEffect(() => {
     if (openProductVariantIds.length === 0) return
@@ -3515,14 +3519,15 @@ export default function AdminHub({
   )
 
   const applyInboundStockIncrease = useCallback(
-    (lines) => {
+    async (lines) => {
       const valid = lines.filter((l) => {
         const n = normalizeInboundLine(l)
         return n.variantId && inboundLineReturnableQty(n) > 0
       })
       if (valid.length === 0) return
-      if (onUpdateCatalogVariant) {
+      if (typeof onBulkPatchCatalogVariants === 'function') {
         const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
+        const patches = []
         for (const l of valid) {
           const n = normalizeInboundLine(l)
           const v = flat.find((x) => x.id === n.variantId)
@@ -3530,8 +3535,9 @@ export default function AdminHub({
           const cur =
             v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
           const add = inboundLineReturnableQty(n)
-          onUpdateCatalogVariant(n.variantId, { stockQty: cur + add })
+          patches.push({ variantId: n.variantId, patch: { stockQty: cur + add } })
         }
+        if (patches.length) await onBulkPatchCatalogVariants(patches, {})
         return
       }
       if (!standaloneCatalog?.products?.length) return
@@ -3549,7 +3555,7 @@ export default function AdminHub({
     },
     [
       catalogListForInbound,
-      onUpdateCatalogVariant,
+      onBulkPatchCatalogVariants,
       standaloneCatalog,
       persistStandaloneProducts,
     ]
@@ -3557,21 +3563,23 @@ export default function AdminHub({
 
   /** delta > 0 nhập thêm tồn, < 0 trừ tồn (clamp về 0). */
   const applyInboundStockDeltas = useCallback(
-    (deltaByVariant) => {
-      if (!deltaByVariant || deltaByVariant.size === 0) return
-      if (onUpdateCatalogVariant) {
+    async (deltaByVariant) => {
+      if (!deltaByVariant || deltaByVariant.size === 0) return { ok: true }
+      if (typeof onBulkPatchCatalogVariants === 'function') {
         const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
+        const patches = []
         for (const [variantId, delta] of deltaByVariant) {
           if (!delta) continue
           const v = flat.find((x) => x.id === variantId)
           if (!v) continue
           const cur =
             v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
-          onUpdateCatalogVariant(variantId, { stockQty: Math.max(0, cur + delta) })
+          patches.push({ variantId, patch: { stockQty: Math.max(0, cur + delta) } })
         }
-        return
+        if (patches.length === 0) return { ok: true }
+        return onBulkPatchCatalogVariants(patches, {})
       }
-      if (!standaloneCatalog?.products?.length) return
+      if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
       let nextFlat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
       for (const [variantId, delta] of deltaByVariant) {
         if (!delta) continue
@@ -3583,20 +3591,21 @@ export default function AdminHub({
         })
       }
       const nextProducts = buildDisplayCatalog(nextFlat)
-      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      const r = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      return r?.ok ? { ok: true } : { ok: false, error: r?.error || 'Không ghi được danh mục.' }
     },
-    [catalogListForInbound, onUpdateCatalogVariant, standaloneCatalog, persistStandaloneProducts]
+    [catalogListForInbound, onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
   const applyInboundStockDeltasFromNetMaps = useCallback(
-    (oldMap, newMap) => {
+    async (oldMap, newMap) => {
       const keys = new Set([...oldMap.keys(), ...newMap.keys()])
       const deltas = new Map()
       for (const k of keys) {
         const d = (newMap.get(k) || 0) - (oldMap.get(k) || 0)
         if (d) deltas.set(k, d)
       }
-      applyInboundStockDeltas(deltas)
+      return applyInboundStockDeltas(deltas)
     },
     [applyInboundStockDeltas]
   )
@@ -4059,7 +4068,7 @@ export default function AdminHub({
     setInboundReturnModal(row)
   }, [catalogListForInbound.length])
 
-  const confirmInboundReturnSubmit = useCallback(() => {
+  const confirmInboundReturnSubmit = useCallback(async () => {
     if (!inboundReturnModal) return
     const order = normalizeInboundRow(inboundReturnModal)
     const deltas = new Map()
@@ -4077,7 +4086,11 @@ export default function AdminHub({
       alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
       return
     }
-    applyInboundStockDeltas(deltas)
+    const stockRes = await applyInboundStockDeltas(deltas)
+    if (stockRes && stockRes.ok === false) {
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+      return
+    }
     const allReturned = newLines.every((raw) => {
       const n = normalizeInboundLine(raw)
       return n.qty <= 0 || n.returnedQty >= n.qty
@@ -4107,7 +4120,7 @@ export default function AdminHub({
     setInboundCancelModal(row)
   }, [])
 
-  const confirmInboundCancelSubmit = useCallback(() => {
+  const confirmInboundCancelSubmit = useCallback(async () => {
     if (!inboundCancelModal) return
     const row = normalizeInboundRow(inboundCancelModal)
     const hadStock =
@@ -4120,7 +4133,11 @@ export default function AdminHub({
         const q = inboundLineReturnableQty(l)
         if (q > 0 && l.variantId) deltas.set(l.variantId, (deltas.get(l.variantId) || 0) - q)
       }
-      applyInboundStockDeltas(deltas)
+      const stockRes = await applyInboundStockDeltas(deltas)
+      if (stockRes && stockRes.ok === false) {
+        window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+        return
+      }
     }
     setInboundOrders((p) =>
       p.map((o) => (o.id === row.id ? normalizeInboundRow({ ...row, status: 'cancelled' }) : o))
@@ -4784,7 +4801,11 @@ export default function AdminHub({
       alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
       return
     }
-    applyInboundStockDeltas(deltas)
+    const stockRes = await applyInboundStockDeltas(deltas)
+    if (stockRes && stockRes.ok === false) {
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+      return
+    }
     appendPosReturnDayEntry({
       atMs: Date.now(),
       orderId: String(base.id || ''),
@@ -4845,7 +4866,11 @@ export default function AdminHub({
       const q = posOrderLineReturnableQty(it)
       if (q > 0 && it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + q)
     }
-    applyInboundStockDeltas(deltas)
+    const stockRes = await applyInboundStockDeltas(deltas)
+    if (stockRes && stockRes.ok === false) {
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+      return
+    }
     const merged = normalizePosOrder({ ...base, status: 'cancelled' }, catalogList)
     await persistPosOrderAndReload(merged)
     setPosCancelModal(null)
@@ -4981,7 +5006,11 @@ export default function AdminHub({
     for (const [vid, dq] of deltaMap) {
       stockDeltas.set(vid, -(dq || 0))
     }
-    applyInboundStockDeltas(stockDeltas)
+    const stockRes = await applyInboundStockDeltas(stockDeltas)
+    if (stockRes && stockRes.ok === false) {
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+      return
+    }
     const nextStatus = computePosOrderStatusFromItems(newN.items)
     const merged = normalizePosOrder(
       { ...newN, status: nextStatus },
@@ -5803,6 +5832,28 @@ export default function AdminHub({
                 Nhập file CSV từ <strong>Import file</strong> hoặc tải catalog từ màn <strong>Bán hàng</strong>.
               </p>
             )}
+
+            {catalogSupabaseDirty && isSupabaseConfigured() && parentCatalogSupplied ? (
+              <div className="ah-catalog-sync-banner" role="status">
+                <span className="ah-catalog-sync-banner__text">
+                  Đã chỉnh danh mục trên máy này — bấm «Đồng bộ Supabase» để ghi lên máy chủ.
+                </span>
+                <button
+                  type="button"
+                  className="ah-catalog-sync-banner__btn"
+                  disabled={catalogSupabaseFlushBusy}
+                  onClick={() => {
+                    if (typeof onFlushCatalogToSupabase !== 'function') return
+                    void onFlushCatalogToSupabase().catch((e) => {
+                      console.warn('[AdminHub] Đồng bộ catalog', e)
+                      window.alert(e instanceof Error ? e.message : String(e))
+                    })
+                  }}
+                >
+                  {catalogSupabaseFlushBusy ? 'Đang ghi…' : 'Đồng bộ Supabase'}
+                </button>
+              </div>
+            ) : null}
 
             {hangHoaDeepLinkListScope === 'single' ? (
               <div className="ah-goods-deeplink-scope" role="status">

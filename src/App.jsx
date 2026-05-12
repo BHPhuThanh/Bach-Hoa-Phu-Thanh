@@ -2482,6 +2482,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   bulkCatalogProductsRef.current = products
   /** Sau persist thủ công / Hàng hóa — ghi nhật ký kho. */
   const pendingInventoryManualLogRef = useRef(null)
+  /** «ma_hang» chờ xóa trên Supabase khi bấm «Đồng bộ Supabase» (xóa SP khỏi danh mục cục bộ). */
+  const pendingDeletedMaHangForSupabaseRef = useRef(new Set())
+  const [catalogSupabaseDirty, setCatalogSupabaseDirty] = useState(false)
+  const [catalogFlushBusy, setCatalogFlushBusy] = useState(false)
   useEffect(() => {
     catalogStoreHydratedRef.current = catalogStoreHydrated
   }, [catalogStoreHydrated])
@@ -2657,36 +2661,69 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     inboundCatalogUpsertReconcileRef.current = fn
   }, [])
 
+  const flushCatalogToSupabase = useCallback(async () => {
+    if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+    if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
+      return { ok: false, error: 'Danh mục chưa tải xong — chưa thể đồng bộ.' }
+    }
+    setCatalogFlushBusy(true)
+    try {
+      const dels = [...pendingDeletedMaHangForSupabaseRef.current]
+      pendingDeletedMaHangForSupabaseRef.current = new Set()
+      if (dels.length) {
+        const dr = await deleteProductsFromSupabaseByMaHang(dels)
+        if (!dr.ok && !dr.skipped) {
+          dels.forEach((m) => pendingDeletedMaHangForSupabaseRef.current.add(m))
+          return dr
+        }
+      }
+      const next = productsRef.current
+      if (next.length === 0) {
+        catalogFileNameRef.current = ''
+        const pe = await persistCatalogSnapshotAndProducts([], '')
+        if (!pe.ok) return pe
+        startTransition(() => {
+          setFileName('')
+          setCsvRowCount(0)
+        })
+        await applyServerCatalogAfterPersist()
+      } else {
+        const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+        if (!r.ok) return r
+        await applyServerCatalogAfterPersist()
+      }
+      const man = pendingInventoryManualLogRef.current
+      pendingInventoryManualLogRef.current = null
+      if (man && isSupabaseConfigured()) {
+        const rows = buildStockAdjustInventoryLogRows(man.prev, man.next, man.ids, {
+          staffName: staffNameForInventoryLog(),
+        })
+        await insertInventoryLogRows(rows)
+      }
+      setCatalogSupabaseDirty(false)
+      return { ok: true }
+    } finally {
+      setCatalogFlushBusy(false)
+    }
+  }, [applyServerCatalogAfterPersist])
+
   const handleRemoveCatalogVariants = useCallback((variantIds) => {
     if (!variantIds?.length) return
     setProducts((prev) => {
       const codesToDelete = collectMaHangCodesForVariantIds(prev, variantIds)
       const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
       queueMicrotask(() => {
-        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void (async () => {
-          if (isSupabaseConfigured() && codesToDelete.length > 0) {
-            const dr = await deleteProductsFromSupabaseByMaHang(codesToDelete)
-            if (!dr.ok && !dr.skipped) {
-              await applyServerCatalogAfterPersist()
-              return
-            }
-          }
-          if (next.length === 0) {
-            catalogFileNameRef.current = ''
-            const persistEmpty = await persistCatalogSnapshotAndProducts([], '')
-            setFileName('')
-            setCsvRowCount(0)
-            if (persistEmpty.ok) await applyServerCatalogAfterPersist()
-            return
-          }
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          if (r.ok) await applyServerCatalogAfterPersist()
-        })()
+        for (const c of codesToDelete) {
+          const m = String(c ?? '').trim()
+          if (m) pendingDeletedMaHangForSupabaseRef.current.add(m)
+        }
+        if (catalogStoreHydratedRef.current && !initialCatalogLoadPendingRef.current && isSupabaseConfigured()) {
+          setCatalogSupabaseDirty(true)
+        }
       })
       return next
     })
-  }, [applyServerCatalogAfterPersist])
+  }, [])
 
   const handleReplaceCatalogGroup = useCallback((anchorVariantId, replacements) => {
     if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) return
@@ -2697,15 +2734,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         replacements,
       })
       queueMicrotask(() => {
-        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void (async () => {
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          if (r.ok) await applyServerCatalogAfterPersist()
-        })()
+        if (catalogStoreHydratedRef.current && !initialCatalogLoadPendingRef.current && isSupabaseConfigured()) {
+          setCatalogSupabaseDirty(true)
+        }
       })
       return next
     })
-  }, [applyServerCatalogAfterPersist])
+  }, [])
 
   const handleAppendCatalogVariants = useCallback((variants) => {
     if (!Array.isArray(variants) || variants.length === 0) return
@@ -2818,27 +2853,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
 
       queueMicrotask(() => {
-        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void (async () => {
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          if (r.ok) {
-            await applyServerCatalogAfterPersist()
-            const man = pendingInventoryManualLogRef.current
-            pendingInventoryManualLogRef.current = null
-            if (man && isSupabaseConfigured()) {
-              const rows = buildStockAdjustInventoryLogRows(man.prev, man.next, man.ids, {
-                staffName: staffNameForInventoryLog(),
-              })
-              await insertInventoryLogRows(rows)
-            }
-          } else {
-            pendingInventoryManualLogRef.current = null
-          }
-        })()
+        if (catalogStoreHydratedRef.current && !initialCatalogLoadPendingRef.current && isSupabaseConfigured()) {
+          setCatalogSupabaseDirty(true)
+        }
       })
       return next
     })
-  }, [applyServerCatalogAfterPersist])
+  }, [])
 
   /**
    * Nhập hàng — gộp nhiều biến thể (tồn + vốn); giá bán không đổi. Chỉ cập nhật React state sau khi persist thành công.
@@ -2883,6 +2904,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       }
       setProducts(next)
+      setCatalogSupabaseDirty(false)
       await applyServerCatalogAfterPersist()
       if (ib?.documentCode && isSupabaseConfigured()) {
         const logRows = buildInboundInventoryLogRows(prev, next, valid, {
@@ -5448,6 +5470,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           hangHoaGoodsOpenRequest={pendingHangHoaGoodsOpen}
           onHangHoaGoodsOpenConsumed={clearPendingHangHoaGoodsOpen}
           standaloneInboundCreate={standaloneInboundCreate}
+          catalogSupabaseDirty={catalogSupabaseDirty}
+          catalogSupabaseFlushBusy={catalogFlushBusy}
+          onFlushCatalogToSupabase={flushCatalogToSupabase}
         />
       )}
 
