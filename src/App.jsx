@@ -2876,6 +2876,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
+  const showPosScanToastMessage = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    if (posScanToastClearRef.current != null) {
+      window.clearTimeout(posScanToastClearRef.current)
+      posScanToastClearRef.current = null
+    }
+    setPosScanToast(t)
+    posScanToastClearRef.current = window.setTimeout(() => {
+      setPosScanToast(null)
+      posScanToastClearRef.current = null
+    }, 3800)
+  }, [])
+
+  const showPosPersistErrorToast = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    setPosPersistErrToast(t)
+    window.setTimeout(() => setPosPersistErrToast(null), 6500)
+  }, [])
+
   /**
    * Nhập hàng — gộp nhiều biến thể (tồn + vốn); giá bán không đổi. Chỉ cập nhật React state sau khi persist thành công.
    * @param {Array<{ variantId: string, patch: object }>} patches
@@ -3021,27 +3042,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       el?.focus()
       el?.select()
     })
-  }, [])
-
-  const showPosScanToastMessage = useCallback((text) => {
-    const t = String(text ?? '').trim()
-    if (!t) return
-    if (posScanToastClearRef.current != null) {
-      window.clearTimeout(posScanToastClearRef.current)
-      posScanToastClearRef.current = null
-    }
-    setPosScanToast(t)
-    posScanToastClearRef.current = window.setTimeout(() => {
-      setPosScanToast(null)
-      posScanToastClearRef.current = null
-    }, 3800)
-  }, [])
-
-  const showPosPersistErrorToast = useCallback((text) => {
-    const t = String(text ?? '').trim()
-    if (!t) return
-    setPosPersistErrToast(t)
-    window.setTimeout(() => setPosPersistErrToast(null), 6500)
   }, [])
 
   const toggleSellWholesaleMode = useCallback(() => {
