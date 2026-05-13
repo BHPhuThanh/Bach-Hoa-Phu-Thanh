@@ -17,6 +17,7 @@ import { AdminHubMobileChrome } from './AdminHubMobileChrome.jsx'
 import { AdminHubComboModal } from './AdminHubComboModal.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
+import { blurActiveElement, playScanSuccessBeep } from './scanFeedback.js'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
 import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
 import { AutoSizer } from 'react-virtualized-auto-sizer'
@@ -2979,6 +2980,29 @@ export default function AdminHub({
   const triggerInboundSaveToast = useCallback(() => {
     setInboundSaveToastGen((g) => g + 1)
   }, [])
+  /** Quét liên tục — góc màn hình (camera vẫn mở). */
+  const [hubScanToastMsg, setHubScanToastMsg] = useState(null)
+  const hubScanToastClearRef = useRef(null)
+  const showHubScanToast = useCallback((msg) => {
+    const t = String(msg ?? '').trim()
+    if (!t) return
+    if (hubScanToastClearRef.current != null) {
+      window.clearTimeout(hubScanToastClearRef.current)
+      hubScanToastClearRef.current = null
+    }
+    setHubScanToastMsg(t)
+    hubScanToastClearRef.current = window.setTimeout(() => {
+      setHubScanToastMsg(null)
+      hubScanToastClearRef.current = null
+    }, 3200)
+  }, [])
+  /** Lỗi đồng bộ phiếu nhập chạy ngầm. */
+  const [inboundSyncErrMsg, setInboundSyncErrMsg] = useState('')
+  useEffect(() => {
+    if (!inboundSyncErrMsg) return undefined
+    const tid = window.setTimeout(() => setInboundSyncErrMsg(''), 8000)
+    return () => window.clearTimeout(tid)
+  }, [inboundSyncErrMsg])
   const openGoodsBrandSupplierModal = useCallback(() => {
     setSupplierModalOpen(true)
   }, [])
@@ -3144,15 +3168,24 @@ export default function AdminHub({
     (raw) => {
       const q = String(raw || '').trim()
       if (!q) return
+      blurActiveElement()
       setInboundFormProductQ(q)
       setInboundProductSuggestIdx(0)
       if (!catalogListForInbound.length) return
+
+      const toastAdded = (product, variant) => {
+        playScanSuccessBeep()
+        const label = String(variant?.name || product?.name || variant?.code || '').trim() || '—'
+        showHubScanToast(`Đã thêm: ${label}`)
+      }
+
       if (posQueryLooksLikeBarcodeKeyInput(q)) {
         const needle = String(normalizeBarcodeValue(q))
         for (const p of catalogListForInbound) {
           for (const v of p.groupVariants || [p]) {
             if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
               addInboundFormLine(p, v)
+              toastAdded(p, v)
               return
             }
           }
@@ -3162,6 +3195,7 @@ export default function AdminHub({
         for (const v of p.groupVariants || [p]) {
           if (String(v.code ?? '').trim() === q) {
             addInboundFormLine(p, v)
+            toastAdded(p, v)
             return
           }
         }
@@ -3171,15 +3205,18 @@ export default function AdminHub({
         surface: 'admin-inbound-barcode-scan',
       })
       if (hits.length > 0) {
-        addInboundFormLine(hits[0].product, hits[0].variant)
+        const { product, variant } = hits[0]
+        addInboundFormLine(product, variant)
+        toastAdded(product, variant)
       }
     },
-    [catalogListForInbound, addInboundFormLine]
+    [catalogListForInbound, addInboundFormLine, showHubScanToast]
   )
 
   const applyGoodsScannedCode = useCallback((raw) => {
     const q = String(raw || '').trim()
     if (!q) return
+    blurActiveElement()
     setGoodsQ(q)
     setHangHoaDeepLinkListScope('all')
   }, [])
@@ -3716,27 +3753,29 @@ export default function AdminHub({
     [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
-  /** @returns {Promise<boolean>} true nếu đã ghi danh mục thành công */
+  /** UI phiếu ngay; đồng bộ Supabase + inbound_history chạy ngầm (lỗi → toast đỏ). Toast thành công do caller (Hoàn thành / modal giá vốn). */
   const finalizeInboundCompleted = useCallback(
-    async (fulfillmentPatches) => {
+    (fulfillmentPatches) => {
       const row = buildInboundOrderPayload('completed')
-      setInboundCatalogBulkSaving(true)
-      try {
-        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
-          documentCode: row.code,
-          inboundOrderId: row.id,
-        })
-        if (!res?.ok) {
-          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
-          return false
+      setInboundOrders((prev) => [row, ...prev])
+      completeInboundFlowReturnToList()
+
+      void (async () => {
+        try {
+          const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
+            documentCode: row.code,
+            inboundOrderId: row.id,
+          })
+          if (!res?.ok) {
+            setInboundSyncErrMsg(res?.error || 'Không ghi được danh mục sau khi hoàn thành phiếu.')
+            return
+          }
+          await recordInboundCompletionHistory(row)
+        } catch (e) {
+          console.error(e)
+          setInboundSyncErrMsg(e instanceof Error ? e.message : String(e))
         }
-        await recordInboundCompletionHistory(row)
-        setInboundOrders((prev) => [row, ...prev])
-        completeInboundFlowReturnToList()
-        return true
-      } finally {
-        setInboundCatalogBulkSaving(false)
-      }
+      })()
     },
     [
       buildInboundOrderPayload,
@@ -3746,13 +3785,12 @@ export default function AdminHub({
     ]
   )
 
-  /** @returns {Promise<boolean>} */
   const finalizeInboundEditCompleted = useCallback(
-    async (fulfillmentPatches) => {
+    (fulfillmentPatches) => {
       const editId = inboundFormEditOrderId
-      if (!editId) return false
+      if (!editId) return
       const prevRow = inboundOrders.find((o) => o.id === editId)
-      if (!prevRow) return false
+      if (!prevRow) return
       const payload = buildInboundOrderPayload('completed')
       const merged = normalizeInboundRow({
         ...payload,
@@ -3761,24 +3799,26 @@ export default function AdminHub({
         createdAtMs: prevRow.createdAtMs,
         status: computeInboundStatusAfterLines(payload.lines),
       })
-      setInboundCatalogBulkSaving(true)
-      try {
-        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
-          documentCode: merged.code,
-          inboundOrderId: merged.id,
-        })
-        if (!res?.ok) {
-          window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
-          return false
+      setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
+      setInboundFormEditOrderId(null)
+      completeInboundFlowReturnToList()
+
+      void (async () => {
+        try {
+          const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
+            documentCode: merged.code,
+            inboundOrderId: merged.id,
+          })
+          if (!res?.ok) {
+            setInboundSyncErrMsg(res?.error || 'Không ghi được danh mục sau khi hoàn thành phiếu.')
+            return
+          }
+          await recordInboundCompletionHistory(merged)
+        } catch (e) {
+          console.error(e)
+          setInboundSyncErrMsg(e instanceof Error ? e.message : String(e))
         }
-        await recordInboundCompletionHistory(merged)
-        setInboundOrders((p) => p.map((o) => (o.id === editId ? merged : o)))
-        setInboundFormEditOrderId(null)
-        completeInboundFlowReturnToList()
-        return true
-      } finally {
-        setInboundCatalogBulkSaving(false)
-      }
+      })()
     },
     [
       inboundFormEditOrderId,
@@ -3847,12 +3887,11 @@ export default function AdminHub({
         return
       }
       if (inboundFormEditOrderId) {
-        const ok = await finalizeInboundEditCompleted(patches)
-        if (ok) triggerInboundSaveToast()
+        finalizeInboundEditCompleted(patches)
       } else {
-        const ok = await finalizeInboundCompleted(patches)
-        if (ok) triggerInboundSaveToast()
+        finalizeInboundCompleted(patches)
       }
+      triggerInboundSaveToast()
     })()
   }, [
     inboundFormSupplierName,
@@ -3916,11 +3955,12 @@ export default function AdminHub({
       return
     }
 
-    const ok =
-      mode === 'edit'
-        ? await finalizeInboundEditCompleted(patches)
-        : await finalizeInboundCompleted(patches)
-    if (ok) finishInboundCostFlowSuccess()
+    if (mode === 'edit') {
+      finalizeInboundEditCompleted(patches)
+    } else {
+      finalizeInboundCompleted(patches)
+    }
+    finishInboundCostFlowSuccess()
   }, [
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
@@ -9397,6 +9437,18 @@ export default function AdminHub({
           </div>
         </div>
       )}
+
+      {hubScanToastMsg ? (
+        <div className="ah-hub-scan-toast" role="status" aria-live="polite">
+          {hubScanToastMsg}
+        </div>
+      ) : null}
+
+      {inboundSyncErrMsg ? (
+        <div className="ah-inbound-sync-err-toast" role="alert">
+          Đồng bộ thất bại: {inboundSyncErrMsg}
+        </div>
+      ) : null}
 
       {goodsSaveToastGen > 0 && (
         <div

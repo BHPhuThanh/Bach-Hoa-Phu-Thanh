@@ -36,6 +36,7 @@ import {
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
+import { blurActiveElement, playScanSuccessBeep } from './scanFeedback.js'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
 import {
   parseAdminHubDeepLinkFromWindow,
@@ -2394,6 +2395,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [headerSearchFeedback, setHeaderSearchFeedback] = useState('')
   const [lastBarcodeReceived, setLastBarcodeReceived] = useState('')
   const [posScanToast, setPosScanToast] = useState(null)
+  /** Toast đỏ — lỗi đồng bộ ngầm (Lưu danh mục / nhập hàng). */
+  const [posPersistErrToast, setPosPersistErrToast] = useState(null)
   const [headerSuggestOpen, setHeaderSuggestOpen] = useState(false)
   const [headerHighlightIndex, setHeaderHighlightIndex] = useState(0)
   /** Khi gợi ý gộp nhiều ĐƠN VỊ TÍNH: product.id → variantId đang chọn trong dropdown. */
@@ -2894,8 +2897,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
     }
 
-    const prev = bulkCatalogProductsRef.current
-    let next = prev
+    const snapshotPrev = bulkCatalogProductsRef.current
+    let next = snapshotPrev
     for (const entry of valid) {
       next = applyProductDataToCatalog(next, {
         type: 'patch_variant',
@@ -2906,20 +2909,29 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const ib = opts?.inboundInventoryMeta
 
+    setProducts(next)
+
     try {
-      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+      const flatNext = flattenDisplayCatalogToVariants(next)
+      const touchedIds = new Set(valid.map((e) => String(e.variantId)))
+      const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+        upsertOnlyVariants,
+      })
       if (!r.ok) {
+        setProducts(snapshotPrev)
+        const msg = describeCatalogPersistError(r.error)
+        showPosPersistErrorToast(msg)
         return {
           ok: false,
           updatedCount: 0,
-          error: describeCatalogPersistError(r.error),
+          error: msg,
         }
       }
-      setProducts(next)
       setCatalogSupabaseDirty(false)
       await applyServerCatalogAfterPersist()
       if (ib?.documentCode && isSupabaseConfigured()) {
-        const logRows = buildInboundInventoryLogRows(prev, next, valid, {
+        const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
           documentCode: ib.documentCode,
           inboundOrderId: ib.inboundOrderId ?? '',
           staffName: staffNameForInventoryLog(),
@@ -2928,13 +2940,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       return { ok: true, updatedCount }
     } catch (e) {
+      setProducts(snapshotPrev)
+      const msg = e instanceof Error ? e.message : String(e)
+      showPosPersistErrorToast(msg)
       return {
         ok: false,
         updatedCount: 0,
-        error: e instanceof Error ? e.message : String(e),
+        error: msg,
       }
     }
-  }, [applyServerCatalogAfterPersist])
+  }, [applyServerCatalogAfterPersist, showPosPersistErrorToast])
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
   useEffect(() => {
@@ -3022,6 +3037,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }, 3800)
   }, [])
 
+  const showPosPersistErrorToast = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    setPosPersistErrToast(t)
+    window.setTimeout(() => setPosPersistErrToast(null), 6500)
+  }, [])
+
   const toggleSellWholesaleMode = useCallback(() => {
     setSellWholesaleMode((v) => {
       const next = !v
@@ -3075,13 +3097,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     focusHeaderSearchSelect()
   }, [focusHeaderSearchSelect])
 
-  const markBarcodeNotFound = useCallback((raw) => {
+  /** Đóng gợi ý / lỗi ô tìm — không focus (dùng sau quét camera để không bật bàn phím ảo). */
+  const dismissHeaderSearchChromeNoFocus = useCallback(() => {
+    setHeaderSearchInvalid(false)
+    setHeaderSearchFeedback('')
+    setHeaderSuggestOpen(false)
+  }, [])
+
+  const markBarcodeNotFound = useCallback((raw, opts) => {
+    const skipFocus = opts && opts.skipFocus === true
     const disp = String(normalizeBarcodeValue(raw) || String(raw ?? '').trim())
     setLastBarcodeReceived(disp || String(raw ?? '').trim() || '—')
     setHeaderSearchInvalid(true)
     setHeaderSearchFeedback(disp ? `Mã ${disp} không tồn tại` : 'Mã không tồn tại')
     setHeaderSuggestOpen(false)
-    focusHeaderSearchSelect()
+    if (!skipFocus) focusHeaderSearchSelect()
   }, [focusHeaderSearchSelect])
 
   const clearPosSearchForScan = useCallback(() => {
@@ -3768,36 +3798,45 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     (raw) => {
       const t = String(raw || '').trim()
       if (!t) return false
+      blurActiveElement()
       const prods = productsRef.current
       const caches = catalogBarcodeCachesRef.current
       const salesMap = codeSalesMapRef.current
       const strictNumBar = strictLongNumericBarcodeQuery(t)
       const barcodeLike = queryLooksLikeBarcodeKeyInput(t)
 
+      const toastAdded = (product, variantRow) => {
+        const label = displayNameForCartVariant(product, variantRow)
+        showPosScanToastMessage(`Đã thêm: ${label}`)
+        playScanSuccessBeep()
+      }
+
       const barHit = findProductByBarcodeCached(caches, t)
       if (barHit) {
         const scanCtx = buildBarcodeScanLogContext(barHit, t)
-        if (scanCtx) {
-          setHeaderSearch(displayNameForCartVariant(barHit.product, scanCtx.variant))
-          logBarcodeReceived(t, scanCtx)
-        } else {
-          logBarcodeReceived(t)
-        }
+        const vRow =
+          scanCtx?.variant ||
+          buildVariantOptionsFromProduct(barHit.product).find((o) => String(o.id) === String(barHit.variantId))
         addToCartWithVariant(barHit.product, barHit.variantId)
-        afterSuccessfulHeaderAdd()
+        if (vRow) toastAdded(barHit.product, vRow)
+        dismissHeaderSearchChromeNoFocus()
         clearPosSearchForScan()
         return true
       }
       if (strictNumBar) {
-        markBarcodeNotFound(t)
+        markBarcodeNotFound(t, { skipFocus: true })
         clearPosSearchForScan()
         return true
       }
       if (!barcodeLike) {
         const codeHit = findCatalogRowByCodeOrScan(prods, t)
         if (codeHit) {
+          const vo =
+            buildVariantOptionsFromProduct(codeHit.product).find((o) => String(o.id) === String(codeHit.variantId)) ||
+            null
           addToCartWithVariant(codeHit.product, codeHit.variantId)
-          afterSuccessfulHeaderAdd()
+          if (vo) toastAdded(codeHit.product, vo)
+          dismissHeaderSearchChromeNoFocus()
           clearPosSearchForScan()
           return true
         }
@@ -3807,8 +3846,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         surface: 'pos-camera-scan',
       })
       if (hits.length === 1) {
-        addToCartWithVariant(hits[0].product, hits[0].variant.id)
-        afterSuccessfulHeaderAdd()
+        const { product, variant } = hits[0]
+        addToCartWithVariant(product, variant.id)
+        toastAdded(product, variant)
+        dismissHeaderSearchChromeNoFocus()
         clearPosSearchForScan()
         return true
       }
@@ -3816,7 +3857,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const exactCode = hits.find((h) => String(h.variant?.code ?? '').trim() === t)
         if (exactCode) {
           addToCartWithVariant(exactCode.product, exactCode.variant.id)
-          afterSuccessfulHeaderAdd()
+          toastAdded(exactCode.product, exactCode.variant)
+          dismissHeaderSearchChromeNoFocus()
           clearPosSearchForScan()
           return true
         }
@@ -3830,7 +3872,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const first = opts[0]
           if (first) {
             addToCartWithVariant(p, first.id)
-            afterSuccessfulHeaderAdd()
+            toastAdded(p, first)
+            dismissHeaderSearchChromeNoFocus()
             clearPosSearchForScan()
             return true
           }
@@ -3841,7 +3884,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const first = opts[0]
           if (first) {
             addToCartWithVariant(p, first.id)
-            afterSuccessfulHeaderAdd()
+            toastAdded(p, first)
+            dismissHeaderSearchChromeNoFocus()
             clearPosSearchForScan()
             return true
           }
@@ -3851,12 +3895,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     },
     [
       addToCartWithVariant,
-      afterSuccessfulHeaderAdd,
-      logBarcodeReceived,
       markBarcodeNotFound,
-      setHeaderSearch,
       strictLongNumericBarcodeQuery,
       clearPosSearchForScan,
+      dismissHeaderSearchChromeNoFocus,
+      showPosScanToastMessage,
     ]
   )
 
@@ -3961,6 +4004,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     (text) => {
       const t = String(text || '').trim()
       if (!t) return
+      blurActiveElement()
       if (posScanAddFromDecodedText(t)) return
       setHeaderSearch(t)
       setHeaderSearchInvalid(false)
@@ -5047,6 +5091,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       {posScanToast ? (
         <div className="pos-scan-toast" role="status" aria-live="polite">
           {posScanToast}
+        </div>
+      ) : null}
+      {posPersistErrToast ? (
+        <div className="pos-scan-toast pos-scan-toast--error" role="alert">
+          {posPersistErrToast}
         </div>
       ) : null}
       <iframe

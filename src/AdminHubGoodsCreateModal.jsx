@@ -220,24 +220,10 @@ export default function AdminHubGoodsCreateModal({
       return
     }
 
-    const flushRows = async (rowsForUpsert) => {
+    const flushRows = (rowsForUpsert) => {
       if (!Array.isArray(rowsForUpsert) || rowsForUpsert.length === 0) return false
       const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rowsForUpsert])
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-
-      if (persistStandaloneProducts) {
-        try {
-          const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
-          if (!res || res.ok === false) {
-            window.alert(String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).'))
-            return false
-          }
-        } catch (e) {
-          console.error(e)
-          window.alert(formatPostgrestErrorForUser(e))
-          return false
-        }
-      }
 
       if (onAppendCatalogVariants) {
         try {
@@ -247,25 +233,38 @@ export default function AdminHubGoodsCreateModal({
           window.alert(formatPostgrestErrorForUser(e))
           return false
         }
+        return true
       }
 
-      if (!persistStandaloneProducts && !onAppendCatalogVariants) {
-        window.alert('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
-        return false
+      if (persistStandaloneProducts) {
+        void (async () => {
+          try {
+            const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
+            if (!res || res.ok === false) {
+              window.alert(String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).'))
+            }
+          } catch (e) {
+            console.error(e)
+            window.alert(formatPostgrestErrorForUser(e))
+          }
+        })()
+        return true
       }
-      return true
+
+      window.alert('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
+      return false
     }
 
-    const finish = async (rowsForUpsert) => {
+    const finish = (rowsForUpsert) => {
+      if (goodsCreateSaving) return
       setGoodsCreateSaving(true)
       try {
-        const ok = await flushRows(rowsForUpsert)
-        if (ok) {
-          resetFormFields()
-          goodsCreateScanBufferRef.current = { buf: '', times: [] }
-          onClose()
-          onSaved?.()
-        }
+        const ok = flushRows(rowsForUpsert)
+        if (!ok) return
+        resetFormFields()
+        goodsCreateScanBufferRef.current = { buf: '', times: [] }
+        onClose()
+        onSaved?.()
       } finally {
         setGoodsCreateSaving(false)
       }

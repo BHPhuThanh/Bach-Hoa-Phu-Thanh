@@ -715,6 +715,13 @@
   pointer-events: none;
 }
 
+.pos-scan-toast--error {
+  bottom: 5rem;
+  border-color: rgba(248, 113, 113, 0.55);
+  background: linear-gradient(145deg, #450a0a, #1c1917);
+  color: #fecaca;
+}
+
 /* Trang /doanh-thu: iframe là con đầu tiên nên không khớp `.app--dark > .admin-hub` — ép hub giãn full chiều cao */
 .app--doanh-thu-shell > .admin-hub,
 .app--doanh-thu-shell > main.dash-access-denied {
