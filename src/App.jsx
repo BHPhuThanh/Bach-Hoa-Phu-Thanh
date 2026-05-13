@@ -36,7 +36,7 @@ import {
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
-import { blurActiveElement, playScanSuccessBeep } from './scanFeedback.js'
+import { blurActiveElement } from './scanFeedback.js'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
 import {
   parseAdminHubDeepLinkFromWindow,
@@ -2395,6 +2395,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [headerSearchFeedback, setHeaderSearchFeedback] = useState('')
   const [lastBarcodeReceived, setLastBarcodeReceived] = useState('')
   const [posScanToast, setPosScanToast] = useState(null)
+  /** Toast quét camera — phía trên màn hình, 2s (Đã thêm / Mã không có). */
+  const [posCameraToast, setPosCameraToast] = useState(null)
   /** Toast đỏ — lỗi đồng bộ ngầm (Lưu danh mục / nhập hàng). */
   const [posPersistErrToast, setPosPersistErrToast] = useState(null)
   const [headerSuggestOpen, setHeaderSuggestOpen] = useState(false)
@@ -2480,6 +2482,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const headerSuggestWrapRef = useRef(null)
   const scannerMenuRef = useRef(null)
   const posScanToastClearRef = useRef(null)
+  const posCameraToastClearRef = useRef(null)
   /** Tránh ghi đè LocalStorage trong lúc khôi phục nháp */
   const posDraftHydratingRef = useRef(false)
   /** Sau khi đọc xong IndexedDB (lần đầu) mới cho phép auto-save — tránh xóa DB khi state tạm []. */
@@ -2897,6 +2900,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     window.setTimeout(() => setPosPersistErrToast(null), 6500)
   }, [])
 
+  const showPosCameraToast = useCallback((message, kind = 'success') => {
+    const t = String(message ?? '').trim()
+    if (!t) return
+    if (posCameraToastClearRef.current != null) {
+      window.clearTimeout(posCameraToastClearRef.current)
+      posCameraToastClearRef.current = null
+    }
+    setPosCameraToast({ text: t, kind })
+    posCameraToastClearRef.current = window.setTimeout(() => {
+      setPosCameraToast(null)
+      posCameraToastClearRef.current = null
+    }, 2000)
+  }, [])
+
   /**
    * Nhập hàng — gộp nhiều biến thể (tồn + vốn); giá bán không đổi. Chỉ cập nhật React state sau khi persist thành công.
    * @param {Array<{ variantId: string, patch: object }>} patches
@@ -3059,6 +3076,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (posScanToastClearRef.current != null) {
         window.clearTimeout(posScanToastClearRef.current)
         posScanToastClearRef.current = null
+      }
+      if (posCameraToastClearRef.current != null) {
+        window.clearTimeout(posCameraToastClearRef.current)
+        posCameraToastClearRef.current = null
       }
     },
     []
@@ -3795,7 +3816,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   ])
 
   const posScanAddFromDecodedText = useCallback(
-    (raw) => {
+    (raw, opts = {}) => {
+      const fromCamera = Boolean(opts?.fromCamera)
       const t = String(raw || '').trim()
       if (!t) return false
       blurActiveElement()
@@ -3807,8 +3829,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       const toastAdded = (product, variantRow) => {
         const label = displayNameForCartVariant(product, variantRow)
-        showPosScanToastMessage(`Đã thêm: ${label}`)
-        playScanSuccessBeep()
+        const u = normalizeCatalogUnitLabel(variantRow?.unitLabel)
+        showPosCameraToast(`Đã thêm: ${label} - ${u}`, 'success')
       }
 
       const barHit = findProductByBarcodeCached(caches, t)
@@ -3824,7 +3846,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return true
       }
       if (strictNumBar) {
-        markBarcodeNotFound(t, { skipFocus: true })
+        const disp = String(normalizeBarcodeValue(t) || t).trim() || t
+        showPosCameraToast(`Mã ${disp} chưa có trong hệ thống`, 'error')
         clearPosSearchForScan()
         return true
       }
@@ -3891,15 +3914,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           }
         }
       }
+      if (fromCamera) {
+        const tailHits = suggestCatalogVariantPairsV9(prods, t, {
+          maxHits: 8,
+          surface: 'pos-camera-scan-tail',
+        })
+        if (tailHits.length === 0) {
+          const disp = String(normalizeBarcodeValue(t) || t).trim() || t
+          showPosCameraToast(`Mã ${disp} chưa có trong hệ thống`, 'error')
+          clearPosSearchForScan()
+          dismissHeaderSearchChromeNoFocus()
+          return true
+        }
+      }
       return false
     },
     [
       addToCartWithVariant,
-      markBarcodeNotFound,
       strictLongNumericBarcodeQuery,
       clearPosSearchForScan,
       dismissHeaderSearchChromeNoFocus,
-      showPosScanToastMessage,
+      showPosCameraToast,
     ]
   )
 
@@ -4005,7 +4040,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const t = String(text || '').trim()
       if (!t) return
       blurActiveElement()
-      if (posScanAddFromDecodedText(t)) return
+      if (posScanAddFromDecodedText(t, { fromCamera: true })) return
       setHeaderSearch(t)
       setHeaderSearchInvalid(false)
       setHeaderSearchFeedback('')
@@ -5088,6 +5123,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   return (
     <div className={`app app--dark${isPosMode ? ' app--pos' : ''}`}>
+      {posCameraToast ? (
+        <div
+          className={`pos-camera-toast${posCameraToast.kind === 'error' ? ' pos-camera-toast--error' : ''}`}
+          role={posCameraToast.kind === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {posCameraToast.text}
+        </div>
+      ) : null}
       {posScanToast ? (
         <div className="pos-scan-toast" role="status" aria-live="polite">
           {posScanToast}

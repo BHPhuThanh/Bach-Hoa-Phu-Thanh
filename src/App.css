@@ -695,6 +695,34 @@
   pointer-events: none;
 }
 
+/* Toast sau quét camera POS — phía trên cùng, 2s */
+.pos-camera-toast {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10050;
+  max-width: min(22rem, calc(100vw - 2rem));
+  padding: 0.65rem 1rem;
+  border-radius: 10px;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #f1f5f9;
+  background: linear-gradient(145deg, #1e293b, #0f172a);
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  pointer-events: none;
+}
+
+.pos-camera-toast--error {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: linear-gradient(145deg, #450a0a, #1c1917);
+  color: #fecaca;
+}
+
 /* Toast kết quả quét mã vạch — góc phải dưới, phù hợp dark mode */
 .pos-scan-toast {
   position: fixed;

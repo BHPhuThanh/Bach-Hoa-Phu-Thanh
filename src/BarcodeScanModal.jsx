@@ -1,23 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode'
-import { blurActiveElement } from './scanFeedback.js'
+import { blurActiveElement, playScanSuccessBeep } from './scanFeedback.js'
 import './barcodeScan.css'
 
-/** Khoảng cách tối thiểu giữa hai lần báo (ms) — tránh html5-qrcode bắn trùng khung hình. */
-const SCAN_DEBOUNCE_MS = 520
+/** Gộp hai lần đọc giống hệt trong một khung (html5-qrcode hay lặp). */
+const SCAN_SAME_CODE_DEBOUNCE_MS = 400
+/** Sau mỗi lần xử lý mã: không nhận mã mới trong khoảng này (camera vẫn mở). */
+const SCAN_COOLDOWN_MS = 1200
 
 /**
- * Quét mã vạch / QR — chế độ quét liên tục: không đóng modal, không dừng camera.
- * `onScan(decodedText)` — tiếng beep + toast do parent xử lý sau `blur`.
+ * Quét mã vạch / QR — quét liên tục; không đóng modal.
+ * Thứ tự: beep → `onScan(text)` (toast do parent) → nghỉ {@link SCAN_COOLDOWN_MS} ms.
  */
 export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onClose, onScan }) {
   const readerId = useMemo(() => `bhpt-qr-${Math.random().toString(36).slice(2, 11)}`, [])
   const onScanRef = useRef(onScan)
   const onCloseRef = useRef(onClose)
   const lastScanRef = useRef({ text: '', at: 0 })
+  /** Chặn mọi decode đến hết timestamp (ms). */
+  const cooldownUntilRef = useRef(0)
+  const [err, setErr] = useState('')
+  const [viewportFlash, setViewportFlash] = useState(false)
+
   onScanRef.current = onScan
   onCloseRef.current = onClose
-  const [err, setErr] = useState('')
 
   useEffect(() => {
     if (!open) return undefined
@@ -25,6 +31,7 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
     let h5 = null
     setErr('')
     lastScanRef.current = { text: '', at: 0 }
+    cooldownUntilRef.current = 0
 
     const stop = async () => {
       if (!h5) return
@@ -48,16 +55,26 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
         const onDecoded = (text) => {
           const t = String(text ?? '').trim()
           if (!t || cancelled) return
+
           const now = Date.now()
+          if (now < cooldownUntilRef.current) return
+
           const prev = lastScanRef.current
-          if (t === prev.text && now - prev.at < SCAN_DEBOUNCE_MS) return
+          if (t === prev.text && now - prev.at < SCAN_SAME_CODE_DEBOUNCE_MS) return
           lastScanRef.current = { text: t, at: now }
+
           blurActiveElement()
+          playScanSuccessBeep()
+          setViewportFlash(true)
+          window.setTimeout(() => setViewportFlash(false), 420)
+
           try {
             onScanRef.current?.(t)
           } catch (e) {
             console.warn('[BarcodeScanModal] onScan', e)
           }
+
+          cooldownUntilRef.current = Date.now() + SCAN_COOLDOWN_MS
         }
 
         try {
@@ -102,9 +119,14 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung giữa — quét liên tục, bấm «Hủy» hoặc × để tắt camera. Cần HTTPS hoặc localhost.
+          Đưa mã vào khung — sau mỗi lần nhận có nghỉ ngắn để tránh quét trùng. Bấm «Hủy» hoặc × để tắt camera.
         </p>
-        <div id={readerId} className="barcode-scan-viewport" />
+        <div
+          className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}
+          aria-hidden
+        >
+          <div id={readerId} className="barcode-scan-viewport" />
+        </div>
         {err ? (
           <p className="barcode-scan-err" role="alert">
             {err}

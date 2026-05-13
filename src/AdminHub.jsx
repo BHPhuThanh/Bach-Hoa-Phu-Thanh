@@ -17,7 +17,7 @@ import { AdminHubMobileChrome } from './AdminHubMobileChrome.jsx'
 import { AdminHubComboModal } from './AdminHubComboModal.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
-import { blurActiveElement, playScanSuccessBeep } from './scanFeedback.js'
+import { blurActiveElement } from './scanFeedback.js'
 import { AdminHubGoodsExpandedBelow } from './AdminHubGoodsExpandedBelow.jsx'
 import { AdminHubGoodsVirtualList } from './AdminHubGoodsVirtualList.jsx'
 import { AutoSizer } from 'react-virtualized-auto-sizer'
@@ -2980,21 +2980,21 @@ export default function AdminHub({
   const triggerInboundSaveToast = useCallback(() => {
     setInboundSaveToastGen((g) => g + 1)
   }, [])
-  /** Quét liên tục — góc màn hình (camera vẫn mở). */
-  const [hubScanToastMsg, setHubScanToastMsg] = useState(null)
-  const hubScanToastClearRef = useRef(null)
-  const showHubScanToast = useCallback((msg) => {
+  /** Quét liên tục — toast phía trên (camera vẫn mở), 2s. */
+  const [hubCameraToast, setHubCameraToast] = useState(null)
+  const hubCameraToastClearRef = useRef(null)
+  const showHubCameraToast = useCallback((msg, kind = 'ok') => {
     const t = String(msg ?? '').trim()
     if (!t) return
-    if (hubScanToastClearRef.current != null) {
-      window.clearTimeout(hubScanToastClearRef.current)
-      hubScanToastClearRef.current = null
+    if (hubCameraToastClearRef.current != null) {
+      window.clearTimeout(hubCameraToastClearRef.current)
+      hubCameraToastClearRef.current = null
     }
-    setHubScanToastMsg(t)
-    hubScanToastClearRef.current = window.setTimeout(() => {
-      setHubScanToastMsg(null)
-      hubScanToastClearRef.current = null
-    }, 3200)
+    setHubCameraToast({ text: t, kind })
+    hubCameraToastClearRef.current = window.setTimeout(() => {
+      setHubCameraToast(null)
+      hubCameraToastClearRef.current = null
+    }, 2000)
   }, [])
   /** Lỗi đồng bộ phiếu nhập chạy ngầm. */
   const [inboundSyncErrMsg, setInboundSyncErrMsg] = useState('')
@@ -3174,9 +3174,9 @@ export default function AdminHub({
       if (!catalogListForInbound.length) return
 
       const toastAdded = (product, variant) => {
-        playScanSuccessBeep()
         const label = String(variant?.name || product?.name || variant?.code || '').trim() || '—'
-        showHubScanToast(`Đã thêm: ${label}`)
+        const u = normalizeCatalogUnitLabel(variant?.unitLabel)
+        showHubCameraToast(`Đã thêm: ${label} - ${u}`, 'ok')
       }
 
       if (posQueryLooksLikeBarcodeKeyInput(q)) {
@@ -3208,9 +3208,12 @@ export default function AdminHub({
         const { product, variant } = hits[0]
         addInboundFormLine(product, variant)
         toastAdded(product, variant)
+        return
       }
+      const disp = String(normalizeBarcodeValue(q) || q).trim() || q
+      showHubCameraToast(`Mã ${disp} chưa có trong hệ thống`, 'err')
     },
-    [catalogListForInbound, addInboundFormLine, showHubScanToast]
+    [catalogListForInbound, addInboundFormLine, showHubCameraToast]
   )
 
   const applyGoodsScannedCode = useCallback((raw) => {
@@ -9438,9 +9441,13 @@ export default function AdminHub({
         </div>
       )}
 
-      {hubScanToastMsg ? (
-        <div className="ah-hub-scan-toast" role="status" aria-live="polite">
-          {hubScanToastMsg}
+      {hubCameraToast ? (
+        <div
+          className={`ah-hub-scan-toast${hubCameraToast.kind === 'err' ? ' ah-hub-scan-toast--error' : ''}`}
+          role={hubCameraToast.kind === 'err' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {hubCameraToast.text}
         </div>
       ) : null}
 

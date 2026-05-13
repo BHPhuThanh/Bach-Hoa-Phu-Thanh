@@ -4214,23 +4214,30 @@ a.ah-inbound-line-code-link:hover {
   }
 }
 
-/* Quét mã (camera mở): toast nhỏ phía trên toast «Lưu» — không che nút Hủy camera */
+/* Quét mã (camera mở): toast phía trên cùng, 2s */
 .ah-hub-scan-toast {
   position: fixed;
-  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-  right: calc(12px + env(safe-area-inset-right, 0px));
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 100001;
-  max-width: min(90vw, 20rem);
-  padding: 0.55rem 0.85rem;
+  max-width: min(92vw, 22rem);
+  padding: 0.55rem 0.9rem;
   border-radius: 10px;
   font-size: 0.88rem;
   font-weight: 600;
   line-height: 1.35;
   color: #f8fafc;
   background: rgba(15, 23, 42, 0.94);
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  border: 1px solid rgba(52, 211, 153, 0.45);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   pointer-events: none;
+}
+
+.ah-hub-scan-toast--error {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: linear-gradient(145deg, #450a0a, #1c1917);
+  color: #fecaca;
 }
 
 .ah-inbound-sync-err-toast {
