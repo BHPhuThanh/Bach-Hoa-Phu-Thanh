@@ -67,6 +67,7 @@ import {
   resolvePosSuggestCatalog,
   sortCatalogProductsByQuery,
   strictLongNumericBarcodeQuery,
+  suggestCatalogVariantPairsV9,
   variantDisplayMatchesPosKeywords,
 } from './catalogSearchSimple.js'
 import {
@@ -1179,6 +1180,8 @@ function remapCartLineFromCatalog(line, products, wholesaleMode) {
       const { product: p, variant: v } = hit
       const variantOptions = buildVariantOptionsFromProduct(p)
       const vo = variantOptions.find((o) => String(o.id) === vid) || variantOptions[0]
+      const catalogPrice = effectiveSellUnitPrice(vo, wholesaleMode)
+      const catalogCost = effectivePosCostUnit(vo, wholesaleMode)
       const nextLine = {
         ...line,
         catalogId: p.id,
@@ -1186,8 +1189,8 @@ function remapCartLineFromCatalog(line, products, wholesaleMode) {
         groupRoot: p.groupRoot ?? p.code,
         code: vo.code,
         name: String(v.name ?? '').trim() || '—',
-        price: effectiveSellUnitPrice(vo, wholesaleMode),
-        cost: effectivePosCostUnit(vo, wholesaleMode),
+        price: line.deskPriceLocked ? Number(line.price) || 0 : catalogPrice,
+        cost: catalogCost,
         unitLabel: vo.unitLabel,
         conversionHint: vo.conversionHint || '',
         variantOptions,
@@ -1216,14 +1219,16 @@ function remapCartLineFromCatalog(line, products, wholesaleMode) {
         variantOptions.find((o) => String(o.id) === String(line.variantId)) ||
         variantOptions.find((o) => String(o.code ?? '').trim() === code) ||
         variantOptions[0]
+      const catalogPrice = effectiveSellUnitPrice(vo, wholesaleMode)
+      const catalogCost = effectivePosCostUnit(vo, wholesaleMode)
       const nextLine = {
         ...line,
         catalogId: p.id,
         variantId: vo.id,
         code: vo.code,
         name: String(v.name ?? '').trim() || '—',
-        price: effectiveSellUnitPrice(vo, wholesaleMode),
-        cost: effectivePosCostUnit(vo, wholesaleMode),
+        price: line.deskPriceLocked ? Number(line.price) || 0 : catalogPrice,
+        cost: catalogCost,
         unitLabel: vo.unitLabel,
         conversionHint: vo.conversionHint || '',
         variantOptions,
@@ -1242,14 +1247,16 @@ function remapCartLineFromCatalog(line, products, wholesaleMode) {
     if (!v) continue
     const variantOptions = buildVariantOptionsFromProduct(p)
     const vo = variantOptions.find((o) => String(o.id) === String(v.id)) || variantOptions[0]
+    const catalogPrice = effectiveSellUnitPrice(vo, wholesaleMode)
+    const catalogCost = effectivePosCostUnit(vo, wholesaleMode)
     const nextLine = {
       ...line,
       catalogId: p.id,
       variantId: vo.id,
       code: vo.code,
       name: String(v.name ?? '').trim() || '—',
-      price: effectiveSellUnitPrice(vo, wholesaleMode),
-      cost: effectivePosCostUnit(vo, wholesaleMode),
+      price: line.deskPriceLocked ? Number(line.price) || 0 : catalogPrice,
+      cost: catalogCost,
       unitLabel: vo.unitLabel,
       conversionHint: vo.conversionHint || '',
       variantOptions,
@@ -2441,6 +2448,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [selectedCartLineId, setSelectedCartLineId] = useState(null)
   /** Chuỗi đang gõ ô SL theo lineId (khi undefined → hiển thị formatCartQtyDisplay). */
   const [cartQtyDraftByLine, setCartQtyDraftByLine] = useState(() => ({}))
+  /** Chuỗi đang gõ ô giá bán theo lineId (chỉ đơn hiện tại; không ghi Supabase). */
+  const [cartPriceDraftByLine, setCartPriceDraftByLine] = useState(() => ({}))
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false)
   const [eInvoiceSettings, setEInvoiceSettings] = useState(() => loadEInvoiceSettings())
   const [eInvoiceModalOpen, setEInvoiceModalOpen] = useState(false)
@@ -2507,6 +2516,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     markBarcodeNotFound: () => {},
   })
   productsRef.current = products
+
+  const codeSalesMapRef = useRef({})
+  codeSalesMapRef.current = codeSalesMap
 
   const fileNameRef = useRef(fileName)
   fileNameRef.current = fileName
@@ -3373,6 +3385,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setCart((prev) => {
       let changed = false
       const next = prev.map((line) => {
+        if (line.deskPriceLocked) return line
         const v = line.variantOptions.find((o) => String(o.id) === String(line.variantId))
         if (!v) return line
         const price = effectiveSellUnitPrice(v, sellWholesaleMode)
@@ -3543,7 +3556,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             qty: line.qty + 1,
             code: cur.code,
             name: lineName,
-            price: unitPrice,
+            price: line.deskPriceLocked ? line.price : unitPrice,
             cost: effectivePosCostUnit(cur, sellWholesaleMode),
             unitLabel: cur.unitLabel,
             conversionHint: cur.conversionHint || '',
@@ -3751,6 +3764,102 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setHeaderSearch,
   ])
 
+  const posScanAddFromDecodedText = useCallback(
+    (raw) => {
+      const t = String(raw || '').trim()
+      if (!t) return false
+      const prods = productsRef.current
+      const caches = catalogBarcodeCachesRef.current
+      const salesMap = codeSalesMapRef.current
+      const strictNumBar = strictLongNumericBarcodeQuery(t)
+      const barcodeLike = queryLooksLikeBarcodeKeyInput(t)
+
+      const barHit = findProductByBarcodeCached(caches, t)
+      if (barHit) {
+        const scanCtx = buildBarcodeScanLogContext(barHit, t)
+        if (scanCtx) {
+          setHeaderSearch(displayNameForCartVariant(barHit.product, scanCtx.variant))
+          logBarcodeReceived(t, scanCtx)
+        } else {
+          logBarcodeReceived(t)
+        }
+        addToCartWithVariant(barHit.product, barHit.variantId)
+        afterSuccessfulHeaderAdd()
+        clearPosSearchForScan()
+        return true
+      }
+      if (strictNumBar) {
+        markBarcodeNotFound(t)
+        clearPosSearchForScan()
+        return true
+      }
+      if (!barcodeLike) {
+        const codeHit = findCatalogRowByCodeOrScan(prods, t)
+        if (codeHit) {
+          addToCartWithVariant(codeHit.product, codeHit.variantId)
+          afterSuccessfulHeaderAdd()
+          clearPosSearchForScan()
+          return true
+        }
+      }
+      const hits = suggestCatalogVariantPairsV9(prods, t, {
+        maxHits: 8,
+        surface: 'pos-camera-scan',
+      })
+      if (hits.length === 1) {
+        addToCartWithVariant(hits[0].product, hits[0].variant.id)
+        afterSuccessfulHeaderAdd()
+        clearPosSearchForScan()
+        return true
+      }
+      if (hits.length > 1) {
+        const exactCode = hits.find((h) => String(h.variant?.code ?? '').trim() === t)
+        if (exactCode) {
+          addToCartWithVariant(exactCode.product, exactCode.variant.id)
+          afterSuccessfulHeaderAdd()
+          clearPosSearchForScan()
+          return true
+        }
+      }
+      if (!barcodeLike) {
+        const nameMatches = filterProductsByQuickQuery(prods, t, caches.productsByKey)
+        const sorted = sortProductsBySearchQuery(nameMatches, t, salesMap)
+        if (sorted.length === 1) {
+          const p = sorted[0]
+          const opts = buildVariantOptionsFromProduct(p)
+          const first = opts[0]
+          if (first) {
+            addToCartWithVariant(p, first.id)
+            afterSuccessfulHeaderAdd()
+            clearPosSearchForScan()
+            return true
+          }
+        }
+        if (sorted.length > 0 && sorted[0].multiUnit) {
+          const p = sorted[0]
+          const opts = buildVariantOptionsFromProduct(p)
+          const first = opts[0]
+          if (first) {
+            addToCartWithVariant(p, first.id)
+            afterSuccessfulHeaderAdd()
+            clearPosSearchForScan()
+            return true
+          }
+        }
+      }
+      return false
+    },
+    [
+      addToCartWithVariant,
+      afterSuccessfulHeaderAdd,
+      logBarcodeReceived,
+      markBarcodeNotFound,
+      setHeaderSearch,
+      strictLongNumericBarcodeQuery,
+      clearPosSearchForScan,
+    ]
+  )
+
   const pickHeaderSuggestRow = useCallback(
     (row) => {
       if (!row) return
@@ -3852,6 +3961,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     (text) => {
       const t = String(text || '').trim()
       if (!t) return
+      if (posScanAddFromDecodedText(t)) return
       setHeaderSearch(t)
       setHeaderSearchInvalid(false)
       setHeaderSearchFeedback('')
@@ -3861,11 +3971,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         tryAddProductFromHeader(t)
       })
     },
-    [tryAddProductFromHeader]
+    [posScanAddFromDecodedText, tryAddProductFromHeader]
   )
 
   const setLineVariant = useCallback((lineId, variantId) => {
     setCartQtyDraftByLine({})
+    setCartPriceDraftByLine((m) => {
+      const next = { ...m }
+      delete next[lineId]
+      return next
+    })
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.lineId === lineId)
       if (idx < 0) return prev
@@ -3892,6 +4007,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           variantId: v.id,
           code: v.code,
           name: lineName,
+          deskPriceLocked: false,
           price: effectiveSellUnitPrice(v, sellWholesaleMode),
           cost: effectivePosCostUnit(v, sellWholesaleMode),
           unitLabel: v.unitLabel,
@@ -3902,7 +4018,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return d0 ? { ...rest, selectedBatchId: d0 } : rest
       })
     })
-  }, [setCart, sellWholesaleMode])
+  }, [setCart, sellWholesaleMode, setCartPriceDraftByLine])
+
+  const setLineDeskPrice = useCallback((lineId, priceInt) => {
+    const n = Math.max(0, Math.floor(Number(priceInt) || 0))
+    setCartPriceDraftByLine((m) => {
+      const next = { ...m }
+      delete next[lineId]
+      return next
+    })
+    setCart((prev) =>
+      prev.map((l) => (l.lineId === lineId ? { ...l, price: n, deskPriceLocked: true } : l))
+    )
+  }, [setCart])
 
   const setLineQty = useCallback((lineId, qty) => {
     const s = typeof qty === 'number' ? String(qty) : String(qty ?? '')
@@ -3917,6 +4045,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const removeLine = useCallback((lineId) => {
     setCartQtyDraftByLine((m) => {
+      const next = { ...m }
+      delete next[lineId]
+      return next
+    })
+    setCartPriceDraftByLine((m) => {
       const next = { ...m }
       delete next[lineId]
       return next
@@ -4056,7 +4189,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const invoiceNo = formatInvoiceNo(fixedAt)
     const items = cart.map((l) => {
       const vid = l.variantId != null ? String(l.variantId).trim() : ''
-      let price = Number(l.price) || 0
+      const price = Number(l.price) || 0
       let cost = Number(l.cost) || 0
       if (vid) {
         const hit = findCatalogVariantById(products, vid)
@@ -4064,7 +4197,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const vo =
             buildVariantOptionsFromProduct(hit.product).find((o) => String(o.id) === vid) || null
           if (vo) {
-            price = effectiveSellUnitPrice(vo, sellWholesaleMode)
             cost = effectivePosCostUnit(vo, sellWholesaleMode)
           }
         }
@@ -5760,7 +5892,40 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                         </div>
                       </td>
                       <td className="pos-col--price">
-                        {l.price.toLocaleString('vi-VN')}
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          className="pos-cart-price-input"
+                          aria-label="Giá bán (chỉ đơn hiện tại)"
+                          value={
+                            cartPriceDraftByLine[l.lineId] !== undefined
+                              ? cartPriceDraftByLine[l.lineId]
+                              : formatVnDots(Math.round(Number(l.price) || 0))
+                          }
+                          onFocus={() => {
+                            setSelectedCartLineId(l.lineId)
+                            setCartPriceDraftByLine((m) => ({
+                              ...m,
+                              [l.lineId]: formatCashInputFromRaw(String(Math.round(Number(l.price) || 0))),
+                            }))
+                          }}
+                          onChange={(e) =>
+                            setCartPriceDraftByLine((m) => ({
+                              ...m,
+                              [l.lineId]: formatCashInputFromRaw(e.target.value),
+                            }))
+                          }
+                          onBlur={(e) => {
+                            setLineDeskPrice(l.lineId, parseVnIntMoney(e.target.value))
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              e.currentTarget.blur()
+                            }
+                          }}
+                        />
                         <span className="pos-currency">đ</span>
                       </td>
                       <td className="pos-col--sum">

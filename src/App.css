@@ -3112,6 +3112,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+.pos-cart-price-input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 7.5rem;
+  margin-left: auto;
+  display: inline-block;
+  text-align: right;
+  font: inherit;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.22rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.65);
+  color: inherit;
+}
+
+.pos-cart-price-input:focus {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.85);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+}
+
 .pos-col-act-stack {
   display: flex;
   flex-direction: column;

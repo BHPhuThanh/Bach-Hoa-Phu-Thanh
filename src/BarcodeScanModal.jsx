@@ -16,7 +16,7 @@ function playScanSuccessBeep() {
 
 /**
  * Quét mã vạch / QR bằng camera (mobile / HTTPS).
- * `onScan(text)` gọi một lần khi đọc được chuỗi; modal tự đóng sau khi gọi.
+ * `onScan(decodedText)` — tương đương «onScanSuccess»: gọi sau khi dừng camera, rồi phát tiếng «tít», rồi đóng modal.
  */
 export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onClose, onScan }) {
   const readerId = useMemo(() => `bhpt-qr-${Math.random().toString(36).slice(2, 11)}`, [])
@@ -56,12 +56,12 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           if (!t || cancelled) return
           cancelled = true
           void stop()
-          playScanSuccessBeep()
           try {
             onScanRef.current?.(t)
           } catch (e) {
             console.warn('[BarcodeScanModal] onScan', e)
           }
+          playScanSuccessBeep()
           onCloseRef.current?.()
         }
 

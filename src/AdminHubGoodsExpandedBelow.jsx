@@ -128,7 +128,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                             className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save"
                                             onClick={(e) => {
                                               e.stopPropagation()
-                                              saveGoodsDetail()
+                                              void saveGoodsDetail()
                                             }}
                                             title="Lưu"
                                           >

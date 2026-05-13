@@ -144,6 +144,7 @@ import {
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
+  updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
 import { fetchInboundInvoices, insertInboundHistoryEntry } from './supabaseInboundHistory.js'
 import {
@@ -1876,7 +1877,7 @@ export default function AdminHub({
     })
   }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
 
-  const saveGoodsDetail = useCallback(() => {
+  const saveGoodsDetail = useCallback(async () => {
     if (!goodsDetailVariant || !goodsDetailDraft) return
     const nameTrim = String(goodsDetailDraft.name ?? '')
       .replace(/\u00A0/g, ' ')
@@ -1913,6 +1914,23 @@ export default function AdminHub({
       afterQty: patch.stockQty,
     })
     if (onUpdateCatalogVariant) {
+      const prevBrand = String(goodsDetailVariant.brand ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (
+        isSupabaseConfigured() &&
+        String(patch.code ?? '').trim() &&
+        patch.brand !== prevBrand
+      ) {
+        const br = await updateProductThuongHieuByMaHang(patch.code, patch.brand)
+        if (!br.ok) {
+          window.alert(
+            describeCatalogPersistError(br.error) ||
+              'Không lưu được thương hiệu lên Supabase. Kiểm tra mạng và quyền ghi bảng «products».'
+          )
+          return
+        }
+      }
       recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
       onUpdateCatalogVariant(goodsDetailVariant.id, patch)
       triggerGoodsSaveSuccessToast()
@@ -2290,7 +2308,7 @@ export default function AdminHub({
     return () => window.removeEventListener('keydown', onKey)
   }, [activeTab, closeSoloProductTab])
 
-  const saveSoloGoodsDetail = useCallback(() => {
+  const saveSoloGoodsDetail = useCallback(async () => {
     if (!soloGoodsVariant || !soloGoodsDraft) return
     const nameTrim = String(soloGoodsDraft.name ?? '')
       .replace(/\u00A0/g, ' ')
@@ -2327,6 +2345,23 @@ export default function AdminHub({
       afterQty: patch.stockQty,
     })
     if (onUpdateCatalogVariant) {
+      const prevBrand = String(soloGoodsVariant.brand ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (
+        isSupabaseConfigured() &&
+        String(patch.code ?? '').trim() &&
+        patch.brand !== prevBrand
+      ) {
+        const br = await updateProductThuongHieuByMaHang(patch.code, patch.brand)
+        if (!br.ok) {
+          window.alert(
+            describeCatalogPersistError(br.error) ||
+              'Không lưu được thương hiệu lên Supabase. Kiểm tra mạng và quyền ghi bảng «products».'
+          )
+          return
+        }
+      }
       recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
       onUpdateCatalogVariant(soloGoodsVariant.id, patch)
       triggerGoodsSaveSuccessToast()
@@ -3120,6 +3155,14 @@ export default function AdminHub({
               addInboundFormLine(p, v)
               return
             }
+          }
+        }
+      }
+      for (const p of catalogListForInbound) {
+        for (const v of p.groupVariants || [p]) {
+          if (String(v.code ?? '').trim() === q) {
+            addInboundFormLine(p, v)
+            return
           }
         }
       }
@@ -6838,7 +6881,7 @@ export default function AdminHub({
                         />
                       </svg>
                     </button>
-                    <button type="button" className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save" onClick={saveSoloGoodsDetail} title="Lưu">
+                    <button type="button" className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save" onClick={() => void saveSoloGoodsDetail()} title="Lưu">
                       ✓
                     </button>
                   </div>

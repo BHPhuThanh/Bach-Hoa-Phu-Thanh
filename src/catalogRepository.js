@@ -96,6 +96,47 @@ function mergeBaselineFromUpsertReturnedRows(returnedRows) {
 }
 
 /**
+ * PATCH một dòng `products.thuong_hieu` theo `ma_hang` — đảm bảo F5 vẫn thấy thương hiệu sau khi lưu tại tab Hàng hóa
+ * (không phụ thuộc dedupe snapshot hay flush bulk).
+ * @param {string} maHang — «Mã hàng» (`ma_hang`)
+ * @param {unknown} brandUi — giá trị thương hiệu từ form (map sang cột `thuong_hieu`)
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown }>}
+ */
+export async function updateProductThuongHieuByMaHang(maHang, brandUi) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const code = String(maHang ?? '').trim()
+  if (!code) return { ok: false, error: new Error('Thiếu mã hàng.') }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    const err = new Error('Không tạo được Supabase client (thiếu env hoặc cấu hình).')
+    return { ok: false, error: err }
+  }
+  const allow = new Set(['thuong_hieu'])
+  const fin = finalizeProductRowForSupabase({ thuong_hieu: String(brandUi ?? '') }, allow)
+  try {
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .update({ thuong_hieu: fin.thuong_hieu })
+      .eq(PRODUCT_PK_COLUMN, code)
+      .select('*')
+    if (error) throw error
+    const rows = Array.isArray(data) ? data : []
+    if (rows.length === 0) {
+      const err = new Error(
+        `Không cập nhật được thương hiệu: không có dòng «products» với ${PRODUCT_PK_COLUMN}="${code}".`
+      )
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err }
+    }
+    mergeBaselineFromUpsertReturnedRows(rows)
+    return { ok: true }
+  } catch (e) {
+    notifySupabasePersistFailure(e)
+    return { ok: false, error: e }
+  }
+}
+
+/**
  * Cột tiền/tồn/khối lượng… — dọn chuỗi số Kiot: bỏ `.` phân nghìn, `,` → `.` thập phân, rồi chuẩn hóa thành chữ số.
  * Không áp dụng cho mã vạch, tên hàng, ngày dự kiến…
  */
@@ -441,6 +482,8 @@ function catalogSnapshotDedupeKey(products, fileName) {
         v.id,
         String(v.code ?? ''),
         String(v.name ?? ''),
+        String(v.brand ?? ''),
+        String(normalizeBarcodeValue(v.barcode ?? '')),
         String(v.price ?? ''),
         String(v.stockQty ?? ''),
         String(v.cost ?? ''),
