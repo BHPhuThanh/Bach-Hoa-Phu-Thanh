@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import debounce from 'lodash/debounce'
 import { useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 import {
@@ -2476,6 +2477,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [newCustomerName, setNewCustomerName] = useState('')
   const [newCustomerPhone, setNewCustomerPhone] = useState('')
   const headerSearchRef = useRef(null)
+  const [headerSearchDebounced, setHeaderSearchDebounced] = useState('')
+  const headerSearchDebounceRef = useRef(null)
+  if (headerSearchDebounceRef.current == null) {
+    headerSearchDebounceRef.current = debounce((q) => setHeaderSearchDebounced(q), 300)
+  }
+  useEffect(() => {
+    headerSearchDebounceRef.current?.(headerSearch)
+  }, [headerSearch])
+  useEffect(() => () => headerSearchDebounceRef.current?.cancel(), [])
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
   const lowStockAlertWrapRef = useRef(null)
@@ -2807,7 +2817,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
     if (variantId == null || !patch || typeof patch !== 'object') return
-    pendingInventoryManualLogRef.current = null
     const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
     setProducts((prev) => {
       const flat = flattenDisplayCatalogToVariants(prev)
@@ -2815,7 +2824,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       let next = prev
       const stockRaw = patch?.stockQty
       const stockNum = Number(stockRaw)
-      const shouldSyncSiblingStock = target && Number.isFinite(stockNum)
+      /** Chỉ đồng bộ tồn theo nhóm ĐVT khi người dùng thật sự đổi tồn — không nhân quy_doi khi chỉ sửa giá. */
+      const stockMeaningfullyChanged =
+        stockTouched &&
+        !!target &&
+        stockQtyMeaningfullyChanged(target?.stockQty, stockRaw)
+      const shouldSyncSiblingStock = stockMeaningfullyChanged && Number.isFinite(stockNum)
 
       /** @type {string[]} */
       let affectedIdsForLog = []
@@ -2867,17 +2881,55 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         if (any && isSupabaseConfigured()) {
           pendingInventoryManualLogRef.current = { prev, next, ids: affectedIdsForLog }
+        } else {
+          pendingInventoryManualLogRef.current = null
         }
+      } else {
+        pendingInventoryManualLogRef.current = null
       }
 
       queueMicrotask(() => {
-        if (catalogStoreHydratedRef.current && !initialCatalogLoadPendingRef.current && isSupabaseConfigured()) {
-          setCatalogSupabaseDirty(true)
-        }
+        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+        if (!isSupabaseConfigured()) return
+        void (async () => {
+          try {
+            const flatNext = flattenDisplayCatalogToVariants(next)
+            const idSet = new Set(affectedIdsForLog.map(String))
+            const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
+            if (upsertOnly.length === 0) {
+              setCatalogSupabaseDirty(true)
+              return
+            }
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+              upsertOnlyVariants: upsertOnly,
+            })
+            if (r.ok) {
+              await applyServerCatalogAfterPersist()
+              const man = pendingInventoryManualLogRef.current
+              if (man && isSupabaseConfigured()) {
+                pendingInventoryManualLogRef.current = null
+                try {
+                  const rows = buildStockAdjustInventoryLogRows(man.prev, man.next, man.ids, {
+                    staffName: staffNameForInventoryLog(),
+                  })
+                  await insertInventoryLogRows(rows)
+                } catch (logErr) {
+                  console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
+                }
+              }
+              setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
+            } else {
+              setCatalogSupabaseDirty(true)
+            }
+          } catch (e) {
+            console.warn('[App] Auto-upsert sau cập nhật biến thể catalog', e)
+            setCatalogSupabaseDirty(true)
+          }
+        })()
       })
       return next
     })
-  }, [])
+  }, [applyServerCatalogAfterPersist])
 
   const showPosScanToastMessage = useCallback((text) => {
     const t = String(text ?? '').trim()
@@ -3495,11 +3547,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             products,
             posTextSearchScanList,
             codeSalesMap,
-            headerSearch,
+            headerSearchDebounced,
             catalogBarcodeCaches.productsByKey
           )
         : [],
-    [products, posTextSearchScanList, codeSalesMap, headerSearch, catalogBarcodeCaches]
+    [products, posTextSearchScanList, codeSalesMap, headerSearchDebounced, catalogBarcodeCaches]
   )
 
   const posGoodsBrandOptions = useMemo(() => {

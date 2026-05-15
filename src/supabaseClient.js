@@ -14,3 +14,5 @@ export const supabase = supabaseReady ? createClient(supabaseUrl, supabaseAnonKe
 
 export const getSupabaseClient = () => supabase
 export const isSupabaseConfigured = () => supabaseReady
+
+/** Nếu sau này dùng `client.channel(...).subscribe(...)`, bắt buộc gọi `removeChannel` / `unsubscribe` trong cleanup `useEffect`. */

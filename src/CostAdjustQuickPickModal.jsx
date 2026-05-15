@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import debounce from 'lodash/debounce'
 import { List, useListRef } from 'react-window'
 import {
   filterAndSortGoodsRowsSimpleWithFallback,
@@ -45,10 +46,23 @@ const QuickPickVirtualRow = memo(function QuickPickVirtualRow({ index, style, ro
   )
 })
 
+/**
+ * @param {{ open: boolean, products: Array, selectedIds: Set<string>, onToggleId: (id: string|number) => void, onConfirm: (pickedRows: Array<{ _product: object, _variant: object }>) => void, onCancel: () => void }} props
+ */
 export default function CostAdjustQuickPickModal({ open, products, selectedIds, onToggleId, onConfirm, onCancel }) {
   const modalSearchRef = useRef(null)
   const listWrapRef = useRef(null)
   const [modalSearchQ, setModalSearchQ] = useState('')
+  const [modalSearchDebounced, setModalSearchDebounced] = useState('')
+  const modalSearchDebouncedRef = useRef(null)
+  if (modalSearchDebouncedRef.current == null) {
+    modalSearchDebouncedRef.current = debounce((q) => setModalSearchDebounced(q), 300)
+  }
+  useEffect(() => {
+    modalSearchDebouncedRef.current(modalSearchQ)
+  }, [modalSearchQ])
+  useEffect(() => () => modalSearchDebouncedRef.current?.cancel(), [])
+
   const [catalogSnapshot, setCatalogSnapshot] = useState(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [listWidth, setListWidth] = useState(640)
@@ -75,26 +89,15 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
   )
 
   const filteredRows = useMemo(() => {
-    const raw = modalSearchQ.trim()
+    const raw = modalSearchDebounced.trim()
     if (!raw) return goodsRowsAll
     return filterAndSortGoodsRowsSimpleWithFallback(goodsRowsAll, raw)
-  }, [goodsRowsAll, modalSearchQ])
-
-  useEffect(() => {
-    if (!open) return
-    console.log(
-      '[CostAdjustQuickPickModal] Search:',
-      modalSearchQ,
-      'Results:',
-      filteredRows.length,
-      'goodsRowsAll:',
-      goodsRowsAll.length
-    )
-  }, [open, modalSearchQ, filteredRows.length, goodsRowsAll.length])
+  }, [goodsRowsAll, modalSearchDebounced])
 
   useEffect(() => {
     if (!open) {
       setModalSearchQ('')
+      setModalSearchDebounced('')
       setCatalogSnapshot(null)
       setCatalogLoading(false)
       return
@@ -136,7 +139,7 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
   useEffect(() => {
     if (!open) return
     listRef.current?.scrollToRow?.({ index: 0, align: 'start', behavior: 'instant' })
-  }, [modalSearchQ, open, filteredRows.length])
+  }, [modalSearchDebounced, open, filteredRows.length])
 
   const rowProps = useMemo(
     () => ({
@@ -153,6 +156,24 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
     },
     [onCancel]
   )
+
+  const rowByVariantId = useMemo(() => {
+    const m = new Map()
+    for (const r of goodsRowsAll) {
+      const id = String(r?._variant?.id ?? '')
+      if (id) m.set(id, r)
+    }
+    return m
+  }, [goodsRowsAll])
+
+  const handleConfirmClick = useCallback(() => {
+    const picked = []
+    for (const id of selectedIds) {
+      const row = rowByVariantId.get(String(id))
+      if (row) picked.push(row)
+    }
+    onConfirm(picked)
+  }, [onConfirm, rowByVariantId, selectedIds])
 
   if (!open) return null
 
@@ -175,6 +196,13 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
               inputRef={modalSearchRef}
               value={modalSearchQ}
               onChange={(e) => setModalSearchQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  e.currentTarget.blur()
+                }
+              }}
               placeholder="Tìm theo tên, mã SKU, hoặc quét mã Barcode…"
               aria-label="Lọc danh sách trong modal Chọn nhanh"
             />
@@ -213,7 +241,7 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
           <button type="button" className="cac-btn cac-btn--muted" onClick={onCancel}>
             Hủy
           </button>
-          <button type="button" className="cac-btn cac-btn--primary" onClick={onConfirm}>
+          <button type="button" className="cac-btn cac-btn--primary" onClick={handleConfirmClick}>
             Xác nhận
           </button>
         </div>

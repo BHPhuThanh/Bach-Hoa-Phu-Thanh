@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import debounce from 'lodash/debounce'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { buildK80ReceiptHtml, RECEIPT_STORE_NAME } from './receiptHtml.js'
 import AdminHubRevenuePanel from './AdminHubRevenuePanel.jsx'
@@ -44,6 +45,7 @@ import {
 import { getComboBom, isComboCatalogProduct } from './comboCatalog.js'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
+import AdminHubInboundDraftLineRow from './AdminHubInboundDraftLineRow.jsx'
 import InboundThuongHieuAutocomplete, {
   collectUniqueThuongHieuFromCatalog,
 } from './InboundThuongHieuAutocomplete.jsx'
@@ -965,12 +967,16 @@ function ahIsEditableFieldElement(el) {
   return false
 }
 
-function useDebounced(value, ms) {
+function useDebounced(value, ms = 300) {
   const [out, setOut] = useState(value)
+  const dRef = useRef(null)
+  if (dRef.current == null) {
+    dRef.current = debounce((v) => setOut(v), ms)
+  }
   useEffect(() => {
-    const t = window.setTimeout(() => setOut(value), ms)
-    return () => window.clearTimeout(t)
-  }, [value, ms])
+    dRef.current(value)
+  }, [value])
+  useEffect(() => () => dRef.current?.cancel(), [])
   return out
 }
 
@@ -1426,6 +1432,15 @@ export default function AdminHub({
   const [hangHoaDeepLinkListScope, setHangHoaDeepLinkListScope] = useState('all')
   const [hangHoaDeepLinkVid, setHangHoaDeepLinkVid] = useState(null)
   const [goodsQ, setGoodsQ] = useState('')
+  const [goodsSearchFilter, setGoodsSearchFilter] = useState('')
+  const goodsSearchDebRef = useRef(null)
+  if (goodsSearchDebRef.current == null) {
+    goodsSearchDebRef.current = debounce((v) => setGoodsSearchFilter(v), 300)
+  }
+  useEffect(() => {
+    goodsSearchDebRef.current(goodsQ)
+  }, [goodsQ])
+  useEffect(() => () => goodsSearchDebRef.current?.cancel(), [])
   /** Mobile tab Hàng hóa: bộ lọc trong drawer — chỉ UI. */
   const [goodsMobileFiltersOpen, setGoodsMobileFiltersOpen] = useState(false)
   useEffect(() => {
@@ -1439,7 +1454,7 @@ export default function AdminHub({
     mq.addEventListener('change', on)
     return () => mq.removeEventListener('change', on)
   }, [])
-  const goodsDeferred = useDeferredValue(goodsQ)
+  const goodsDeferred = useDeferredValue(goodsSearchFilter)
 
   const expandHangHoaGoodsListToFull = useCallback(() => {
     setHangHoaDeepLinkListScope('all')
@@ -1609,7 +1624,7 @@ export default function AdminHub({
   )
 
   const goodsRowsFiltered = useMemo(() => {
-    const val = goodsQ.trim()
+    const val = goodsSearchFilter.trim()
     let list = goodsRowsAll
     const brandKey = String(goodsBrandKey || '').trim()
     if (brandKey) {
@@ -1624,7 +1639,7 @@ export default function AdminHub({
     }
     if (!val.length) return list
     return filterAndSortGoodsRowsSimple(list, val)
-  }, [goodsRowsAll, goodsQ, goodsBrandKey, goodsCreatedAtRange])
+  }, [goodsRowsAll, goodsSearchFilter, goodsBrandKey, goodsCreatedAtRange])
 
   const goodsDetailCtx = useMemo(() => {
     if (!goodsExpandedId) return null
@@ -2793,7 +2808,7 @@ export default function AdminHub({
   const [inboundOrders, setInboundOrders] = useState(() => loadInboundOrdersFromStorage())
   const [inboundRemoteLoading, setInboundRemoteLoading] = useState(false)
   const [inboundQ, setInboundQ] = useState('')
-  const inboundDebounced = useDebounced(inboundQ, 180)
+  const inboundDebounced = useDebounced(inboundQ)
   const [inboundSelected, setInboundSelected] = useState(() => ({}))
 
   useEffect(() => {
@@ -2960,7 +2975,7 @@ export default function AdminHub({
   const inboundProductSearchRef = useRef(null)
   const [inboundQuickPickOpen, setInboundQuickPickOpen] = useState(false)
   const [inboundQuickPickSelected, setInboundQuickPickSelected] = useState(() => new Set())
-  const inboundFormProductDebounced = useDebounced(inboundFormProductQ, 140)
+  const inboundFormProductDebounced = useDebounced(inboundFormProductQ)
   const [inboundFormSupplierQ, setInboundFormSupplierQ] = useState('')
   const [inboundFormSupplierName, setInboundFormSupplierName] = useState('')
   const [inboundFormCode, setInboundFormCode] = useState('')
@@ -3334,15 +3349,15 @@ export default function AdminHub({
     })
   }, [])
 
-  const confirmInboundQuickPick = useCallback(() => {
+  const confirmInboundQuickPick = useCallback((pickedRows) => {
+    const rows = Array.isArray(pickedRows) ? pickedRows : []
     setInboundFormLines((cur) => {
       const have = new Set(cur.map((l) => String(l.variantId)))
       const toAdd = []
       let brandHint = ''
-      for (const r of flattenCatalogToGoodsSearchRows(catalogListForInbound)) {
-        const vid = String(r._variant.id)
-        if (!inboundQuickPickSelected.has(vid)) continue
-        if (have.has(vid)) continue
+      for (const r of rows) {
+        const vid = String(r?._variant?.id ?? '')
+        if (!vid || have.has(vid)) continue
         have.add(vid)
         const line = createInboundFormLineFromProductVariant(r._product, r._variant)
         if (!brandHint) brandHint = String(line.thuong_hieu || '').trim()
@@ -3360,7 +3375,7 @@ export default function AdminHub({
     setInboundQuickPickOpen(false)
     setInboundQuickPickSelected(new Set())
     setInboundFormProductQ('')
-  }, [catalogListForInbound, inboundQuickPickSelected])
+  }, [])
 
   const updateInboundFormLine = useCallback((lineId, patch) => {
     setInboundFormLines((prev) =>
@@ -5227,7 +5242,7 @@ export default function AdminHub({
   const [ordFrom, setOrdFrom] = useState(todayYmd)
   const [ordTo, setOrdTo] = useState(todayYmd)
   const [ordQ, setOrdQ] = useState('')
-  const ordDebounced = useDebounced(ordQ, 180)
+  const ordDebounced = useDebounced(ordQ)
   /** Tab Đơn hàng: đơn nhập kho vs đơn bán POS. */
   const [ordersSubTab, setOrdersSubTab] = useState('pos')
   const [ordersDateDdOpen, setOrdersDateDdOpen] = useState(false)
@@ -5332,7 +5347,7 @@ export default function AdminHub({
 
   /* —— Khách hàng —— */
   const [custQ, setCustQ] = useState('')
-  const custDebounced = useDebounced(custQ, 180)
+  const custDebounced = useDebounced(custQ)
   const [customers, setCustomers] = useState(() => loadCustomersFromStorage())
   /** Một lần / phiên: tải từ Supabase khi lần đầu mở tab — không dùng refreshKey (tránh bão API khi salesRefresh tăng). */
   const customersRemoteFetchedOnceRef = useRef(false)
@@ -5413,7 +5428,7 @@ export default function AdminHub({
   }, [])
 
   const [staffQ, setStaffQ] = useState('')
-  const staffDebounced = useDebounced(staffQ, 120)
+  const staffDebounced = useDebounced(staffQ)
   const [staffRows, setStaffRows] = useState(STAFF_ROWS_DEFAULT)
   const staffRemoteFetchedOnceRef = useRef(false)
   const [staffRemoteLoading, setStaffRemoteLoading] = useState(false)
@@ -8144,6 +8159,12 @@ export default function AdminHub({
                         setInboundProductSuggestIdx(0)
                       }}
                       onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          e.currentTarget.blur()
+                          return
+                        }
                         if (e.key === 'ArrowDown') {
                           if (!inboundProductSuggestPanelOpen || inboundProductSuggestRowCount <= 0) return
                           e.preventDefault()
@@ -8334,139 +8355,18 @@ export default function AdminHub({
                           </td>
                         </tr>
                       ) : (
-                        inboundFormLines.map((ln, idx) => {
-                          const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
-                          const inboundDvtLocked = inboundDvtOptions.length <= 1
-                          return (
-                          <tr key={ln.lineId} className="ah-inbound-draft-line-card">
-                            <td className="ah-inbound-ln-del ah-inbound-draft-td-del">
-                              <button
-                                type="button"
-                                className="ah-inbound-row-del"
-                                tabIndex={-1}
-                                aria-label="Xóa dòng (dùng chuột; Tab bỏ qua để nhập nhanh SL / Đơn giá / Giảm giá)"
-                                onClick={() => removeInboundFormLine(ln.lineId)}
-                              >
-                                ×
-                              </button>
-                            </td>
-                            <td className="ah-inbound-ln-stt ah-inbound-draft-td-stt">{idx + 1}</td>
-                            <td className="ah-inbound-ln-code ah-inbound-draft-td-code">
-                              {ln.code && ln.variantId ? (
-                                <a
-                                  className="ah-inbound-line-code-link"
-                                  href={
-                                    buildOpenHangHoaGoodsAbsUrl(ln.variantId, String(ln.code || '').trim()) || '#'
-                                  }
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title="Mở trang Hàng hóa — chi tiết sản phẩm (tab mới)"
-                                  onClick={(e) => {
-                                    const u = buildOpenHangHoaGoodsAbsUrl(
-                                      ln.variantId,
-                                      String(ln.code || '').trim()
-                                    )
-                                    if (!u) e.preventDefault()
-                                  }}
-                                >
-                                  {ln.code}
-                                </a>
-                              ) : (
-                                ln.code || '—'
-                              )}
-                            </td>
-                            <td className="ah-inbound-draft-td-name">{ln.name || '—'}</td>
-                            <td
-                              className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-td-ncc"
-                              title="thuong_hieu (file danh mục / trường brand)"
-                            >
-                              {inboundLineThuongHieuResolved(ln, catalogListForInbound) || '—'}
-                            </td>
-                            <td className="ah-inbound-ln-mid ah-inbound-ln-dvt-cell ah-inbound-ln-spread">
-                              <select
-                                className={`ah-inbound-dvt-select${inboundDvtLocked ? ' ah-inbound-dvt-select--locked' : ''}`}
-                                aria-label={`Đơn vị tính ${ln.name}`}
-                                disabled={inboundDvtLocked}
-                                title={
-                                  inboundDvtLocked
-                                    ? 'Mặt hàng chỉ có một ĐVT trong danh mục'
-                                    : 'Chọn ĐVT theo danh mục KiotViet'
-                                }
-                                value={normalizeCatalogUnitLabel(ln.unitLabel)}
-                                onChange={(e) => {
-                                  const res = applyInboundLineUnitChange(catalogListForInbound, ln, e.target.value)
-                                  if (!res.ok || !res.changed) return
-                                  updateInboundFormLine(ln.lineId, res.line)
-                                }}
-                              >
-                                {inboundDvtOptions.map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
-                              <input
-                                className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
-                                type="text"
-                                inputMode="numeric"
-                                data-inbound-line={ln.lineId}
-                                data-inbound-field="qty"
-                                aria-label={`Số lượng ${ln.name}`}
-                                value={ln.qty === 0 ? '' : String(ln.qty)}
-                                onFocus={selectInboundInputOnFocus}
-                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'qty')}
-                                onChange={(e) => {
-                                  const raw = e.target.value.replace(/[^\d.]/g, '')
-                                  const n =
-                                    raw === '' ? 0 : Math.max(0, parseFloat(raw.replace(/,/g, '.')) || 0)
-                                  updateInboundFormLine(ln.lineId, { qty: n })
-                                }}
-                              />
-                            </td>
-                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
-                              <input
-                                className="ah-inbound-cell-input ah-inbound-cell-input--soft"
-                                type="text"
-                                inputMode="decimal"
-                                data-inbound-line={ln.lineId}
-                                data-inbound-field="unitPrice"
-                                aria-label={`Đơn giá ${ln.name}`}
-                                value={formatMoneyDraftVi(ln.unitPrice)}
-                                onFocus={selectInboundInputOnFocus}
-                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'unitPrice')}
-                                onChange={(e) =>
-                                  updateInboundFormLine(ln.lineId, {
-                                    unitPrice: parseMoneyDraftVi(e.target.value),
-                                  })
-                                }
-                              />
-                            </td>
-                            <td className="ah-inbound-ln-mid ah-inbound-ln-spread">
-                              <input
-                                className="ah-inbound-cell-input ah-inbound-cell-input--soft"
-                                type="text"
-                                inputMode="decimal"
-                                data-inbound-line={ln.lineId}
-                                data-inbound-field="lineDiscount"
-                                aria-label={`Giảm giá ${ln.name}`}
-                                value={formatMoneyDraftVi(ln.lineDiscount)}
-                                onFocus={selectInboundInputOnFocus}
-                                onKeyDown={(e) => handleInboundNumericKeyDown(e, ln.lineId, 'lineDiscount')}
-                                onChange={(e) =>
-                                  updateInboundFormLine(ln.lineId, {
-                                    lineDiscount: parseMoneyDraftVi(e.target.value),
-                                  })
-                                }
-                              />
-                            </td>
-                            <td className="ah-inbound-ln-mid ah-inbound-ln-total ah-inbound-ln-spread ah-inbound-ln-total-cell">
-                              {inboundLineTotal(ln).toLocaleString('vi-VN')} đ
-                            </td>
-                          </tr>
-                          )
-                        })
+                        inboundFormLines.map((ln, idx) => (
+                          <AdminHubInboundDraftLineRow
+                            key={ln.lineId}
+                            ln={ln}
+                            idx={idx}
+                            catalogListForInbound={catalogListForInbound}
+                            removeInboundFormLine={removeInboundFormLine}
+                            updateInboundFormLine={updateInboundFormLine}
+                            selectInboundInputOnFocus={selectInboundInputOnFocus}
+                            handleInboundNumericKeyDown={handleInboundNumericKeyDown}
+                          />
+                        ))
                       )}
                     </tbody>
                   </table>

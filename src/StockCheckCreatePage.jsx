@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import debounce from 'lodash/debounce'
 import { normalizeBarcodeValue } from './catalogCsv.js'
 import {
   buildPosTextSearchScanList,
@@ -37,7 +38,6 @@ import {
 } from './displayStockQty.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
-import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
 import './App.css'
 import './dashboard-dark.css'
 import './costAdjustCreatePage.css'
@@ -141,6 +141,15 @@ export default function StockCheckCreatePage() {
   const [voucherPreviewCode, setVoucherPreviewCode] = useState('PK001')
   const [createdAtLabel] = useState(() => formatNowVi())
   const [searchQ, setSearchQ] = useState('')
+  const [searchQDebounced, setSearchQDebounced] = useState('')
+  const searchQDebRef = useRef(null)
+  if (searchQDebRef.current == null) {
+    searchQDebRef.current = debounce((q) => setSearchQDebounced(q), 300)
+  }
+  useEffect(() => {
+    searchQDebRef.current(searchQ)
+  }, [searchQ])
+  useEffect(() => () => searchQDebRef.current?.cancel(), [])
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [rows, setRows] = useState([])
   const [page, setPage] = useState(1)
@@ -181,7 +190,7 @@ export default function StockCheckCreatePage() {
   }, [])
 
   const suggestRows = useMemo(() => {
-    const q = searchQ.trim()
+    const q = searchQDebounced.trim()
     if (!q || !products.length) return []
     const prods = resolvePosSuggestCatalog({
       products,
@@ -198,7 +207,7 @@ export default function StockCheckCreatePage() {
       }
     }
     return out
-  }, [searchQ, products, posScanList])
+  }, [searchQDebounced, products, posScanList])
 
   const existingIds = useMemo(() => new Set(rows.map((r) => r.variantId)), [rows])
 
@@ -216,6 +225,13 @@ export default function StockCheckCreatePage() {
 
   const onSearchKeyDown = useCallback(
     (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setSuggestOpen(false)
+        e.currentTarget.blur()
+        return
+      }
       if (e.key === 'Enter') {
         e.preventDefault()
         const q = searchQ.trim()
@@ -235,7 +251,6 @@ export default function StockCheckCreatePage() {
         const first = suggestRows[0]
         if (first) addVariant(first.product, first.variant)
       }
-      if (e.key === 'Escape') setSuggestOpen(false)
     },
     [searchQ, products, suggestRows, addVariant]
   )
@@ -283,14 +298,14 @@ export default function StockCheckCreatePage() {
     })
   }, [])
 
-  const confirmModal = useCallback(() => {
+  const confirmModal = useCallback((pickedRows) => {
+    const rows = Array.isArray(pickedRows) ? pickedRows : []
     setRows((cur) => {
       const have = new Set(cur.map((r) => r.variantId))
       const next = [...cur]
-      for (const r of flattenCatalogToGoodsSearchRows(products)) {
-        const vid = String(r._variant.id)
-        if (!modalSelected.has(vid)) continue
-        if (have.has(vid)) continue
+      for (const r of rows) {
+        const vid = String(r?._variant?.id ?? '')
+        if (!vid || have.has(vid)) continue
         have.add(vid)
         next.push(buildRowFromVariant(r._product, r._variant))
       }
@@ -299,7 +314,7 @@ export default function StockCheckCreatePage() {
     setModalOpen(false)
     setModalSelected(new Set())
     setPage(1)
-  }, [products, modalSelected])
+  }, [])
 
   const handleBalance = useCallback(async () => {
     if (saving) return
