@@ -2735,23 +2735,67 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [applyServerCatalogAfterPersist])
 
-  const handleRemoveCatalogVariants = useCallback((variantIds) => {
-    if (!variantIds?.length) return
-    setProducts((prev) => {
-      const codesToDelete = collectMaHangCodesForVariantIds(prev, variantIds)
-      const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
-      queueMicrotask(() => {
-        for (const c of codesToDelete) {
-          const m = String(c ?? '').trim()
-          if (m) pendingDeletedMaHangForSupabaseRef.current.add(m)
-        }
-        if (catalogStoreHydratedRef.current && !initialCatalogLoadPendingRef.current && isSupabaseConfigured()) {
-          setCatalogSupabaseDirty(true)
-        }
-      })
-      return next
-    })
+  const showPosPersistErrorToast = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    setPosPersistErrToast(t)
+    window.setTimeout(() => setPosPersistErrToast(null), 6500)
   }, [])
+
+  const handleRemoveCatalogVariants = useCallback(
+    async (variantIds) => {
+      if (!variantIds?.length) return
+      const prev = productsRef.current
+      const codesToDelete = collectMaHangCodesForVariantIds(prev, variantIds)
+      const uniq = [...new Set(codesToDelete.map((c) => String(c ?? '').trim()).filter(Boolean))]
+
+      if (
+        isSupabaseConfigured() &&
+        catalogStoreHydratedRef.current &&
+        !initialCatalogLoadPendingRef.current &&
+        uniq.length > 0
+      ) {
+        try {
+          const dr = await deleteProductsFromSupabaseByMaHang(uniq)
+          if (!dr.ok && !dr.skipped) {
+            showPosPersistErrorToast(
+              describeCatalogPersistError(dr.error) || 'Không xóa được sản phẩm trên Supabase.'
+            )
+            return
+          }
+        } catch (err) {
+          showPosPersistErrorToast(describeCatalogPersistError(err))
+          return
+        }
+      } else if (isSupabaseConfigured() && uniq.length > 0) {
+        for (const m of uniq) pendingDeletedMaHangForSupabaseRef.current.add(m)
+        setCatalogSupabaseDirty(true)
+      }
+
+      setProducts((p) => {
+        const next = applyProductDataToCatalog(p, { type: 'remove_variants', variantIds })
+        queueMicrotask(() => {
+          void (async () => {
+            if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+            try {
+              const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+              if (!r.ok && isSupabaseConfigured()) {
+                showPosPersistErrorToast(
+                  describeCatalogPersistError(r.error) || 'Đã xóa trên DB nhưng không lưu được snapshot danh mục.'
+                )
+                return
+              }
+              if (r.ok && isSupabaseConfigured()) await applyServerCatalogAfterPersist()
+            } catch (e) {
+              showPosPersistErrorToast(describeCatalogPersistError(e))
+            }
+          })()
+        })
+        return next
+      })
+    },
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+  )
 
   const handleReplaceCatalogGroup = useCallback((anchorVariantId, replacements) => {
     if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) return
@@ -2943,13 +2987,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setPosScanToast(null)
       posScanToastClearRef.current = null
     }, 3800)
-  }, [])
-
-  const showPosPersistErrorToast = useCallback((text) => {
-    const t = String(text ?? '').trim()
-    if (!t) return
-    setPosPersistErrToast(t)
-    window.setTimeout(() => setPosPersistErrToast(null), 6500)
   }, [])
 
   const showPosCameraToast = useCallback((message, kind = 'success') => {

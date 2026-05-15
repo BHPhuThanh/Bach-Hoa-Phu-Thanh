@@ -297,6 +297,10 @@ function displayVariantToProductsRow(v) {
       : ''
   const maHang = dbTextCell(v?.code)
   const dvtRaw = dbTextCell(v?.unitLabel)
+  const sqRaw = v?.stockQty ?? v?.ton_kho ?? v?.raw?.ton_kho
+  const sqNum = Number(sqRaw)
+  const tonKho =
+    sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0
   return {
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
@@ -304,7 +308,7 @@ function displayVariantToProductsRow(v) {
     thuong_hieu: dbTextCell(v?.brand),
     gia_ban: v?.price,
     gia_von: v?.cost,
-    ton_kho: v?.stockQty,
+    ton_kho: tonKho,
     ton_nho_nhat: v?.stockNormMin,
     ton_lon_nhat: v?.stockNormMax,
     dvt: dvtRaw || 'Cái',
@@ -454,7 +458,8 @@ export async function saveProductsTonKhoPatchToSupabase(flatDisplayVariants) {
     }
     const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await upsertRawProductRows(
       sb,
-      mergedFinal
+      mergedFinal,
+      { bypassBaselineDiff: true }
     )
     const skippedUpdate = uniq.length - written
     if (written === 0) {
@@ -500,6 +505,8 @@ function catalogSnapshotDedupeKey(products, fileName) {
  * @returns {{ written: number, skipped: number, lastError?: object }}
  */
 async function upsertProductChunkResilient(sb, part) {
+  // eslint-disable-next-line no-console
+  console.log('Payload gửi lên Supabase:', part)
   const { data: upsertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
@@ -531,6 +538,8 @@ async function upsertProductChunkResilient(sb, part) {
   /** @type {Array<Record<string, unknown>>} */
   const returnedRows = []
   for (const row of part) {
+    // eslint-disable-next-line no-console
+    console.log('Payload gửi lên Supabase:', [row])
     const r = await sb.from(PRODUCTS_TABLE).upsert([row], { onConflict: PRODUCT_PK_COLUMN }).select('*')
     if (r.error) {
       skipped += 1
@@ -562,7 +571,8 @@ const PRODUCT_ROW_KEYS_FOR_DB = new Set(CATALOG_PRODUCT_DB_COLUMNS)
  * Upsert các dòng `products` — một request bulk; diff theo baseline; fallback Promise.all khi payload lớn lỗi.
  * @returns {{ written: number, skippedUpsert: number, lastSupabaseError?: object, returnedProductRows?: Array }}
  */
-async function upsertRawProductRows(sb, rawRows) {
+async function upsertRawProductRows(sb, rawRows, opts = {}) {
+  const bypassBaselineDiff = opts && opts.bypassBaselineDiff === true
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   const skippedNoCode = rawRows.length - withCode.length
   if (skippedNoCode > 0) {
@@ -580,7 +590,7 @@ async function upsertRawProductRows(sb, rawRows) {
   const rows = deduped.map((row) => finalizeProductRowForSupabase(pickProductRowDbColumns(row), allow))
   if (rows.length === 0) return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
 
-  const changed = filterFinalizedRowsDiffFromBaseline(rows)
+  const changed = bypassBaselineDiff ? rows : filterFinalizedRowsDiffFromBaseline(rows)
   if (changed.length === 0) {
     return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
   }
@@ -739,6 +749,9 @@ export async function deleteProductsFromSupabaseByMaHang(maHangList) {
   const uniq = [...new Set([...maHangList].map((x) => String(x ?? '').trim()).filter(Boolean))]
   if (uniq.length === 0) return { ok: true, deleted: 0 }
   try {
+    // Bảng `products` dùng khóa chính `ma_hang` (text), không có cột `id` theo migration Kiot.
+    // eslint-disable-next-line no-console
+    console.log('Payload xóa Supabase (products.delete theo ma_hang):', uniq)
     const chunks = []
     for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
       chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
@@ -793,7 +806,8 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
     )
     const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await upsertRawProductRows(
       sb,
-      rawRows
+      rawRows,
+      { bypassBaselineDiff: true }
     )
     if (written === 0 && skippedUpsert > 0) {
       const fromApi =

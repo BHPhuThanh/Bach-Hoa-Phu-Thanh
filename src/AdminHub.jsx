@@ -4059,8 +4059,7 @@ export default function AdminHub({
         e.preventDefault()
         return
       }
-      e.preventDefault()
-      closeInboundForm()
+      /* Không đóng phiếu nhập bằng ESC — chỉ nút Đóng / Thoát / Hủy. */
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -4072,7 +4071,6 @@ export default function AdminHub({
     inboundReturnModal,
     inboundCancelModal,
     cancelInboundCostDiffModal,
-    closeInboundForm,
     inboundCatalogBulkSaving,
   ])
 
