@@ -1710,9 +1710,10 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 1 1 220px;
+  /* Không flex-grow: tránh khoảng đen lớn giữa ô tìm và cụm nút (PC) */
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: min(100%, 42rem);
+  max-width: min(100%, 32rem);
 }
 
 .ah-goods-toolbar__row1-actions {
@@ -1728,7 +1729,7 @@
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 36rem;
+  max-width: min(100%, 32rem);
   display: flex;
   align-items: center;
   border: 1px solid rgba(56, 189, 248, 0.35);
@@ -2206,10 +2207,100 @@
   overflow: hidden;
 }
 
+/* Hàng hóa · chi tiết (mobile): thanh tên + mã + đóng — luôn dính đỉnh khi cuộn */
+.ah-goods-detail-mobile-cap {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .ah-goods-detail-mobile-cap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.35rem 0.45rem 0.4rem;
+    background: #0f172a;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.65);
+  }
+
+  .ah-goods-detail-mobile-cap__text {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .ah-goods-detail-mobile-cap__name {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #f1f5f9;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .ah-goods-detail-mobile-cap__code {
+    margin-top: 0.12rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #94a3b8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ah-goods-detail-mobile-cap__close {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(71, 85, 105, 0.85);
+    background: rgba(15, 23, 42, 0.95);
+    color: #e2e8f0;
+    font-size: 1.45rem;
+    line-height: 1;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .ah-goods-detail-mobile-cap__close:hover {
+    border-color: rgba(56, 189, 248, 0.55);
+    color: #38bdf8;
+  }
+
+  .ah-goods-detail-sticky-header {
+    top: 0;
+    z-index: 25;
+    margin: 0 0 0.35rem;
+  }
+
+  .ah-goods-detail-after-virt {
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  .ah-goods-detail-panel--card {
+    margin: 0 0 0.25rem;
+  }
+
+  .ah-goods-detail-card {
+    padding: 0.4rem 0.5rem 0.45rem;
+  }
+}
+
 .ah-goods-card-name-block {
   padding: 0.55rem 0.65rem 0.5rem;
   background: #0f172a;
   border-top: 1px solid rgba(51, 65, 85, 0.55);
+}
+
+@media (max-width: 768px) {
+  .ah-goods-card-name-block {
+    padding: 0.4rem 0.45rem 0.35rem;
+  }
 }
 
 .ah-goods-detail-tabs-bar {
@@ -5837,11 +5928,33 @@ li.ah-inbound-suggest-empty {
   color: #38bdf8;
 }
 
-.ah-unit-modal__body {
-  padding: 0.9rem 1.1rem 1rem;
-  overflow: auto;
-  flex: 1;
+/* Cuộn nội dung + nút Xong ở cuối (không footer fixed che card trên mobile) */
+.ah-unit-modal__scroll {
+  max-height: min(80vh, 720px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ah-unit-modal__body {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 0.9rem 1.1rem 0.65rem;
+}
+
+.ah-unit-modal__foot {
+  position: static;
+  flex-shrink: 0;
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.1rem;
+  border-top: 1px solid rgba(51, 65, 85, 0.85);
+  background: rgba(15, 23, 42, 0.55);
 }
 
 .ah-unit-modal__section {
@@ -5992,15 +6105,6 @@ li.ah-inbound-suggest-empty {
   border-color: rgba(248, 113, 113, 0.45);
 }
 
-.ah-unit-modal__foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.75rem 1.1rem;
-  border-top: 1px solid rgba(51, 65, 85, 0.85);
-  background: rgba(15, 23, 42, 0.55);
-}
-
 .ah-unit-modal__sr {
   position: absolute;
   width: 1px;
@@ -6033,6 +6137,10 @@ li.ah-inbound-suggest-empty {
   .ah-unit-modal-overlay {
     padding: 0.75rem 0.5rem 1rem;
     align-items: stretch;
+  }
+
+  .ah-unit-modal__scroll {
+    max-height: 80vh;
   }
 
   .ah-unit-modal__table--desktop {

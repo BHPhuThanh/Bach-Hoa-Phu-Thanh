@@ -1953,6 +1953,20 @@ export default function AdminHub({
           return
         }
       }
+      // eslint-disable-next-line no-console
+      console.log('[Hàng hóa · Lưu] Payload gửi Supabase (cột bảng products):', {
+        variantId: goodsDetailVariant.id,
+        ma_hang: patch.code,
+        ma_vach: patch.barcode,
+        ten_hang: nameTrim,
+        thuong_hieu: patch.brand,
+        gia_ban: patch.price,
+        gia_von: patch.cost,
+        ton_kho: patch.stockQty,
+        ton_nho_nhat: patch.stockNormMin,
+        ton_lon_nhat: patch.stockNormMax,
+        dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
+      })
       recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
       onUpdateCatalogVariant(goodsDetailVariant.id, patch)
       triggerGoodsSaveSuccessToast()
@@ -1971,6 +1985,20 @@ export default function AdminHub({
         return v
       })
       const nextProducts = buildDisplayCatalog(nextFlat)
+      // eslint-disable-next-line no-console
+      console.log('[Hàng hóa · Lưu] Payload gửi Supabase (cột bảng products):', {
+        variantId: goodsDetailVariant.id,
+        ma_hang: patch.code,
+        ma_vach: patch.barcode,
+        ten_hang: nameTrim,
+        thuong_hieu: patch.brand,
+        gia_ban: patch.price,
+        gia_von: patch.cost,
+        ton_kho: patch.stockQty,
+        ton_nho_nhat: patch.stockNormMin,
+        ton_lon_nhat: patch.stockNormMax,
+        dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
+      })
       recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
       triggerGoodsSaveSuccessToast()
@@ -2536,6 +2564,26 @@ export default function AdminHub({
       nameTrim,
       prevByVariantId: prevById,
     })
+    const supabasePayload = replacements.map((v) => ({
+      variantId: v.id,
+      ma_hang: String(v.code ?? '').trim(),
+      ma_vach: String(v.barcode ?? '').trim(),
+      ten_hang: nameTrim,
+      thuong_hieu: String(v.brand ?? '').trim(),
+      gia_ban: Number(v.price) || 0,
+      gia_von: Number(v.cost) || 0,
+      ton_kho:
+        v.stockQty != null && v.stockQty !== '' && Number.isFinite(Number(v.stockQty))
+          ? Number(v.stockQty)
+          : 0,
+      dvt: normalizeCatalogUnitLabel(v.unitLabel),
+      quy_doi:
+        v.conversion != null && String(v.conversion).trim() !== '' && Number.isFinite(Number(v.conversion))
+          ? String(v.conversion)
+          : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
+    }))
+    // eslint-disable-next-line no-console
+    console.log('[Đơn vị tính · Lưu] Payload gửi Supabase (nhóm biến thể / products):', supabasePayload)
     replaceCatalogGroupFromModal(unitModal.anchorVariantId, replacements)
     triggerGoodsSaveSuccessToast()
     const mainId = replacements[0]?.id
@@ -4821,6 +4869,7 @@ export default function AdminHub({
         }}
         goodsBrandAutocompleteOptions={inboundNccAutocompleteOptions}
         onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
+        onCloseGoodsDetail={closeGoodsDetail}
       />
     )
   }, [
@@ -4849,6 +4898,7 @@ export default function AdminHub({
     inboundNccAutocompleteOptions,
     revenueReadOnly,
     openGoodsBrandSupplierModal,
+    closeGoodsDetail,
   ])
 
   const openPosReturnModal = useCallback(
@@ -9143,6 +9193,7 @@ export default function AdminHub({
                 ×
               </button>
             </header>
+            <div className="ah-unit-modal__scroll">
             <div className="ah-unit-modal__body">
               <section className="ah-unit-modal__section">
                 <h3 className="ah-unit-modal__section-title">Đơn vị tính</h3>
@@ -9418,6 +9469,7 @@ export default function AdminHub({
                 Xong
               </button>
             </footer>
+            </div>
           </div>
         </div>
       )}

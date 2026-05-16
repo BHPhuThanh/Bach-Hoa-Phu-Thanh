@@ -41,6 +41,7 @@ export function AdminHubGoodsExpandedBelow(props) {
     onEditComboProduct,
     goodsBrandAutocompleteOptions = [],
     onRequestAddSupplier,
+    onCloseGoodsDetail,
   } = props
   const glMerged = goodsStockLedgerMerged || { mode: 'legacy', rows: [] }
   const glRows = Array.isArray(glMerged.rows) ? glMerged.rows : []
@@ -51,8 +52,31 @@ export function AdminHubGoodsExpandedBelow(props) {
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
                                 <div className="ah-goods-detail-panel ah-goods-detail-panel--card">
                                   <div className="ah-goods-detail-card">
-                                    <div className="ah-goods-detail-sticky-header">
-                                      <div
+            <div className="ah-goods-detail-sticky-header">
+                                    {onCloseGoodsDetail ? (
+                                      <div className="ah-goods-detail-mobile-cap">
+                                        <div className="ah-goods-detail-mobile-cap__text">
+                                          <div className="ah-goods-detail-mobile-cap__name">
+                                            {String(d?.name ?? v?.name ?? '').trim() || '—'}
+                                          </div>
+                                          <div className="ah-goods-detail-mobile-cap__code">
+                                            Mã: {String(d?.code ?? v?.code ?? '').trim() || '—'}
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          className="ah-goods-detail-mobile-cap__close"
+                                          aria-label="Đóng chi tiết"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onCloseGoodsDetail()
+                                          }}
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                    <div
                                         className="ah-solo-product-tabs-bar ah-hub-tabstrip--dark ah-goods-detail-tabs-bar"
                                         aria-label="Điều hướng chi tiết hàng"
                                       >
