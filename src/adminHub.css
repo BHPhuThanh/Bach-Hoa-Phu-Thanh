@@ -958,27 +958,26 @@
   flex-shrink: 0;
 }
 
-/* Toolbar + danh sách: một khối, không hở khoảng dọc giữa hai phần */
+/* Toolbar + bảng: xếp dọc, khe 16px — không justify-between / margin đẩy xa */
 .ah-goods-catalog-shell {
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: 1rem;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 0;
 }
 
-@media (min-width: 769px) {
-  .ah-goods-catalog-shell {
-    background-color: #ffffff;
-  }
+.ah-goods-catalog-shell > .ah-goods-toolbar {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
 
-  .ah-goods-catalog-shell .ah-goods-toolbar {
-    margin-bottom: 0;
-  }
-
-  .ah-goods-catalog-shell .ah-goods-table-wrap {
-    margin-top: 0;
-  }
+.ah-goods-catalog-shell > .ah-goods-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0;
 }
 
 .ah-goods-table-wrap--virtual {
