@@ -14,36 +14,85 @@ function snapshotInboundOrderForHistory(order) {
   const lines = Array.isArray(order.lines) ? order.lines : []
   return {
     id: String(order.id ?? ''),
-    code: String(order.code ?? ''),
-    createdAtMs: order.createdAtMs != null ? Number(order.createdAtMs) : null,
-    supplier: String(order.supplier ?? ''),
-    status: String(order.status ?? ''),
-    totalValue: order.totalValue != null ? order.totalValue : null,
-    goodsSubtotal: order.goodsSubtotal != null ? order.goodsSubtotal : null,
+    code: String(order.code ?? '').trim(),
+    createdAtMs: order.createdAtMs != null ? Number(order.createdAtMs) : Date.now(),
+    supplier: String(order.supplier ?? '').trim(),
+    status: String(order.status ?? 'completed'),
+    totalValue: order.totalValue != null ? Number(order.totalValue) : 0,
+    goodsSubtotal:
+      order.goodsSubtotal != null ? Number(order.goodsSubtotal) : Number(order.totalValue) || 0,
     note: String(order.note ?? ''),
-    orderDiscountMode: order.orderDiscountMode ?? null,
-    orderDiscountValue: order.orderDiscountValue != null ? order.orderDiscountValue : null,
+    orderDiscountMode: order.orderDiscountMode === 'percent' ? 'percent' : 'amount',
+    orderDiscountValue: order.orderDiscountValue != null ? Number(order.orderDiscountValue) : 0,
     lines: lines.map((ln) => ({ ...ln })),
   }
 }
 
 /**
+ * Kiểm tra payload trước khi insert — tránh Supabase từ chối ngầm.
+ * @returns {{ ok: true } | { ok: false, error: Error }}
+ */
+export function validateInboundHistoryPayload(order) {
+  const payload = snapshotInboundOrderForHistory(order)
+  const order_code = String(order?.code ?? payload.code ?? '').trim()
+  if (!order_code) {
+    return { ok: false, error: new Error('Thiếu mã phiếu nhập (order_code).') }
+  }
+  if (!payload.id) {
+    return { ok: false, error: new Error('Thiếu id phiếu nhập trong payload.') }
+  }
+  if (!payload.supplier) {
+    return { ok: false, error: new Error('Thiếu nhà cung cấp (supplier) trong payload.') }
+  }
+  if (!Number.isFinite(payload.createdAtMs)) {
+    return { ok: false, error: new Error('Thiếu hoặc sai ngày tạo phiếu (createdAtMs).') }
+  }
+  if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+    return { ok: false, error: new Error('Phiếu nhập phải có ít nhất một dòng hàng (lines).') }
+  }
+  return { ok: true, payload, order_code }
+}
+
+/**
  * Chèn một dòng sau khi đã cập nhật `products` thành công.
- * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown }>}
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, order?: object, dbRow?: object }>}
  */
 export async function insertInboundHistoryEntry(order) {
-  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true, order }
   const sb = getSupabaseClient()
   if (!sb) {
-    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+    const error = new Error('Không tạo được Supabase client.')
+    console.error('Lỗi tạo phiếu nhập:', error)
+    return { ok: false, error }
   }
-  const payload = snapshotInboundOrderForHistory(order)
-  const order_code = String(order?.code ?? '').trim() || '_'
+
+  const validated = validateInboundHistoryPayload(order)
+  if (!validated.ok) {
+    console.error('Lỗi tạo phiếu nhập:', validated.error)
+    return { ok: false, error: validated.error }
+  }
+
+  const { payload, order_code } = validated
   try {
-    const { error } = await sb.from(INBOUND_HISTORY_TABLE).insert({ order_code, payload })
-    if (error) return { ok: false, error }
-    return { ok: true }
+    const { data: newOrder, error } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .insert({ order_code, payload })
+      .select('id, created_at, order_code, payload')
+      .single()
+
+    if (error) {
+      console.error('Lỗi tạo phiếu nhập:', error)
+      return { ok: false, error }
+    }
+
+    const persisted =
+      newOrder?.payload && typeof newOrder.payload === 'object'
+        ? { ...newOrder.payload, code: newOrder.payload.code || newOrder.order_code }
+        : payload
+
+    return { ok: true, order: persisted, dbRow: newOrder }
   } catch (error) {
+    console.error('Lỗi tạo phiếu nhập:', error)
     return { ok: false, error }
   }
 }
