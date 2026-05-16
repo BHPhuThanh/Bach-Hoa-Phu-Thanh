@@ -6032,6 +6032,7 @@ export default function AdminHub({
               </div>
             ) : null}
 
+            <div className="ah-goods-catalog-shell">
             <div className="ah-goods-toolbar ah-goods-toolbar--v2">
               <div className="ah-goods-toolbar__row1">
                 <div
@@ -6351,6 +6352,7 @@ export default function AdminHub({
                   />
                 </div>
               )}
+            </div>
             </div>          </section>
         )}
 

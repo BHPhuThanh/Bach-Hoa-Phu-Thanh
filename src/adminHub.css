@@ -958,6 +958,29 @@
   flex-shrink: 0;
 }
 
+/* Toolbar + danh sách: một khối, không hở khoảng dọc giữa hai phần */
+.ah-goods-catalog-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+}
+
+@media (min-width: 769px) {
+  .ah-goods-catalog-shell {
+    background-color: #ffffff;
+  }
+
+  .ah-goods-catalog-shell .ah-goods-toolbar {
+    margin-bottom: 0;
+  }
+
+  .ah-goods-catalog-shell .ah-goods-table-wrap {
+    margin-top: 0;
+  }
+}
+
 .ah-goods-table-wrap--virtual {
   display: flex;
   flex-direction: column;
@@ -1238,12 +1261,25 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Chi tiết SP: cha cuộn full viewport; đệm đáy nằm ở .ah-goods-detail-after-virt */
+  .ah-goods-detail-after-virt {
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Chi tiết SP mobile: một lớp cuộn (fixed inset), không dùng 100vh */
   .ah-goods-vdetail-wrap {
-    height: 100vh;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     box-sizing: border-box;
+  }
+
+  .ah-goods-vdetail-wrap .ah-goods-detail-after-virt {
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 150px;
   }
 
   .ah-goods-toolbar:not(.ah-goods-toolbar--v2) {
@@ -1706,12 +1742,6 @@
   gap: 0.5rem 0.75rem;
   width: 100%;
   box-sizing: border-box;
-}
-
-@media (min-width: 769px) {
-  .ah-goods-toolbar__row1 {
-    background-color: #ffffff;
-  }
 }
 
 /* PC: đúng 2 nhánh — ô tìm (max ~400px / max-w-md) | cụm nút (margin-left: auto) */
@@ -2221,7 +2251,7 @@
 .ah-goods-detail-sticky-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 50;
   margin: 0 0 0.75rem;
   padding: 0;
   background: linear-gradient(180deg, #111827 0%, #0f172a 55%, rgba(15, 23, 42, 0.98) 100%);
@@ -2296,7 +2326,7 @@
 
   .ah-goods-detail-sticky-header {
     top: 0;
-    z-index: 25;
+    z-index: 50;
     margin: 0 0 0.35rem;
   }
 
@@ -2305,7 +2335,6 @@
     padding-top: 0;
     max-height: none;
     overflow: visible;
-    padding-bottom: 120px !important;
   }
 
   .ah-goods-detail-panel--card {
