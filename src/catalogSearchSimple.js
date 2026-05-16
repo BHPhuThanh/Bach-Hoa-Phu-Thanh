@@ -391,13 +391,16 @@ export function filterAndSortGoodsRowsSimple(rows, rawQuery, opts = null) {
 
 /**
  * Sau khi lọc tìm kiếm (hoặc không có query): sắp xếp danh sách hàng trong bộ nhớ — phản hồi tức thì.
- * @param {'newest'|'name_az'} sortMode
+ * @param {'latest'|'az'|'newest'|'name_az'} sortMode — hai giá trị sau tương thích cũ.
  */
 export function applyGoodsListSort(rows, sortMode) {
   if (!Array.isArray(rows) || rows.length === 0) return rows || []
-  if (sortMode === 'name_az') {
+  const mode = sortMode === 'name_az' ? 'az' : sortMode === 'newest' ? 'latest' : sortMode
+  if (mode === 'az') {
     return [...rows].sort((a, b) =>
-      String(a.ten_hang ?? a.name ?? '').localeCompare(String(b.ten_hang ?? b.name ?? ''), 'vi')
+      String(a.ten_hang ?? a.name ?? '').localeCompare(String(b.ten_hang ?? b.name ?? ''), 'vi', {
+        sensitivity: 'base',
+      })
     )
   }
   return [...rows].sort((a, b) => {

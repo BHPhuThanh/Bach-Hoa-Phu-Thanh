@@ -1443,8 +1443,8 @@ export default function AdminHub({
     goodsSearchDebRef.current(goodsQ)
   }, [goodsQ])
   useEffect(() => () => goodsSearchDebRef.current?.cancel(), [])
-  /** `newest` = thời gian tạo giảm dần; `name_az` = ten_hang A→Z sau lọc. */
-  const [goodsListSort, setGoodsListSort] = useState('newest')
+  /** `latest` = thời gian tạo giảm dần; `az` = tên hàng A→Z (locale `vi`). */
+  const [goodsListSort, setGoodsListSort] = useState('latest')
   /** Mobile tab Hàng hóa: bộ lọc trong drawer — chỉ UI. */
   const [goodsMobileFiltersOpen, setGoodsMobileFiltersOpen] = useState(false)
   useEffect(() => {
@@ -5971,14 +5971,14 @@ export default function AdminHub({
               </div>
             ) : null}
 
-            <div className="ah-goods-toolbar">
-              <div className="ah-goods-toolbar-left ah-goods-toolbar-left--with-filters">
-                <div className="ah-goods-search-filter-trigger-row">
-                  <div className="ah-goods-search-wrap ah-goods-search-wrap--solo">
+            <div className="ah-goods-toolbar ah-goods-toolbar--v2">
+              <div className="ah-goods-toolbar__row1">
+                <div className="ah-goods-toolbar__row1-start">
+                  <div className="ah-goods-search-combo">
                     <input
-                      className="ah-goods-search"
+                      className="ah-goods-search ah-goods-search--with-scan"
                       type="search"
-                      placeholder="Theo mã, tên hàng"
+                      placeholder="Tìm kiếm sản phẩm (mã, tên)…"
                       value={goodsQ}
                       onChange={(e) => {
                         const v = e.target.value
@@ -5988,34 +5988,24 @@ export default function AdminHub({
                       autoComplete="off"
                       spellCheck={false}
                     />
+                    <button
+                      type="button"
+                      className="ah-goods-search-scan barcode-scan-trigger"
+                      aria-label="Quét mã vạch bằng camera"
+                      title="Quét mã"
+                      onClick={openGoodsBarcodeScan}
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
                   </div>
-                  <select
-                    id="ah-goods-list-sort"
-                    className="ah-inbound-form-input ah-goods-toolbar-select ah-goods-sort-select"
-                    aria-label="Sắp xếp danh sách hàng hóa"
-                    value={goodsListSort}
-                    onChange={(e) => setGoodsListSort(e.target.value)}
-                  >
-                    <option value="newest">Mới nhất</option>
-                    <option value="name_az">Tên hàng (A → Z)</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="barcode-scan-trigger"
-                    aria-label="Quét mã vạch bằng camera"
-                    title="Quét mã"
-                    onClick={openGoodsBarcodeScan}
-                  >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
                   <button
                     type="button"
                     className="ah-goods-mobile-filter-open"
@@ -6024,29 +6014,119 @@ export default function AdminHub({
                     Lọc
                   </button>
                 </div>
-                {goodsMobileFiltersOpen ? (
-                  <button
-                    type="button"
-                    className="ah-goods-filter-drawer-backdrop"
-                    aria-label="Đóng bộ lọc"
-                    onClick={() => setGoodsMobileFiltersOpen(false)}
-                  />
-                ) : null}
-                <div
-                  className={`ah-goods-toolbar-filters ah-goods-filters-drawer-target${
-                    goodsMobileFiltersOpen ? ' is-open' : ''
-                  }`}
-                  aria-label="Bộ lọc danh mục"
-                >
-                  <div className="ah-goods-filter-drawer-head">
-                    <span className="ah-goods-filter-drawer-title">Bộ lọc</span>
+                <div className="ah-goods-toolbar__row1-actions">
+                  <div className="ah-split-create" ref={goodsCreateWrapRef}>
                     <button
                       type="button"
-                      className="ah-goods-filter-drawer-done"
-                      onClick={() => setGoodsMobileFiltersOpen(false)}
+                      className="ah-split-create-main"
+                      disabled={revenueReadOnly}
+                      title={
+                        revenueReadOnly
+                          ? 'Chỉ Admin / Chủ cửa hàng mới thêm hàng hóa'
+                          : 'Tạo hàng hóa mới'
+                      }
+                      onClick={openGoodsCreateModal}
                     >
-                      Xong
+                      + Tạo mới
                     </button>
+                    <button
+                      type="button"
+                      className="ah-split-create-caret"
+                      disabled={revenueReadOnly}
+                      aria-expanded={goodsCreateOpen}
+                      aria-haspopup="menu"
+                      aria-label="Mở lựa chọn loại tạo mới"
+                      onClick={() => !revenueReadOnly && setGoodsCreateOpen((o) => !o)}
+                    >
+                      ▾
+                    </button>
+                    {goodsCreateOpen && (
+                      <div className="ah-split-create-menu ah-split-create-menu--toolbar-anchor" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setGoodsCreateOpen(false)
+                            openGoodsCreateModal()
+                          }}
+                        >
+                          Hàng hóa
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setGoodsCreateOpen(false)
+                            openComboCreateModal()
+                          }}
+                        >
+                          Combo — Đóng gói
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" className="ah-goods-io-btn" onClick={handleGoodsImport}>
+                    <span className="ah-goods-io-icon" aria-hidden>
+                      ↑
+                    </span>
+                    Import file
+                  </button>
+                  <button type="button" className="ah-goods-io-btn" onClick={handleGoodsExport}>
+                    <span className="ah-goods-io-icon" aria-hidden>
+                      ↓
+                    </span>
+                    Xuất file
+                  </button>
+                  <button
+                    type="button"
+                    className="ah-goods-io-btn ah-goods-io-btn--danger"
+                    onClick={handleGoodsDeleteSelected}
+                    disabled={goodsSelectedIds.size === 0}
+                  >
+                    Xóa đã chọn
+                  </button>
+                </div>
+              </div>
+
+              {goodsMobileFiltersOpen ? (
+                <button
+                  type="button"
+                  className="ah-goods-filter-drawer-backdrop"
+                  aria-label="Đóng bộ lọc"
+                  onClick={() => setGoodsMobileFiltersOpen(false)}
+                />
+              ) : null}
+              <div
+                className={`ah-goods-toolbar-filters ah-goods-toolbar-filters--row2 ah-goods-filters-drawer-target${
+                  goodsMobileFiltersOpen ? ' is-open' : ''
+                }`}
+                aria-label="Bộ lọc danh mục"
+              >
+                <div className="ah-goods-filter-drawer-head">
+                  <span className="ah-goods-filter-drawer-title">Bộ lọc</span>
+                  <button
+                    type="button"
+                    className="ah-goods-filter-drawer-done"
+                    onClick={() => setGoodsMobileFiltersOpen(false)}
+                  >
+                    Xong
+                  </button>
+                </div>
+                <div className="ah-goods-toolbar-filters__grid">
+                  <div className="ah-goods-filter-field ah-goods-filter-field--sort">
+                    <label className="ah-goods-filter-lbl" htmlFor="ah-goods-list-sort">
+                      Sắp xếp
+                    </label>
+                    <select
+                      id="ah-goods-list-sort"
+                      className="ah-inbound-form-input ah-goods-toolbar-select ah-goods-toolbar-select--row2"
+                      aria-label="Sắp xếp danh sách hàng hóa"
+                      value={goodsListSort}
+                      onChange={(e) => setGoodsListSort(e.target.value)}
+                    >
+                      <option value="latest">Mới nhất</option>
+                      <option value="az">Tên hàng (A -&gt; Z)</option>
+                    </select>
                   </div>
                   <div className="ah-goods-filter-field">
                     <label className="ah-goods-filter-lbl" htmlFor="ah-goods-date-preset">
@@ -6054,7 +6134,7 @@ export default function AdminHub({
                     </label>
                     <select
                       id="ah-goods-date-preset"
-                      className="ah-inbound-form-input ah-goods-toolbar-select"
+                      className="ah-inbound-form-input ah-goods-toolbar-select ah-goods-toolbar-select--row2"
                       value={goodsDatePreset}
                       onChange={(e) => {
                         const v = e.target.value
@@ -6125,79 +6205,6 @@ export default function AdminHub({
                     </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="ah-goods-toolbar-right">
-                <div className="ah-split-create" ref={goodsCreateWrapRef}>
-                  <button
-                    type="button"
-                    className="ah-split-create-main"
-                    disabled={revenueReadOnly}
-                    title={
-                      revenueReadOnly
-                        ? 'Chỉ Admin / Chủ cửa hàng mới thêm hàng hóa'
-                        : 'Tạo hàng hóa mới'
-                    }
-                    onClick={openGoodsCreateModal}
-                  >
-                    + Tạo mới
-                  </button>
-                  <button
-                    type="button"
-                    className="ah-split-create-caret"
-                    disabled={revenueReadOnly}
-                    aria-expanded={goodsCreateOpen}
-                    aria-haspopup="menu"
-                    aria-label="Mở lựa chọn loại tạo mới"
-                    onClick={() => !revenueReadOnly && setGoodsCreateOpen((o) => !o)}
-                  >
-                    ▾
-                  </button>
-                  {goodsCreateOpen && (
-                    <div className="ah-split-create-menu ah-split-create-menu--toolbar-anchor" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setGoodsCreateOpen(false)
-                          openGoodsCreateModal()
-                        }}
-                      >
-                        Hàng hóa
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setGoodsCreateOpen(false)
-                          openComboCreateModal()
-                        }}
-                      >
-                        Combo — Đóng gói
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <button type="button" className="ah-goods-io-btn" onClick={handleGoodsImport}>
-                  <span className="ah-goods-io-icon" aria-hidden>
-                    ↑
-                  </span>
-                  Import file
-                </button>
-                <button type="button" className="ah-goods-io-btn" onClick={handleGoodsExport}>
-                  <span className="ah-goods-io-icon" aria-hidden>
-                    ↓
-                  </span>
-                  Xuất file
-                </button>
-                <button
-                  type="button"
-                  className="ah-goods-io-btn ah-goods-io-btn--danger"
-                  onClick={handleGoodsDeleteSelected}
-                  disabled={goodsSelectedIds.size === 0}
-                >
-                  Xóa đã chọn
-                </button>
               </div>
             </div>
 

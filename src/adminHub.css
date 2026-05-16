@@ -1238,10 +1238,47 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  .ah-goods-toolbar {
+  .ah-goods-toolbar:not(.ah-goods-toolbar--v2) {
     flex-direction: column;
     align-items: stretch;
     gap: 0.65rem;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1 {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-start {
+    max-width: none;
+    width: 100%;
+    flex-direction: row;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-search-combo {
+    max-width: none;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions {
+    width: 100%;
+    justify-content: stretch;
+    gap: 0.45rem;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions .ah-split-create,
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions .ah-goods-io-btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .ah-goods-toolbar-filters--row2 .ah-goods-toolbar-filters__grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
   }
 
   .ah-goods-toolbar-left,
@@ -1651,6 +1688,126 @@
   gap: 0.5rem;
   justify-content: flex-end;
   flex: 1 1 min(100%, 280px);
+}
+
+/* —— Tab Hàng hóa: toolbar 2 dòng (tìm + hành động | lọc & sắp xếp) —— */
+.ah-goods-toolbar--v2 {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.65rem;
+}
+
+.ah-goods-toolbar__row1 {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.65rem 0.75rem;
+  width: 100%;
+}
+
+.ah-goods-toolbar__row1-start {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: min(100%, 42rem);
+}
+
+.ah-goods-toolbar__row1-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 0 1 auto;
+}
+
+.ah-goods-search-combo {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 36rem;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 10px;
+  background: #0d1117;
+  box-sizing: border-box;
+}
+
+.ah-goods-search-combo .ah-goods-search--with-scan {
+  width: 100%;
+  min-width: 0;
+  padding: 0.52rem 2.85rem 0.52rem 0.65rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.ah-goods-search-combo .ah-goods-search-scan.barcode-scan-trigger {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.ah-goods-toolbar-filters--row2 {
+  display: block;
+  width: 100%;
+  margin: 0;
+}
+
+.ah-goods-toolbar-filters--row2.ah-goods-toolbar-filters {
+  flex-wrap: nowrap;
+}
+
+.ah-goods-toolbar-filters__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+  width: 100%;
+}
+
+.ah-goods-toolbar-select--row2 {
+  min-height: 2.5rem;
+  height: 2.5rem;
+  box-sizing: border-box;
+}
+
+.ah-goods-toolbar-filters--row2 .ah-goods-filter-field--sort,
+.ah-goods-toolbar-filters--row2 .ah-goods-filter-field--brand {
+  min-width: 0;
+}
+
+.ah-goods-toolbar-filters--row2 .ah-goods-toolbar-brand-wrap {
+  max-width: none;
+}
+
+.ah-goods-toolbar-filters--row2 .ah-inbound-ncc-input-wrap--combo .ah-inbound-ncc-combo-input {
+  min-height: 2.5rem;
+  box-sizing: border-box;
+}
+
+@media (min-width: 769px) {
+  .ah-goods-toolbar--v2 .ah-goods-toolbar-filters--row2.ah-goods-filters-drawer-target {
+    position: static;
+    transform: none !important;
+    max-height: none;
+    overflow: visible;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    margin: 0;
+  }
 }
 
 .ah-goods-search-wrap {
