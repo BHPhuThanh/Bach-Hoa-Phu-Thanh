@@ -3025,57 +3025,68 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
 
     const snapshotPrev = bulkCatalogProductsRef.current
-    let next = snapshotPrev
-    for (const entry of valid) {
-      next = applyProductDataToCatalog(next, {
-        type: 'patch_variant',
-        variantId: entry.variantId,
-        patch: entry.patch,
-      })
-    }
-
     const ib = opts?.inboundInventoryMeta
 
-    setProducts(next)
-
-    try {
-      const flatNext = flattenDisplayCatalogToVariants(next)
-      const touchedIds = new Set(valid.map((e) => String(e.variantId)))
-      const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-        upsertOnlyVariants,
-      })
-      if (!r.ok) {
-        setProducts(snapshotPrev)
-        const msg = describeCatalogPersistError(r.error)
-        showPosPersistErrorToast(msg)
-        return {
-          ok: false,
-          updatedCount: 0,
-          error: msg,
+    return new Promise((resolve) => {
+      queueMicrotask(async () => {
+        let next = snapshotPrev
+        for (const entry of valid) {
+          next = applyProductDataToCatalog(next, {
+            type: 'patch_variant',
+            variantId: entry.variantId,
+            patch: entry.patch,
+          })
         }
-      }
-      setCatalogSupabaseDirty(false)
-      await applyServerCatalogAfterPersist()
-      if (ib?.documentCode && isSupabaseConfigured()) {
-        const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
-          documentCode: ib.documentCode,
-          inboundOrderId: ib.inboundOrderId ?? '',
-          staffName: staffNameForInventoryLog(),
+
+        startTransition(() => {
+          setProducts(next)
         })
-        await insertInventoryLogRows(logRows)
-      }
-      return { ok: true, updatedCount }
-    } catch (e) {
-      setProducts(snapshotPrev)
-      const msg = e instanceof Error ? e.message : String(e)
-      showPosPersistErrorToast(msg)
-      return {
-        ok: false,
-        updatedCount: 0,
-        error: msg,
-      }
-    }
+
+        try {
+          const flatNext = flattenDisplayCatalogToVariants(next)
+          const touchedIds = new Set(valid.map((e) => String(e.variantId)))
+          const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+            upsertOnlyVariants,
+          })
+          if (!r.ok) {
+            startTransition(() => {
+              setProducts(snapshotPrev)
+            })
+            const msg = describeCatalogPersistError(r.error)
+            showPosPersistErrorToast(msg)
+            resolve({
+              ok: false,
+              updatedCount: 0,
+              error: msg,
+            })
+            return
+          }
+          setCatalogSupabaseDirty(false)
+          await applyServerCatalogAfterPersist()
+          if (ib?.documentCode && isSupabaseConfigured()) {
+            const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
+              documentCode: ib.documentCode,
+              inboundOrderId: ib.inboundOrderId ?? '',
+              staffName: staffNameForInventoryLog(),
+            })
+            await insertInventoryLogRows(logRows)
+          }
+          resolve({ ok: true, updatedCount })
+        } catch (e) {
+          startTransition(() => {
+            setProducts(snapshotPrev)
+          })
+          const msg = e instanceof Error ? e.message : String(e)
+          showPosPersistErrorToast(msg)
+          resolve({
+            ok: false,
+            updatedCount: 0,
+            error: msg,
+          })
+        }
+      })
+    })
   }, [applyServerCatalogAfterPersist, showPosPersistErrorToast])
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
