@@ -1443,6 +1443,17 @@ export default function AdminHub({
     goodsSearchDebRef.current(goodsQ)
   }, [goodsQ])
   useEffect(() => () => goodsSearchDebRef.current?.cancel(), [])
+  /** Mobile: layout toolbar hàng 1 (nút Lọc cạnh tìm); desktop: ẩn Lọc, row1 chỉ 2 nhánh tìm | nút. */
+  const [goodsToolbarNarrow, setGoodsToolbarNarrow] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 768px)').matches : false
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const apply = () => setGoodsToolbarNarrow(mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [])
   /** `latest` = thời gian tạo giảm dần; `az` = tên hàng A→Z (locale `vi`). */
   const [goodsListSort, setGoodsListSort] = useState('latest')
   /** Mobile tab Hàng hóa: bộ lọc trong drawer — chỉ UI. */
@@ -6023,7 +6034,13 @@ export default function AdminHub({
 
             <div className="ah-goods-toolbar ah-goods-toolbar--v2">
               <div className="ah-goods-toolbar__row1">
-                <div className="ah-goods-toolbar__row1-start">
+                <div
+                  className={
+                    goodsToolbarNarrow
+                      ? 'ah-goods-toolbar__row1-search ah-goods-toolbar__row1-search--with-loc'
+                      : 'ah-goods-toolbar__row1-search'
+                  }
+                >
                   <div className="ah-goods-search-combo">
                     <input
                       className="ah-goods-search ah-goods-search--with-scan"
@@ -6056,13 +6073,15 @@ export default function AdminHub({
                       </svg>
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    className="ah-goods-mobile-filter-open"
-                    onClick={() => setGoodsMobileFiltersOpen(true)}
-                  >
-                    Lọc
-                  </button>
+                  {goodsToolbarNarrow ? (
+                    <button
+                      type="button"
+                      className="ah-goods-mobile-filter-open"
+                      onClick={() => setGoodsMobileFiltersOpen(true)}
+                    >
+                      Lọc
+                    </button>
+                  ) : null}
                 </div>
                 <div className="ah-goods-toolbar__row1-actions">
                   <div className="ah-split-create" ref={goodsCreateWrapRef}>

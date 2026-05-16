@@ -1238,6 +1238,15 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Chi tiết SP mở trong list: một vùng cuộn + đệm đáy tránh dock menu */
+  .ah-goods-vdetail-wrap {
+    max-height: min(85vh, calc(100vh - 60px));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 120px !important;
+    box-sizing: border-box;
+  }
+
   .ah-goods-toolbar:not(.ah-goods-toolbar--v2) {
     flex-direction: column;
     align-items: stretch;
@@ -1250,21 +1259,14 @@
     gap: 0.65rem;
   }
 
-  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-start {
-    max-width: none;
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
     width: 100%;
-    flex-direction: row;
-    align-items: stretch;
-    flex-wrap: nowrap;
-    gap: 0.5rem;
-  }
-
-  .ah-goods-toolbar--v2 .ah-goods-search-combo {
     max-width: none;
   }
 
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions {
     width: 100%;
+    margin-left: 0;
     justify-content: stretch;
     gap: 0.45rem;
   }
@@ -1700,20 +1702,36 @@
 .ah-goods-toolbar__row1 {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
   align-items: center;
-  gap: 0.65rem 0.75rem;
+  justify-content: flex-start;
+  gap: 0.5rem 0.75rem;
   width: 100%;
+  box-sizing: border-box;
 }
 
-.ah-goods-toolbar__row1-start {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  /* Không flex-grow: tránh khoảng đen lớn giữa ô tìm và cụm nút (PC) */
-  flex: 0 1 auto;
+/* PC: đúng 2 nhánh — ô tìm (max ~400px / max-w-md) | cụm nút (margin-left: auto) */
+.ah-goods-toolbar__row1-search {
+  flex: 0 0 auto;
+  width: 400px;
+  max-width: min(100%, 28rem);
   min-width: 0;
-  max-width: min(100%, 32rem);
+  box-sizing: border-box;
+}
+
+/* Mobile: hàng tìm + Lọc cạnh nhau (chỉ khi có class --with-loc) */
+.ah-goods-toolbar__row1-search--with-loc {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: none;
+}
+
+.ah-goods-toolbar__row1-search--with-loc .ah-goods-search-combo {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
 }
 
 .ah-goods-toolbar__row1-actions {
@@ -1722,14 +1740,14 @@
   align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .ah-goods-search-combo {
   position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: min(100%, 32rem);
+  width: 100%;
+  max-width: 100%;
   display: flex;
   align-items: center;
   border: 1px solid rgba(56, 189, 248, 0.35);
@@ -2280,6 +2298,8 @@
   .ah-goods-detail-after-virt {
     margin-top: 0;
     padding-top: 0;
+    max-height: none;
+    overflow: visible;
   }
 
   .ah-goods-detail-panel--card {
