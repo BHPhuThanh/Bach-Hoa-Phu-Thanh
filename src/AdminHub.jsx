@@ -38,6 +38,7 @@ import { formatMoneyThousandsTyping } from './moneyInputFormat.js'
 import { parseCatalogBlobFile } from './catalogParseClient.js'
 import {
   filterAndSortGoodsRowsSimple,
+  applyGoodsListSort,
   posQueryLooksLikeBarcodeKeyInput,
   prepareCatalogForPosSearch,
   suggestCatalogVariantPairsV9,
@@ -244,6 +245,7 @@ function flattenCatalogToGoodsRows(products) {
         id,
         code,
         name,
+        ten_hang: name,
         nameSearch: buildVariantPosSearchHaystack(
           code,
           v.nameRaw || p.nameRaw,
@@ -1441,6 +1443,8 @@ export default function AdminHub({
     goodsSearchDebRef.current(goodsQ)
   }, [goodsQ])
   useEffect(() => () => goodsSearchDebRef.current?.cancel(), [])
+  /** `newest` = thời gian tạo giảm dần; `name_az` = ten_hang A→Z sau lọc. */
+  const [goodsListSort, setGoodsListSort] = useState('newest')
   /** Mobile tab Hàng hóa: bộ lọc trong drawer — chỉ UI. */
   const [goodsMobileFiltersOpen, setGoodsMobileFiltersOpen] = useState(false)
   useEffect(() => {
@@ -1637,9 +1641,11 @@ export default function AdminHub({
         return Number.isFinite(t) && t > 0 && t >= startMs && t <= endMs
       })
     }
-    if (!val.length) return list
-    return filterAndSortGoodsRowsSimple(list, val)
-  }, [goodsRowsAll, goodsSearchFilter, goodsBrandKey, goodsCreatedAtRange])
+    if (val.length) {
+      list = filterAndSortGoodsRowsSimple(list, val)
+    }
+    return applyGoodsListSort(list, goodsListSort)
+  }, [goodsRowsAll, goodsSearchFilter, goodsBrandKey, goodsCreatedAtRange, goodsListSort])
 
   const goodsDetailCtx = useMemo(() => {
     if (!goodsExpandedId) return null
@@ -5983,6 +5989,16 @@ export default function AdminHub({
                       spellCheck={false}
                     />
                   </div>
+                  <select
+                    id="ah-goods-list-sort"
+                    className="ah-inbound-form-input ah-goods-toolbar-select ah-goods-sort-select"
+                    aria-label="Sắp xếp danh sách hàng hóa"
+                    value={goodsListSort}
+                    onChange={(e) => setGoodsListSort(e.target.value)}
+                  >
+                    <option value="newest">Mới nhất</option>
+                    <option value="name_az">Tên hàng (A → Z)</option>
+                  </select>
                   <button
                     type="button"
                     className="barcode-scan-trigger"
@@ -6252,7 +6268,7 @@ export default function AdminHub({
                           toggleGoodsSelect={toggleGoodsSelect}
                           onGoodsMobileDelete={handleGoodsMobileCardDelete}
                           expandedSlot={goodsExpandedBelowSlot}
-                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsRowsFiltered.length}`}
+                          listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsListSort}|${goodsRowsFiltered.length}`}
                         />
                       )
                     }}
@@ -9209,7 +9225,7 @@ export default function AdminHub({
                   lệ quy đổi (có thể chỉnh tay từng dòng).
                 </p>
                 <div className="admin-hub-table-wrap ah-unit-modal__table-wrap">
-                  <table className="admin-hub-table ah-unit-modal__table">
+                  <table className="admin-hub-table ah-unit-modal__table ah-unit-modal__table--desktop">
                     <thead>
                       <tr>
                         <th>Đơn vị</th>
@@ -9324,6 +9340,66 @@ export default function AdminHub({
                       ))}
                     </tbody>
                   </table>
+                  <div
+                    className="ah-unit-modal__dvt-cards-mobile"
+                    aria-label="Đơn vị tính: nhập liệu dạng thẻ (mobile)"
+                  >
+                    {unitModalSortedRows.map((row, idx) => (
+                      <div key={`um-mob-${row.key}`} className="ah-unit-modal__dvt-card">
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`um-mob-u-${row.key}`}>Tên ĐVT</label>
+                          <input
+                            id={`um-mob-u-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input"
+                            value={row.unitLabel}
+                            onChange={(e) =>
+                              setUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`um-mob-c-${row.key}`}>Giá trị quy đổi</label>
+                          <input
+                            id={`um-mob-c-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input"
+                            inputMode="decimal"
+                            value={row.conversion}
+                            onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`um-mob-p-${row.key}`}>Giá bán</label>
+                          <input
+                            id={`um-mob-p-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
+                            inputMode="numeric"
+                            value={row.price}
+                            onChange={(e) =>
+                              updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                            }
+                          />
+                        </div>
+                        {idx > 0 ? (
+                          <button
+                            type="button"
+                            className="ah-unit-modal__row-remove ah-unit-modal__row-remove--mobile-block"
+                            onClick={() => removeUnitModalRowKey(row.key)}
+                          >
+                            Xóa dòng ĐVT
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </section>
             </div>

@@ -9,7 +9,10 @@ import {
 import {
   applyProductDataToCatalog,
   fetchProducts,
+  flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
+  describeCatalogPersistError,
+  revalidateCatalogFromStore,
 } from './catalogRepository.js'
 import {
   appendCostAdjustVoucher,
@@ -20,6 +23,7 @@ import {
 } from './costAdjustStorage.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
+import { isSupabaseConfigured } from './supabaseClient.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
 import './App.css'
@@ -315,8 +319,44 @@ export default function CostAdjustCreatePage() {
     }
     setSaving(true)
     try {
-      const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
-      if (!persistResult.ok) return
+      const flatNext = flattenDisplayCatalogToVariants(nextProducts)
+      const changedIds = new Set(lines.map((l) => String(l.variantId)))
+      const danh_sách_cập_nhật_giá_vốn = flatNext.filter((v) => changedIds.has(String(v?.id)))
+
+      let persistResult
+      if (isSupabaseConfigured()) {
+        if (!danh_sách_cập_nhật_giá_vốn.length) {
+          window.alert('Không tìm thấy biến thể trên danh mục để ghi giá vốn lên máy chủ.')
+          return
+        }
+        persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName, {
+          upsertOnlyVariants: danh_sách_cập_nhật_giá_vốn,
+        })
+        if (!persistResult.ok) {
+          window.alert(
+            describeCatalogPersistError(persistResult.error) ||
+              'Không lưu được danh mục / giá vốn lên máy chủ.'
+          )
+          return
+        }
+        /**
+         * Đồng bộ `products`/`gia_von` thực hiện trong persistCatalogSnapshotAndProducts → saveProductsToSupabaseUpsertOnly,
+         * tương đương: `await supabase.from('products').upsert(..., { onConflict: 'ma_hang' })` (PK của bảng trong dự án, không phải cột `id` UUID).
+         */
+        const fresh = await revalidateCatalogFromStore()
+        if (fresh?.products?.length) {
+          setProducts(fresh.products)
+          setFileName(fresh.fileName || fileName)
+        }
+      } else {
+        persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
+        if (!persistResult.ok) {
+          window.alert(
+            describeCatalogPersistError(persistResult.error) || 'Không lưu được danh mục cục bộ.'
+          )
+          return
+        }
+      }
       const prev = await loadCostAdjustVouchersFromStore()
       const voucher = createHoanThanhCostAdjustVoucher(prev, {
         createdBy: creatorLabel(),

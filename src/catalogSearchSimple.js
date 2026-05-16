@@ -390,6 +390,25 @@ export function filterAndSortGoodsRowsSimple(rows, rawQuery, opts = null) {
 }
 
 /**
+ * Sau khi lọc tìm kiếm (hoặc không có query): sắp xếp danh sách hàng trong bộ nhớ — phản hồi tức thì.
+ * @param {'newest'|'name_az'} sortMode
+ */
+export function applyGoodsListSort(rows, sortMode) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows || []
+  if (sortMode === 'name_az') {
+    return [...rows].sort((a, b) =>
+      String(a.ten_hang ?? a.name ?? '').localeCompare(String(b.ten_hang ?? b.name ?? ''), 'vi')
+    )
+  }
+  return [...rows].sort((a, b) => {
+    const ta = Number(a.createdAtMs) || 0
+    const tb = Number(b.createdAtMs) || 0
+    if (tb !== ta) return tb - ta
+    return String(a.code || '').localeCompare(String(b.code || ''), 'vi')
+  })
+}
+
+/**
  * Giống filterAndSortGoodsRowsSimple; nếu không khớp (ví dụ lệch chuẩn gõ tên), lọc lỏng theo tên/mã/mã vạch hiển thị.
  */
 export function filterAndSortGoodsRowsSimpleWithFallback(rows, rawQuery) {
