@@ -6033,7 +6033,7 @@ export default function AdminHub({
             ) : null}
 
             <div className="ah-goods-catalog-shell">
-            <div className="ah-goods-toolbar ah-goods-toolbar--v2">
+            <div className="ah-goods-toolbar ah-goods-toolbar--v2 ah-goods-catalog-toolbar">
               <div className="ah-goods-toolbar__row1">
                 <div
                   className={
@@ -6167,7 +6167,7 @@ export default function AdminHub({
                 />
               ) : null}
               <div
-                className={`ah-goods-toolbar-filters ah-goods-toolbar-filters--row2 ah-goods-filters-drawer-target${
+                className={`ah-goods-toolbar-filters ah-goods-toolbar-filters--row2 ah-goods-toolbar__row2 ah-goods-filters-drawer-target${
                   goodsMobileFiltersOpen ? ' is-open' : ''
                 }`}
                 aria-label="Bộ lọc danh mục"
