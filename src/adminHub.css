@@ -1238,12 +1238,11 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Chi tiết SP mở trong list: một vùng cuộn + đệm đáy tránh dock menu */
+  /* Chi tiết SP: cha cuộn full viewport; đệm đáy nằm ở .ah-goods-detail-after-virt */
   .ah-goods-vdetail-wrap {
-    max-height: min(85vh, calc(100vh - 60px));
+    height: 100vh;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding-bottom: 120px !important;
     box-sizing: border-box;
   }
 
@@ -1707,6 +1706,12 @@
   gap: 0.5rem 0.75rem;
   width: 100%;
   box-sizing: border-box;
+}
+
+@media (min-width: 769px) {
+  .ah-goods-toolbar__row1 {
+    background-color: #ffffff;
+  }
 }
 
 /* PC: đúng 2 nhánh — ô tìm (max ~400px / max-w-md) | cụm nút (margin-left: auto) */
@@ -2300,6 +2305,7 @@
     padding-top: 0;
     max-height: none;
     overflow: visible;
+    padding-bottom: 120px !important;
   }
 
   .ah-goods-detail-panel--card {
