@@ -1224,6 +1224,8 @@ export default function AdminHub({
       fixedAt: created,
       invoiceNo: order.invoiceNo,
       discount: Number(order.discount) || 0,
+      ...(order.customerName ? { customerName: order.customerName } : {}),
+      ...(order.customerPhone ? { customerPhone: order.customerPhone } : {}),
       ...(einv.qrLookup ? { eInvoice: { showQrLookup: true } } : {}),
     })
     printReceiptHtml(html)

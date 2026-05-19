@@ -4488,6 +4488,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       fixedAt,
       invoiceNo,
       discount: disc,
+      cashGiven: cashGivenNum > 0 ? cashGivenNum : finalTotal,
+      cashierName: activeSeller?.label ?? '',
       ...(custName ? { customerName: custName } : {}),
       ...(custPhone ? { customerPhone: custPhone } : {}),
       ...(eInvoiceSettings.qrLookup
@@ -4529,6 +4531,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setBatchPickLineId,
     sellWholesaleMode,
     applyServerCatalogAfterPersist,
+    cashGivenNum,
+    activeSeller,
   ])
 
   handleThanhToanRef.current = handleThanhToan

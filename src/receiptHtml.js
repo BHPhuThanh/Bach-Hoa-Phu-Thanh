@@ -3,7 +3,7 @@ import { normalizeCatalogUnitLabel } from './productUnits.js'
 
 /** Thông tin cửa hàng — chỉnh tại đây. */
 export const RECEIPT_STORE_NAME = 'Bách Hóa Phú Thành'
-/** Mỗi phần tử = một dòng địa chỉ (căn giữa). */
+/** Ghép bằng dấu phẩy khi in (tối đa ~2 dòng nhờ CSS). */
 export const RECEIPT_STORE_ADDRESS_LINES = [
   '142 đường 8 tháng 3',
   'phường Thanh Đức',
@@ -75,6 +75,11 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;')
 }
 
+function formatReceiptMoney(n) {
+  const x = Math.round(Number(n) || 0)
+  return x.toLocaleString('vi-VN')
+}
+
 /** Tách tên hàng / ĐƠN VỊ TÍNH (đơn mới có `unitLabel`; đơn cũ có thể gộp "Tên - ĐƠN VỊ TÍNH" trong `name`). */
 function receiptProductNameAndUnit(line) {
   const rawName = String(line.name ?? '').trimEnd()
@@ -108,10 +113,293 @@ export function formatInvoiceNo(d = new Date()) {
   return `HD${x.getFullYear().toString().slice(2)}${pad2(x.getMonth() + 1)}${pad2(x.getDate())}-${pad2(x.getHours())}${pad2(x.getMinutes())}${pad2(x.getSeconds())}`
 }
 
+const RECEIPT_PRINT_CSS = `
+  @page { size: 80mm auto; margin: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #fff;
+    height: auto; max-height: none; overflow: visible;
+  }
+  body {
+    margin: 0 auto;
+    padding: 1mm 2mm 1.5mm;
+    width: 72mm; max-width: 72mm;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    font-weight: bold;
+    line-height: 1.2;
+    color: #000;
+    -webkit-font-smoothing: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #root, .receipt {
+    width: 100%;
+    display: block;
+    font-family: 'Courier New', Courier, monospace;
+    color: #000;
+    line-height: 1.2;
+    -webkit-font-smoothing: none;
+  }
+  .receipt, .receipt * {
+    font-family: 'Courier New', Courier, monospace !important;
+    color: #000000 !important;
+    font-weight: bold;
+    -webkit-font-smoothing: none;
+    line-height: 1.2;
+  }
+  .inv-head {
+    margin: 0 0 4px;
+    padding: 0 0 4px;
+    border-bottom: 1px dashed #000;
+    text-align: center;
+  }
+  .inv-head-logo { margin: 0 auto 2px; }
+  .inv-head-logo img {
+    display: block;
+    margin: 0 auto;
+    max-height: 36px;
+    max-width: 55%;
+    object-fit: contain;
+    filter: grayscale(100%) contrast(200%);
+  }
+  .inv-store-name {
+    margin: 0 0 3px;
+    padding: 0;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+    line-height: 1.15;
+    word-wrap: break-word;
+  }
+  .inv-head-contact { text-align: left; }
+  .inv-addr-block {
+    margin: 0 0 1px;
+    padding: 0;
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 1.15;
+    text-align: left;
+    max-width: 68mm;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+  .inv-phone {
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 1.15;
+    text-align: left;
+  }
+  .inv-title-block {
+    margin: 0 0 4px;
+    padding: 0 0 4px;
+    border-bottom: 1px dashed #000;
+    text-align: center;
+  }
+  .inv-doc-title {
+    margin: 0 0 2px;
+    padding: 0;
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    text-align: center;
+  }
+  .inv-meta-compact {
+    margin: 0 0 4px;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.15;
+    text-align: left;
+  }
+  .inv-meta-compact .line {
+    margin: 0;
+    padding: 0;
+  }
+  .inv-items {
+    margin: 0 0 4px;
+    padding: 0 0 4px;
+    border-bottom: 1px dashed #000;
+  }
+  .inv-item {
+    margin: 0 0 3px;
+    padding: 0;
+  }
+  .inv-item:last-child { margin-bottom: 0; }
+  .inv-item-name {
+    margin: 0 0 1px;
+    padding: 0;
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 1.2;
+    text-align: left;
+    word-wrap: break-word;
+  }
+  .inv-item-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.15;
+  }
+  .inv-item-left {
+    flex: 1 1 auto;
+    text-align: left;
+    min-width: 0;
+    word-wrap: break-word;
+  }
+  .inv-item-total {
+    flex: 0 0 auto;
+    text-align: right;
+    font-size: 13px;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .inv-pay {
+    margin: 0 0 3px;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+  .inv-pay .pay-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+  }
+  .inv-pay .pay-row span:first-child {
+    flex: 1 1 auto;
+    text-align: left;
+  }
+  .inv-pay .pay-row span:last-child {
+    flex: 0 0 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .inv-pay .pay-grand span:last-child {
+    font-size: 13px;
+  }
+  .amount-words {
+    margin: 0 0 3px;
+    padding: 0;
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 1.2;
+    text-align: left;
+    word-wrap: break-word;
+  }
+  .inv-footer {
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .inv-einv {
+    margin: 4px 0 0;
+    padding: 4px 0 0;
+    text-align: center;
+    border-top: 1px dashed #000;
+  }
+  .inv-einv-qr {
+    display: block;
+    margin: 0 auto;
+    width: 100px;
+    height: 100px;
+    image-rendering: pixelated;
+    filter: grayscale(100%) contrast(200%);
+  }
+  .inv-einv-code {
+    margin: 2px 0 0;
+    font-size: 11px;
+    font-weight: bold;
+    word-break: break-all;
+  }
+  .receipt-feed {
+    width: 100%;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  @media print {
+    @page { size: 80mm auto; margin: 0; }
+    html, body, #root, .receipt {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+      font-family: 'Courier New', Courier, monospace !important;
+      color: #000000 !important;
+      line-height: 1.2 !important;
+      -webkit-font-smoothing: none !important;
+    }
+    body {
+      padding: 1mm 2mm 1.5mm !important;
+      font-size: 12px !important;
+      font-weight: bold !important;
+      line-height: 1.2 !important;
+    }
+    .receipt, .receipt * {
+      color: #000000 !important;
+      font-family: 'Courier New', Courier, monospace !important;
+      font-weight: bold !important;
+      line-height: 1.2 !important;
+      -webkit-font-smoothing: none !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .inv-store-name {
+      font-size: 18px !important;
+      text-align: center !important;
+    }
+    .inv-addr-block,
+    .inv-phone,
+    .inv-head-contact {
+      text-align: left !important;
+      font-size: 11px !important;
+      line-height: 1.15 !important;
+    }
+    .inv-meta-compact {
+      font-size: 11px !important;
+      line-height: 1.15 !important;
+    }
+    .inv-item-name { font-size: 13px !important; }
+    .inv-item-meta { font-size: 12px !important; }
+    .inv-item-total { font-size: 13px !important; }
+    .inv-pay { font-size: 12px !important; line-height: 1.2 !important; }
+    .inv-footer {
+      margin: 0 !important;
+      padding: 0 !important;
+      font-size: 12px !important;
+    }
+    .receipt-feed {
+      height: 18px !important;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+  }
+`
+
 /**
  * @param {Array<{ name: string, unitLabel?: string, code?: string, price: number, qty: number }>} cart
  * @param {number} total — tổng sau chiết khấu (nếu opts.discount thì total nên = subtotal - discount)
  * @param {object} [opts]
+ * @param {number} [opts.cashGiven] — tiền khách đưa (VND)
+ * @param {string} [opts.cashierName] — thu ngân
  */
 export function buildK80ReceiptHtml(cart, total, opts = {}) {
   const storeName = opts.storeName ?? RECEIPT_STORE_NAME
@@ -126,22 +414,26 @@ export function buildK80ReceiptHtml(cart, total, opts = {}) {
   const customerPhone = opts.customerPhone ?? DEFAULT_CUSTOMER_PHONE
   const customerAddress = opts.customerAddress ?? DEFAULT_CUSTOMER_ADDRESS
   const discount = Math.max(0, Number(opts.discount) || 0)
+  const cashierName = String(opts.cashierName ?? opts.staffName ?? '—').trim() || '—'
 
   const subtotal = cart.reduce((s, l) => s + l.price * l.qty, 0)
   const payTotal =
     discount > 0 ? Math.max(0, subtotal - discount) : Math.round(Number(total)) || subtotal
 
+  const cashGivenRaw = Number(opts.cashGiven)
+  const cashGivenNum =
+    Number.isFinite(cashGivenRaw) && cashGivenRaw > 0 ? Math.round(cashGivenRaw) : payTotal
+  const changeNum = Math.max(0, cashGivenNum - payTotal)
+
   const now = opts.fixedAt ? new Date(opts.fixedAt) : new Date()
-  const dateStr =
-    opts.dateDisplayStr ??
+  const printDateStr =
+    opts.printDateStr ??
     now.toLocaleString('vi-VN', {
-      weekday: 'long',
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
     })
   const invoiceNo = opts.invoiceNo ?? formatInvoiceNo(now)
 
@@ -154,32 +446,29 @@ export function buildK80ReceiptHtml(cart, total, opts = {}) {
     eInvHtml = `
   <div class="inv-einv">
     <div class="inv-einv-qr-wrap">
-      <img class="inv-einv-qr" src="${escapeHtml(qrSrc)}" alt="QR tra cứu" width="120" height="120" />
+      <img class="inv-einv-qr" src="${escapeHtml(qrSrc)}" alt="QR tra cứu" width="100" height="100" />
     </div>
     <p class="inv-einv-code">Mã tra cứu: ${escapeHtml(lookupCode)}</p>
   </div>`
   }
 
   const amountWords = tienBangChu(payTotal)
+  const addressText = addressLines.map((l) => String(l).trim()).filter(Boolean).join(', ')
 
-  const addressLinesHtml = addressLines
-    .map((line) => `<p class="inv-addr-line">${escapeHtml(line)}</p>`)
-    .join('')
-
-  const tableRows = cart
+  const itemBlocks = cart
     .map((l) => {
-      const line = l.price * l.qty
+      const lineTotal = l.price * l.qty
       const { name, unit } = receiptProductNameAndUnit(l)
       const qtyStr = formatReceiptQty(l.qty)
-      return `<tr>
-    <td colspan="4" class="td-prod-name">${escapeHtml(name)}</td>
-  </tr>
-  <tr>
-    <td class="td-dg">${l.price.toLocaleString('vi-VN')}</td>
-    <td class="td-dvt">${escapeHtml(unit)}</td>
-    <td class="td-sl">${escapeHtml(qtyStr)}</td>
-    <td class="td-tt">${line.toLocaleString('vi-VN')}</td>
-  </tr>`
+      const unitLabel = unit && unit !== '—' ? unit : '—'
+      const leftMeta = `${unitLabel} | ${formatReceiptMoney(l.price)} x ${qtyStr}`
+      return `<article class="inv-item">
+  <div class="inv-item-name">${escapeHtml(name)}</div>
+  <div class="inv-item-meta">
+    <span class="inv-item-left">${escapeHtml(leftMeta)}</span>
+    <span class="inv-item-total">${formatReceiptMoney(lineTotal)}</span>
+  </div>
+</article>`
     })
     .join('')
 
@@ -189,225 +478,7 @@ export function buildK80ReceiptHtml(cart, total, opts = {}) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hóa đơn bán hàng</title>
-<style>
-  @page { size: 80mm auto; margin: 0; }
-  *, *::before, *::after { box-sizing: border-box; }
-  html {
-    margin: 0; padding: 0; background: #fff; color: #000000;
-    height: auto; max-height: none; overflow: visible;
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-  }
-  body {
-    margin: 0 auto; padding: 2mm 2.5mm 3mm; background: #fff; color: #000000 !important;
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 13px; font-weight: bold; line-height: 1.35;
-    width: 72mm; max-width: 72mm;
-    height: auto; max-height: none; overflow: visible;
-    -webkit-font-smoothing: none;
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-  }
-  #root, .receipt {
-    width: 100%; height: auto; max-height: none; overflow: visible;
-    display: block; position: relative;
-    font-family: 'Courier New', Courier, monospace !important;
-    color: #000000 !important;
-    -webkit-font-smoothing: none;
-  }
-  .receipt, .receipt * {
-    font-family: 'Courier New', Courier, monospace !important;
-    color: #000000 !important;
-    font-weight: bold;
-    -webkit-font-smoothing: none;
-  }
-  .inv-head {
-    text-align: center;
-    margin: 0 0 0;
-    padding-bottom: 0;
-    border-bottom: 1px dashed #000 !important;
-    margin-bottom: 8px;
-  }
-  .inv-head-logo {
-    margin: 0 auto 4px;
-  }
-  .inv-head-logo img {
-    display: block; margin: 0 auto; max-height: 42px; max-width: 58%;
-    object-fit: contain;
-    filter: grayscale(100%) contrast(200%);
-  }
-  .inv-store-name {
-    font-weight: bold; font-size: 20px; margin: 0 0 4px;
-    text-align: center; line-height: 1.2;
-    color: #000000 !important;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-  }
-  .inv-addr-line {
-    margin: 0 auto 2px; padding: 0; font-size: 12px; line-height: 1.3;
-    text-align: center; color: #000000 !important;
-    max-width: 68mm; word-wrap: break-word; overflow-wrap: break-word;
-  }
-  .inv-phone {
-    margin: 4px 0 0; padding: 0; font-size: 13px; font-weight: bold;
-    text-align: center; color: #000000 !important;
-  }
-  .inv-title-block {
-    text-align: center; margin: 0 0 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px dashed #000 !important;
-  }
-  .inv-doc-title {
-    margin: 0 0 4px; padding: 0; font-size: 14px; font-weight: bold;
-    letter-spacing: 0.04em; text-align: center; color: #000000 !important;
-  }
-  .inv-meta-line {
-    margin: 0 0 2px; padding: 0; font-size: 13px; line-height: 1.3;
-    text-align: center; color: #000000 !important;
-  }
-  .rule {
-    border: 0;
-    border-bottom: 1px dashed #000 !important;
-    margin: 8px 0;
-    height: 0;
-    background: transparent;
-  }
-  .inv-cust {
-    text-align: left; font-size: 13px; line-height: 1.35;
-    margin: 0 0 8px; color: #000000 !important;
-  }
-  .inv-cust .line { margin: 0 0 2px; }
-  .inv-table-wrap {
-    width: 100%; overflow: hidden; margin: 0 0 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px dashed #000 !important;
-  }
-  table.inv-table {
-    width: 100%; border-collapse: collapse;
-    font-size: 13px; table-layout: fixed;
-    color: #000000 !important;
-  }
-  .inv-table th, .inv-table td {
-    border: 0; padding: 3px 2px;
-    vertical-align: top; word-wrap: break-word;
-    color: #000000 !important;
-  }
-  .inv-table thead tr {
-    border-bottom: 1px dashed #000 !important;
-  }
-  .inv-table thead th {
-    font-weight: bold; text-align: center;
-    font-size: 12px; padding-bottom: 6px;
-    color: #000000 !important;
-  }
-  .inv-table .td-prod-name {
-    text-align: left; font-weight: bold; font-size: 14px;
-    padding: 4px 0 2px; color: #000000 !important;
-  }
-  .inv-table .td-dg { text-align: right; width: 26%; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .inv-table .td-dvt { text-align: center; width: 22%; font-size: 13px; font-weight: bold; }
-  .inv-table .td-sl { text-align: center; width: 14%; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .inv-table .td-tt {
-    text-align: right; width: 38%; font-weight: bold; font-size: 14px;
-    font-variant-numeric: tabular-nums; color: #000000 !important;
-  }
-  .inv-pay {
-    margin-top: 0; text-align: right; font-size: 13px;
-    line-height: 1.35; color: #000000 !important;
-    padding-bottom: 8px;
-    border-bottom: 1px dashed #000 !important;
-    margin-bottom: 8px;
-  }
-  .inv-pay .pay-row {
-    display: flex; justify-content: space-between; gap: 6px;
-    margin: 0 0 2px;
-  }
-  .inv-pay .pay-row span:first-child { flex: 1 1 auto; text-align: left; }
-  .inv-pay .pay-row span:last-child {
-    flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums;
-  }
-  .inv-pay .pay-grand {
-    font-weight: bold; font-size: 14px; margin-top: 4px;
-    padding-top: 0; border: 0;
-  }
-  .amount-words {
-    margin: 0 0 8px; text-align: left; font-size: 13px;
-    font-weight: bold; line-height: 1.35; word-wrap: break-word;
-    color: #000000 !important;
-  }
-  .inv-footer {
-    text-align: center; font-size: 14px; font-weight: bold;
-    margin-top: 0; padding-top: 0; border: 0;
-    color: #000000 !important;
-  }
-  .inv-einv {
-    margin-top: 8px; padding-top: 8px; text-align: center;
-    border-top: 1px dashed #000 !important;
-  }
-  .inv-einv-qr-wrap { margin: 4px 0; }
-  .inv-einv-qr {
-    display: block; margin: 0 auto; width: 120px; height: 120px;
-    image-rendering: pixelated;
-    filter: grayscale(100%) contrast(200%);
-  }
-  .inv-einv-code {
-    margin: 4px 0 0; font-size: 13px; font-weight: bold;
-    word-break: break-all; color: #000000 !important;
-  }
-  .receipt-feed { width: 100%; height: 50px; margin: 0; padding: 0; border: 0; }
-
-  @media print {
-    @page { size: 80mm auto; margin: 0; }
-    html, body, #root, .receipt {
-      height: auto !important; max-height: none !important;
-      overflow: visible !important;
-      font-family: 'Courier New', Courier, monospace !important;
-      color: #000000 !important;
-      -webkit-font-smoothing: none !important;
-    }
-    body {
-      font-size: 13px !important; font-weight: bold !important;
-      padding: 2mm 2.5mm 3mm !important; line-height: 1.35 !important;
-    }
-    .receipt, .receipt * {
-      color: #000000 !important;
-      font-family: 'Courier New', Courier, monospace !important;
-      font-weight: bold !important;
-      -webkit-font-smoothing: none !important;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    .inv-head,
-    .inv-head .inv-head-logo,
-    .inv-head .inv-store-name,
-    .inv-head .inv-addr-line,
-    .inv-head .inv-phone {
-      text-align: center !important;
-    }
-    .inv-title-block,
-    .inv-title-block .inv-doc-title,
-    .inv-title-block .inv-meta-line {
-      text-align: center !important;
-    }
-    .inv-head-logo img {
-      max-height: 42px !important;
-      filter: grayscale(100%) contrast(200%) !important;
-    }
-    .inv-store-name { font-size: 20px !important; }
-    .inv-addr-line { font-size: 12px !important; max-width: 68mm !important; }
-    .inv-doc-title { font-size: 14px !important; }
-    .inv-table .td-prod-name { font-size: 14px !important; text-align: left !important; }
-    .inv-table .td-tt { font-size: 14px !important; }
-    .rule,
-    .inv-head,
-    .inv-title-block,
-    .inv-table-wrap,
-    .inv-pay,
-    .inv-einv {
-      border-bottom-color: #000000 !important;
-    }
-    .receipt-feed {
-      height: 50px !important; page-break-inside: avoid; break-inside: avoid;
-    }
-  }
+<style>${RECEIPT_PRINT_CSS}
 </style>
 </head>
 <body>
@@ -415,48 +486,36 @@ export function buildK80ReceiptHtml(cart, total, opts = {}) {
 <div class="receipt">
   <header class="inv-head">
     <div class="inv-head-logo">
-      <img src="${escapeHtml(logoUrl)}" alt="KiotViet" />
+      <img src="${escapeHtml(logoUrl)}" alt="" />
     </div>
     <p class="inv-store-name">${escapeHtml(storeName)}</p>
-    ${addressLinesHtml}
-    <p class="inv-phone">ĐT: ${escapeHtml(storePhone)}</p>
+    <div class="inv-head-contact">
+      <p class="inv-addr-block">${escapeHtml(addressText)}</p>
+      <p class="inv-phone">ĐT: ${escapeHtml(storePhone)}</p>
+    </div>
   </header>
-  <hr class="rule" />
   <section class="inv-title-block">
     <h1 class="inv-doc-title">HÓA ĐƠN BÁN HÀNG</h1>
-    <p class="inv-meta-line">Số HĐ: ${escapeHtml(invoiceNo)}</p>
-    <p class="inv-meta-line">${escapeHtml(dateStr)}</p>
+    <p class="inv-meta-compact line">Số HĐ: ${escapeHtml(invoiceNo)}</p>
   </section>
-  <hr class="rule" />
-  <section class="inv-cust">
+  <section class="inv-meta-compact">
+    <p class="line">Ngày in: ${escapeHtml(printDateStr)}</p>
+    <p class="line">Thu ngân: ${escapeHtml(cashierName)}</p>
     <p class="line">Khách hàng: ${escapeHtml(customerName)}</p>
     <p class="line">SĐT: ${escapeHtml(customerPhone)}</p>
     <p class="line">Địa chỉ: ${escapeHtml(customerAddress)}</p>
   </section>
-  <hr class="rule" />
-  <div class="inv-table-wrap">
-    <table class="inv-table">
-      <thead>
-        <tr>
-          <th>Đơn giá</th>
-          <th>ĐƠN VỊ TÍNH</th>
-          <th>SL</th>
-          <th>Thành tiền</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${tableRows}
-      </tbody>
-    </table>
-  </div>
-  <hr class="rule" />
-  <div class="inv-pay">
-    <div class="pay-row"><span>Tổng tiền hàng:</span><span>${subtotal.toLocaleString('vi-VN')} đ</span></div>
-    <div class="pay-row"><span>Chiết khấu:</span><span>${discount > 0 ? `-${discount.toLocaleString('vi-VN')}` : '0'} đ</span></div>
-    <div class="pay-row pay-grand"><span>Tổng thanh toán:</span><span>${payTotal.toLocaleString('vi-VN')} đ</span></div>
-  </div>
+  <section class="inv-items">
+    ${itemBlocks}
+  </section>
+  <section class="inv-pay">
+    <div class="pay-row"><span>Tổng tiền hàng:</span><span>${formatReceiptMoney(subtotal)} đ</span></div>
+    <div class="pay-row"><span>Chiết khấu:</span><span>${discount > 0 ? `-${formatReceiptMoney(discount)}` : '0'} đ</span></div>
+    <div class="pay-row pay-grand"><span>Khách cần trả:</span><span>${formatReceiptMoney(payTotal)} đ</span></div>
+    <div class="pay-row"><span>Tiền khách đưa:</span><span>${formatReceiptMoney(cashGivenNum)} đ</span></div>
+    <div class="pay-row"><span>Tiền thừa trả khách:</span><span>${formatReceiptMoney(changeNum)} đ</span></div>
+  </section>
   <p class="amount-words">${escapeHtml(amountWords)}</p>
-  <hr class="rule" />
   <p class="inv-footer">Cảm ơn và hẹn gặp lại!</p>
   ${eInvHtml}
   <div class="receipt-feed" aria-hidden="true"></div>
