@@ -9,6 +9,25 @@ import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const INBOUND_HISTORY_TABLE = 'inbound_history'
 
+/** Loại bỏ `undefined` (PostgREST/json có thể drop hoặc lỗi ngầm). */
+export function stripUndefinedDeep(value) {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item)).filter((item) => item !== undefined)
+  }
+  if (typeof value === 'object') {
+    const out = {}
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue
+      const next = stripUndefinedDeep(v)
+      if (next !== undefined) out[k] = next
+    }
+    return out
+  }
+  return value
+}
+
 function snapshotInboundOrderForHistory(order) {
   if (!order || typeof order !== 'object') return {}
   const lines = Array.isArray(order.lines) ? order.lines : []
@@ -24,7 +43,7 @@ function snapshotInboundOrderForHistory(order) {
     note: String(order.note ?? ''),
     orderDiscountMode: order.orderDiscountMode === 'percent' ? 'percent' : 'amount',
     orderDiscountValue: order.orderDiscountValue != null ? Number(order.orderDiscountValue) : 0,
-    lines: lines.map((ln) => ({ ...ln })),
+    lines: lines.map((ln) => stripUndefinedDeep({ ...ln })),
   }
 }
 
@@ -33,7 +52,7 @@ function snapshotInboundOrderForHistory(order) {
  * @returns {{ ok: true } | { ok: false, error: Error }}
  */
 export function validateInboundHistoryPayload(order) {
-  const payload = snapshotInboundOrderForHistory(order)
+  const payload = stripUndefinedDeep(snapshotInboundOrderForHistory(order))
   const order_code = String(order?.code ?? payload.code ?? '').trim()
   if (!order_code) {
     return { ok: false, error: new Error('Thiếu mã phiếu nhập (order_code).') }
@@ -73,10 +92,14 @@ export async function insertInboundHistoryEntry(order) {
   }
 
   const { payload, order_code } = validated
+  const insertPayload = stripUndefinedDeep({ order_code, payload })
+  // eslint-disable-next-line no-console -- xác minh payload trước khi gửi Supabase
+  console.log('Payload chuẩn bị gửi:', insertPayload)
+
   try {
     const { data: newOrder, error } = await sb
       .from(INBOUND_HISTORY_TABLE)
-      .insert({ order_code, payload })
+      .insert(insertPayload)
       .select('id, created_at, order_code, payload')
       .single()
 

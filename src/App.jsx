@@ -57,6 +57,7 @@ import {
   sortProductsBySales,
 } from './sellFrequency.js'
 import { buildK80ReceiptHtml, formatInvoiceNo } from './receiptHtml.js'
+import { enqueueInboundCompletion } from './inboundCompletionQueue.js'
 import { parseCatalogBlobFile } from './catalogParseClient.js'
 import {
   buildPosTextSearchScanList,
@@ -2689,6 +2690,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     inboundCatalogUpsertReconcileRef.current = fn
   }, [])
 
+  const runInboundCompletionJob = useCallback(
+    (task) => enqueueInboundCompletion(task),
+    []
+  )
+
   const flushCatalogToSupabase = useCallback(async () => {
     if (!isSupabaseConfigured()) return { ok: true, skipped: true }
     if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
@@ -3027,66 +3033,61 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const snapshotPrev = bulkCatalogProductsRef.current
     const ib = opts?.inboundInventoryMeta
 
-    return new Promise((resolve) => {
-      queueMicrotask(async () => {
-        let next = snapshotPrev
-        for (const entry of valid) {
-          next = applyProductDataToCatalog(next, {
-            type: 'patch_variant',
-            variantId: entry.variantId,
-            patch: entry.patch,
-          })
-        }
-
-        startTransition(() => {
-          setProducts(next)
-        })
-
-        try {
-          const flatNext = flattenDisplayCatalogToVariants(next)
-          const touchedIds = new Set(valid.map((e) => String(e.variantId)))
-          const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-            upsertOnlyVariants,
-          })
-          if (!r.ok) {
-            startTransition(() => {
-              setProducts(snapshotPrev)
-            })
-            const msg = describeCatalogPersistError(r.error)
-            showPosPersistErrorToast(msg)
-            resolve({
-              ok: false,
-              updatedCount: 0,
-              error: msg,
-            })
-            return
-          }
-          setCatalogSupabaseDirty(false)
-          await applyServerCatalogAfterPersist()
-          if (ib?.documentCode && isSupabaseConfigured()) {
-            const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
-              documentCode: ib.documentCode,
-              inboundOrderId: ib.inboundOrderId ?? '',
-              staffName: staffNameForInventoryLog(),
-            })
-            await insertInventoryLogRows(logRows)
-          }
-          resolve({ ok: true, updatedCount })
-        } catch (e) {
-          startTransition(() => {
-            setProducts(snapshotPrev)
-          })
-          const msg = e instanceof Error ? e.message : String(e)
-          showPosPersistErrorToast(msg)
-          resolve({
-            ok: false,
-            updatedCount: 0,
-            error: msg,
-          })
-        }
+    let next = snapshotPrev
+    for (const entry of valid) {
+      next = applyProductDataToCatalog(next, {
+        type: 'patch_variant',
+        variantId: entry.variantId,
+        patch: entry.patch,
       })
+    }
+
+    startTransition(() => {
+      setProducts(next)
     })
+
+    try {
+      const flatNext = flattenDisplayCatalogToVariants(next)
+      const touchedIds = new Set(valid.map((e) => String(e.variantId)))
+      const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+        upsertOnlyVariants,
+      })
+      if (!r.ok) {
+        startTransition(() => {
+          setProducts(snapshotPrev)
+        })
+        const msg = describeCatalogPersistError(r.error)
+        showPosPersistErrorToast(msg)
+        return {
+          ok: false,
+          updatedCount: 0,
+          error: msg,
+        }
+      }
+      setCatalogSupabaseDirty(false)
+      await applyServerCatalogAfterPersist()
+      if (ib?.documentCode && isSupabaseConfigured()) {
+        const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
+          documentCode: ib.documentCode,
+          inboundOrderId: ib.inboundOrderId ?? '',
+          staffName: staffNameForInventoryLog(),
+        })
+        await insertInventoryLogRows(logRows)
+      }
+      return { ok: true, updatedCount }
+    } catch (e) {
+      startTransition(() => {
+        setProducts(snapshotPrev)
+      })
+      const msg = e instanceof Error ? e.message : String(e)
+      showPosPersistErrorToast(msg)
+      return {
+        ok: false,
+        updatedCount: 0,
+        error: msg,
+      }
+    }
   }, [applyServerCatalogAfterPersist, showPosPersistErrorToast])
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
@@ -5798,6 +5799,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           catalogSupabaseDirty={catalogSupabaseDirty}
           catalogSupabaseFlushBusy={catalogFlushBusy}
           onFlushCatalogToSupabase={flushCatalogToSupabase}
+          runInboundCompletionJob={runInboundCompletionJob}
         />
       )}
 

@@ -1016,6 +1016,8 @@ export default function AdminHub({
   catalogSupabaseDirty = false,
   catalogSupabaseFlushBusy = false,
   onFlushCatalogToSupabase,
+  /** App: hàng đợi global — `await` trước khi đóng form (tránh dangling promise khi đổi tab). */
+  runInboundCompletionJob = null,
 }) {
   /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
   const [returnDayLedger, setReturnDayLedger] = useState(() => {
@@ -3232,6 +3234,7 @@ export default function AdminHub({
   }, [])
 
   const closeInboundForm = useCallback(() => {
+    if (inboundCatalogBulkSaving) return
     if (standaloneInboundCreate) {
       window.close()
       return
@@ -3240,7 +3243,7 @@ export default function AdminHub({
     setActiveTab((prev) => (prev === TAB_INBOUND_DRAFT ? TAB_INBOUND : prev))
     resetInboundForm()
     syncHubUrlToMainTab(TAB_INBOUND)
-  }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab])
+  }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab, inboundCatalogBulkSaving])
 
   const addInboundFormLine = useCallback((product, variant) => {
     const hint = brandThuongHieuFromProductVariant(product, variant)
@@ -3851,83 +3854,76 @@ export default function AdminHub({
     [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
-  /** Đóng form + toast + tab danh sách ngay (không chờ Supabase / catalog). */
-  const flushInboundCompleteUi = useCallback(
-    (row, { editId = null } = {}) => {
-      startTransition(() => {
-        setInboundOrders((prev) => {
-          const rest = prev.filter((o) => o.id !== row.id)
-          return [row, ...rest]
-        })
-        if (editId) setInboundFormEditOrderId(null)
-      })
-      completeInboundFlowReturnToList()
-      triggerInboundSaveToast()
+  const queueInboundCompletion = useCallback(
+    (task) => {
+      if (typeof runInboundCompletionJob === 'function') {
+        return runInboundCompletionJob(task)
+      }
+      return task()
     },
-    [completeInboundFlowReturnToList, triggerInboundSaveToast]
+    [runInboundCompletionJob]
   )
 
-  /** Tồn kho + giá vốn + inbound_history — chạy nền sau khi UI đã chuyển tab. */
-  const runInboundFulfillmentBackground = useCallback(
-    async (row, fulfillmentPatches, { editId = null } = {}) => {
-      try {
-        const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
-          documentCode: row.code,
-          inboundOrderId: row.id,
-        })
-        if (!res?.ok) {
-          const msg = res?.error || 'Không ghi được danh mục sau khi hoàn thành phiếu.'
-          setInboundSyncErrMsg(msg)
-          window.alert(`Lỗi: ${msg}`)
-          return
-        }
-
-        const hist = await recordInboundCompletionHistory(row)
-        if (!hist.ok) {
-          setInboundSyncErrMsg(
-            hist.error ||
-              'Đã cập nhật tồn kho nhưng không ghi được phiếu vào lịch sử. Kiểm tra Supabase inbound_history.'
-          )
-          window.alert(
-            `Lỗi: ${hist.error || 'Không tạo được phiếu nhập trên Supabase.'} Tồn kho đã được cập nhật.`
-          )
-          return
-        }
-
-        const saved = hist.row || row
-        startTransition(() => {
-          setInboundOrders((prev) => {
-            const rest = prev.filter((o) => o.id !== (editId || saved.id))
-            return [saved, ...rest]
-          })
-        })
-      } catch (e) {
-        console.error(e)
-        const msg = e instanceof Error ? e.message : String(e)
-        setInboundSyncErrMsg(msg)
-        window.alert(`Lỗi: ${msg}`)
+  /** Tồn kho + giá vốn + inbound_history — await xong mới đóng form. */
+  const persistInboundFulfillmentAndHistory = useCallback(
+    async (row, fulfillmentPatches) => {
+      const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
+        documentCode: row.code,
+        inboundOrderId: row.id,
+      })
+      if (!res?.ok) {
+        throw new Error(res?.error || 'Không ghi được danh mục sau khi hoàn thành phiếu.')
       }
+      const hist = await recordInboundCompletionHistory(row)
+      if (!hist.ok) {
+        throw new Error(
+          hist.error ||
+            'Đã cập nhật tồn kho nhưng không ghi được phiếu vào lịch sử. Kiểm tra Supabase inbound_history.'
+        )
+      }
+      return hist.row || row
     },
     [applyInboundFulfillmentPatches, recordInboundCompletionHistory]
   )
 
   /**
-   * Hoàn thành phiếu mới: UI trước (~0.1s), đồng bộ catalog/Supabase nền.
+   * Hoàn thành phiếu mới: await catalog + Supabase (hàng đợi), rồi cập nhật list + đóng form.
    */
   const finalizeInboundCompleted = useCallback(
-    (fulfillmentPatches) => {
+    async (fulfillmentPatches) => {
       const row = buildInboundOrderPayload('completed')
-      flushInboundCompleteUi(row)
-      queueMicrotask(() => {
-        void runInboundFulfillmentBackground(row, fulfillmentPatches)
-      })
-      return true
+      try {
+        const saved = await queueInboundCompletion(() =>
+          persistInboundFulfillmentAndHistory(row, fulfillmentPatches)
+        )
+        startTransition(() => {
+          setInboundOrders((prev) => {
+            const rest = prev.filter((o) => o.id !== saved.id)
+            return [saved, ...rest]
+          })
+        })
+        completeInboundFlowReturnToList()
+        triggerInboundSaveToast()
+        return true
+      } catch (e) {
+        console.error('[inbound] Hoàn thành phiếu mới thất bại', e)
+        const msg = e instanceof Error ? e.message : String(e)
+        setInboundSyncErrMsg(msg)
+        window.alert(`Lỗi: ${msg}`)
+        return false
+      }
     },
-    [buildInboundOrderPayload, flushInboundCompleteUi, runInboundFulfillmentBackground]
+    [
+      buildInboundOrderPayload,
+      queueInboundCompletion,
+      persistInboundFulfillmentAndHistory,
+      completeInboundFlowReturnToList,
+      triggerInboundSaveToast,
+    ]
   )
 
   const finalizeInboundEditCompleted = useCallback(
-    (fulfillmentPatches) => {
+    async (fulfillmentPatches) => {
       const editId = inboundFormEditOrderId
       if (!editId) return false
       const prevRow = inboundOrders.find((o) => o.id === editId)
@@ -3940,18 +3936,36 @@ export default function AdminHub({
         createdAtMs: prevRow.createdAtMs,
         status: computeInboundStatusAfterLines(payload.lines),
       })
-      flushInboundCompleteUi(merged, { editId })
-      queueMicrotask(() => {
-        void runInboundFulfillmentBackground(merged, fulfillmentPatches, { editId })
-      })
-      return true
+      try {
+        const saved = await queueInboundCompletion(() =>
+          persistInboundFulfillmentAndHistory(merged, fulfillmentPatches)
+        )
+        startTransition(() => {
+          setInboundOrders((prev) => {
+            const rest = prev.filter((o) => o.id !== editId)
+            return [saved, ...rest]
+          })
+          setInboundFormEditOrderId(null)
+        })
+        completeInboundFlowReturnToList()
+        triggerInboundSaveToast()
+        return true
+      } catch (e) {
+        console.error('[inbound] Hoàn thành sửa phiếu thất bại', e)
+        const msg = e instanceof Error ? e.message : String(e)
+        setInboundSyncErrMsg(msg)
+        window.alert(`Lỗi: ${msg}`)
+        return false
+      }
     },
     [
       inboundFormEditOrderId,
       inboundOrders,
       buildInboundOrderPayload,
-      flushInboundCompleteUi,
-      runInboundFulfillmentBackground,
+      queueInboundCompletion,
+      persistInboundFulfillmentAndHistory,
+      completeInboundFlowReturnToList,
+      triggerInboundSaveToast,
     ]
   )
 
@@ -3972,49 +3986,52 @@ export default function AdminHub({
       return
     }
     void (async () => {
-      const linesSnap = inboundFormLinesRef.current
-      const catSnap = catalogForInboundRef.current
-      // eslint-disable-next-line no-console -- xác minh submit không đọc stale trước compute
-      console.log('Submit Lines:', linesSnap, 'Submit Catalog:', catSnap)
-      const priorLines = inboundFormEditOrderId
-        ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
-        : null
-      const codes = collectInboundMaHangCodes(catSnap, linesSnap)
-      let serverMap = new Map()
-      if (codes.length > 0 && isSupabaseConfigured()) {
-        try {
-          serverMap = await fetchProductsCostAndStockByMaHang(codes)
-        } catch (e) {
-          console.error(e)
-          alert(
-            'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
-          )
+      setInboundCatalogBulkSaving(true)
+      try {
+        const linesSnap = inboundFormLinesRef.current
+        const catSnap = catalogForInboundRef.current
+        const priorLines = inboundFormEditOrderId
+          ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
+          : null
+        const codes = collectInboundMaHangCodes(catSnap, linesSnap)
+        let serverMap = new Map()
+        if (codes.length > 0 && isSupabaseConfigured()) {
+          try {
+            serverMap = await fetchProductsCostAndStockByMaHang(codes)
+          } catch (e) {
+            console.error(e)
+            alert(
+              'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
+            )
+            return
+          }
+        }
+        const { diffs, patches } = computeInboundFulfillmentPlan(
+          catSnap,
+          linesSnap,
+          serverMap,
+          priorLines || undefined
+        )
+        if (!patches?.length) {
+          alert('Không có dòng nhập hợp lệ để cập nhật danh mục / tồn kho.')
           return
         }
-      }
-      const { diffs, patches } = computeInboundFulfillmentPlan(
-        catSnap,
-        linesSnap,
-        serverMap,
-        priorLines || undefined
-      )
-      if (!patches?.length) {
-        alert('Không có dòng nhập hợp lệ để cập nhật danh mục / tồn kho.')
-        return
-      }
-      if (diffs.length > 0) {
-        inboundCompletePendingRef.current = {
-          diffs,
-          patches,
-          mode: inboundFormEditOrderId ? 'edit' : 'create',
+        if (diffs.length > 0) {
+          inboundCompletePendingRef.current = {
+            diffs,
+            patches,
+            mode: inboundFormEditOrderId ? 'edit' : 'create',
+          }
+          setInboundCostDiffModal({ diffs })
+          return
         }
-        setInboundCostDiffModal({ diffs })
-        return
-      }
-      if (inboundFormEditOrderId) {
-        finalizeInboundEditCompleted(patches)
-      } else {
-        finalizeInboundCompleted(patches)
+        if (inboundFormEditOrderId) {
+          await finalizeInboundEditCompleted(patches)
+        } else {
+          await finalizeInboundCompleted(patches)
+        }
+      } finally {
+        setInboundCatalogBulkSaving(false)
       }
     })()
   }, [
@@ -4052,65 +4069,53 @@ export default function AdminHub({
     if (mode === 'detail_edit' && mergedRow && oldRow) {
       const oid = mergedRow.id
       closeInboundCostDiffModal()
-      startTransition(() => {
-        setInboundOrders((p) => {
-          const rest = p.filter((o) => o.id !== oid)
-          return [mergedRow, ...rest]
-        })
-        setInboundDetailLineDrafts((prev) => {
-          if (!prev[oid]) return prev
-          const n = { ...prev }
-          delete n[oid]
-          return n
-        })
-      })
-      completeInboundFlowReturnToList()
-      triggerInboundSaveToast()
       setInboundCatalogBulkSaving(true)
-      queueMicrotask(() => {
-        void (async () => {
-          try {
-            const res = await applyInboundFulfillmentPatches(patches, {
-              documentCode: mergedRow.code,
-              inboundOrderId: mergedRow.id,
-            })
-            if (!res?.ok) {
-              window.alert(`Lỗi: ${res?.error || 'Không ghi được danh mục.'}`)
-              return
-            }
-            const hist = await recordInboundCompletionHistory(mergedRow)
-            if (!hist.ok) {
-              window.alert(`Lỗi: ${hist.error || 'Không tạo được phiếu nhập trên Supabase.'}`)
-              setInboundSyncErrMsg(hist.error || 'Không ghi được phiếu vào lịch sử nhập hàng.')
-              return
-            }
-            const saved = hist.row || mergedRow
-            startTransition(() => {
-              setInboundOrders((p) => {
-                const rest = p.filter((o) => o.id !== oid)
-                return [saved, ...rest]
-              })
-            })
-          } finally {
-            setInboundCatalogBulkSaving(false)
-          }
-        })()
-      })
+      try {
+        const saved = await queueInboundCompletion(() =>
+          persistInboundFulfillmentAndHistory(mergedRow, patches)
+        )
+        startTransition(() => {
+          setInboundOrders((p) => {
+            const rest = p.filter((o) => o.id !== oid)
+            return [saved, ...rest]
+          })
+          setInboundDetailLineDrafts((prev) => {
+            if (!prev[oid]) return prev
+            const n = { ...prev }
+            delete n[oid]
+            return n
+          })
+        })
+        completeInboundFlowReturnToList()
+        triggerInboundSaveToast()
+      } catch (e) {
+        console.error('[inbound] Hoàn thành chi tiết phiếu thất bại', e)
+        const msg = e instanceof Error ? e.message : String(e)
+        window.alert(`Lỗi: ${msg}`)
+        setInboundSyncErrMsg(msg)
+      } finally {
+        setInboundCatalogBulkSaving(false)
+      }
       return
     }
 
     closeInboundCostDiffModal()
-    if (mode === 'edit') {
-      finalizeInboundEditCompleted(patches)
-    } else {
-      finalizeInboundCompleted(patches)
+    setInboundCatalogBulkSaving(true)
+    try {
+      if (mode === 'edit') {
+        await finalizeInboundEditCompleted(patches)
+      } else {
+        await finalizeInboundCompleted(patches)
+      }
+    } finally {
+      setInboundCatalogBulkSaving(false)
     }
   }, [
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
     cancelInboundCostDiffModal,
-    applyInboundFulfillmentPatches,
-    recordInboundCompletionHistory,
+    queueInboundCompletion,
+    persistInboundFulfillmentAndHistory,
     triggerInboundSaveToast,
     completeInboundFlowReturnToList,
   ])
@@ -4529,36 +4534,42 @@ export default function AdminHub({
         return
       }
       appendInboundCostChangeNotifications(diffs)
-      startTransition(() => {
-        setInboundOrders((p) => {
-          const rest = p.filter((o) => o.id !== oid)
-          return [merged, ...rest]
-        })
-        setInboundDetailLineDrafts((prev) => {
-          if (!prev[oid]) return prev
-          const n = { ...prev }
-          delete n[oid]
-          return n
-        })
-      })
-      completeInboundFlowReturnToList()
-      triggerInboundSaveToast()
       setInboundCatalogBulkSaving(true)
-      queueMicrotask(() => {
-        void (async () => {
-          try {
-            await runInboundFulfillmentBackground(merged, patches)
-          } finally {
-            setInboundCatalogBulkSaving(false)
-          }
-        })()
-      })
+      void (async () => {
+        try {
+          const saved = await queueInboundCompletion(() =>
+            persistInboundFulfillmentAndHistory(merged, patches)
+          )
+          startTransition(() => {
+            setInboundOrders((p) => {
+              const rest = p.filter((o) => o.id !== oid)
+              return [saved, ...rest]
+            })
+            setInboundDetailLineDrafts((prev) => {
+              if (!prev[oid]) return prev
+              const n = { ...prev }
+              delete n[oid]
+              return n
+            })
+          })
+          completeInboundFlowReturnToList()
+          triggerInboundSaveToast()
+        } catch (e) {
+          console.error('[inbound] Lưu chi tiết phiếu thất bại', e)
+          const msg = e instanceof Error ? e.message : String(e)
+          window.alert(`Lỗi: ${msg}`)
+          setInboundSyncErrMsg(msg)
+        } finally {
+          setInboundCatalogBulkSaving(false)
+        }
+      })()
     })()
   }, [
     activeTab,
     inboundDetailLineDrafts,
     inboundOrders,
-    runInboundFulfillmentBackground,
+    queueInboundCompletion,
+    persistInboundFulfillmentAndHistory,
     triggerInboundSaveToast,
     completeInboundFlowReturnToList,
   ])
@@ -8642,6 +8653,7 @@ export default function AdminHub({
                 <button
                   type="button"
                   className="ah-inbound-footer-btn ah-inbound-footer-btn--draft"
+                  disabled={inboundCatalogBulkSaving}
                   onClick={() => saveInboundForm('saved_temp')}
                 >
                   Lưu tạm
@@ -8650,6 +8662,7 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
+                disabled={inboundCatalogBulkSaving}
                 onClick={() => saveInboundForm('completed')}
               >
                 Hoàn thành
@@ -8795,7 +8808,7 @@ export default function AdminHub({
           aria-busy="true"
         >
           <span className="ah-inbound-catalog-saving-spinner" aria-hidden />
-          <span className="ah-inbound-catalog-saving-msg">Đang lưu danh mục…</span>
+          <span className="ah-inbound-catalog-saving-msg">Đang hoàn thành phiếu nhập…</span>
         </div>
       )}
 
