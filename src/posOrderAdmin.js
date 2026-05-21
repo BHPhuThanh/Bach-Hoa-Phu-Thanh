@@ -78,9 +78,19 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
     const price = Math.max(0, Number(raw.price) || 0)
     const rawQuyDoi = Number(raw.quyDoi ?? raw.conversion ?? 1)
     const quyDoi = Number.isFinite(rawQuyDoi) && rawQuyDoi > 0 ? rawQuyDoi : 1
-    const lineRevenue = price * qty * quyDoi
-    const lineCost = cost * qty
-    const lineProfit = lineRevenue - lineCost
+    /** Giá POS / lúc thanh toán = `price × qty` (quy_doi chỉ cho tồn kho, không nhân lại doanh thu). */
+    const lineRevenue =
+      raw.lineRevenue != null && Number.isFinite(Number(raw.lineRevenue))
+        ? Number(raw.lineRevenue)
+        : price * qty
+    const lineCost =
+      raw.lineCost != null && Number.isFinite(Number(raw.lineCost))
+        ? Number(raw.lineCost)
+        : cost * qty
+    const lineProfit =
+      raw.lineProfit != null && Number.isFinite(Number(raw.lineProfit))
+        ? Number(raw.lineProfit)
+        : lineRevenue - lineCost
     const orderLineId =
       String(raw.orderLineId || raw.lineId || '').trim() || `leg-${oid}-${idx}`
     return {
@@ -100,14 +110,25 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
       lineProfit,
     }
   })
-  const subtotal = items.reduce(
-    (s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0) * (Number(it.quyDoi) || 1),
-    0
-  )
-  const disc = Math.min(subtotal, Math.max(0, Number(o.discount) || 0))
-  const total = Math.max(0, subtotal - disc)
-  const totalCost = items.reduce((s, it) => s + (Number(it.cost) || 0) * (Number(it.qty) || 0), 0)
-  const totalProfit = total - totalCost
+  const subtotalFromLines = items.reduce((s, it) => s + (Number(it.lineRevenue) || 0), 0)
+  const subtotalStored = Number(o.subtotal)
+  const discountStored = Number(o.discount)
+  const totalStored = Number(o.total)
+  const totalCostStored = Number(o.totalCost)
+  const totalProfitStored = Number(o.totalProfit)
+  const subtotal = Number.isFinite(subtotalStored) ? subtotalStored : subtotalFromLines
+  const disc = Number.isFinite(discountStored)
+    ? Math.min(subtotal, Math.max(0, discountStored))
+    : Math.min(subtotalFromLines, Math.max(0, Number(o.discount) || 0))
+  const total = Number.isFinite(totalStored)
+    ? Math.max(0, totalStored)
+    : Math.max(0, subtotal - disc)
+  const totalCost = Number.isFinite(totalCostStored)
+    ? Math.max(0, totalCostStored)
+    : items.reduce((s, it) => s + (Number(it.lineCost) || 0), 0)
+  const totalProfit = Number.isFinite(totalProfitStored)
+    ? totalProfitStored
+    : total - totalCost
   const st = o.status
   const status = ['completed', 'returned_partial', 'returned_full', 'cancelled'].includes(st)
     ? st

@@ -5435,11 +5435,6 @@ export default function AdminHub({
     )
   }, [ordFiltered, ordDebounced])
 
-  const ordListForPosSummary = useMemo(
-    () => ordList.map((o) => normalizePosOrder(o, catalogList)),
-    [ordList, catalogList]
-  )
-
   const inboundDateFilteredForOrdersTab = useMemo(
     () => filterInboundOrdersForReport(inboundOrders, ordRange, ordFrom, ordTo),
     [inboundOrders, ordRange, ordFrom, ordTo]
@@ -6890,30 +6885,41 @@ export default function AdminHub({
                           </td>
                         </tr>
                       ) : (
-                        ordListForPosSummary.map((o) => (
-                          <tr key={o.id}>
+                        ordList.map((raw) => {
+                          const rowStatus = ['completed', 'returned_partial', 'returned_full', 'cancelled'].includes(
+                            raw.status
+                          )
+                            ? raw.status
+                            : computePosOrderStatusFromItems(raw.items)
+                          const rowTotal = safeMoney(raw.total)
+                          const rowProfit = Number.isFinite(Number(raw.totalProfit))
+                            ? safeMoney(raw.totalProfit)
+                            : safeMoney(orderTotalProfit(raw))
+                          return (
+                          <tr key={raw.id}>
                             <td>
                               <button
                                 type="button"
                                 className="ah-inbound-code-link"
-                                onClick={() => openPosDetailTab(o)}
+                                onClick={() => openPosDetailTab(raw)}
                               >
-                                {o.invoiceNo || '—'}
+                                {raw.invoiceNo || '—'}
                               </button>
                             </td>
-                            <td>{new Date(o.createdAt).toLocaleString('vi-VN')}</td>
+                            <td>{new Date(raw.createdAt).toLocaleString('vi-VN')}</td>
                             <td>
                               <span
-                                className={`ah-inbound-status ah-inbound-status--${o.status === 'cancelled' ? 'cancelled' : o.status === 'returned_full' ? 'returned_full' : o.status === 'returned_partial' ? 'returned_partial' : 'completed'}`}
-                                title={posOrderStatusLabel(o.status)}
+                                className={`ah-inbound-status ah-inbound-status--${rowStatus === 'cancelled' ? 'cancelled' : rowStatus === 'returned_full' ? 'returned_full' : rowStatus === 'returned_partial' ? 'returned_partial' : 'completed'}`}
+                                title={posOrderStatusLabel(rowStatus)}
                               >
-                                {posOrderStatusLabel(o.status)}
+                                {posOrderStatusLabel(rowStatus)}
                               </span>
                             </td>
-                            <td className="ah-num">{Number(o.total).toLocaleString('vi-VN')} đ</td>
-                            <td className="ah-num">{Number(o.totalProfit).toLocaleString('vi-VN')} đ</td>
+                            <td className="ah-num">{rowTotal.toLocaleString('vi-VN')} đ</td>
+                            <td className="ah-num">{rowProfit.toLocaleString('vi-VN')} đ</td>
                           </tr>
-                        ))
+                          )
+                        })
                       )}
                     </tbody>
                   </table>

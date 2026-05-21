@@ -267,9 +267,7 @@ export function orderLineCostTotal(it) {
 export function orderLineRevenue(it) {
   if (it == null) return 0
   if (it.lineRevenue != null && Number.isFinite(Number(it.lineRevenue))) return Number(it.lineRevenue)
-  const quyDoiRaw = Number(it.quyDoi ?? it.conversion ?? 1)
-  const quyDoi = Number.isFinite(quyDoiRaw) && quyDoiRaw > 0 ? quyDoiRaw : 1
-  return (Number(it.price) || 0) * (Number(it.qty) || 0) * quyDoi
+  return (Number(it.price) || 0) * (Number(it.qty) || 0)
 }
 
 export function orderLineProfit(it) {
