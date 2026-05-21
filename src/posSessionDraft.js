@@ -16,7 +16,7 @@ export function buildCatalogFingerprint(products, fileName) {
     for (const v of vars) {
       const convRaw = v.conversionValue ?? v.conversion ?? ''
       parts.push(
-        `${String(v.code ?? '').trim()}\t${String(v.unitLabel ?? '').trim()}\t${String(convRaw).trim()}`
+        `${String(v.code ?? '').trim()}\t${String(v.unitLabel ?? '').trim()}\t${String(convRaw).trim()}\t${Number(v.stockQty) || 0}\t${Number(v.cost) || 0}\t${Number(v.price) || 0}`
       )
     }
   }

@@ -2392,6 +2392,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [error, setError] = useState('')
   const [sellOrders, setSellOrders] = useState(() => [createEmptySellOrder()])
   const [activeSellOrderId, setActiveSellOrderId] = useState(() => sellOrders[0].id)
+  const [isCheckingOut, setIsCheckingOut] = useState(false)
   const [headerSearch, setHeaderSearch] = useState('')
   const [headerSearchInvalid, setHeaderSearchInvalid] = useState(false)
   const [headerSearchFeedback, setHeaderSearchFeedback] = useState('')
@@ -2589,11 +2590,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   )
   const catalogBarcodeCachesRef = useRef(catalogBarcodeCaches)
   catalogBarcodeCachesRef.current = catalogBarcodeCaches
-
-  const catalogDataFingerprint = useMemo(
-    () => (products.length ? buildCatalogFingerprint(products, fileName) : ''),
-    [products, fileName]
-  )
 
   const clearAdminHubDeepLink = useCallback(() => {
     setAdminHubDeepLink(null)
@@ -3211,8 +3207,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [sellWholesaleMode, showPosScanToastMessage]
   )
 
-  /** Sau khi thêm hàng: giữ nguyên ô tìm, bôi đen toàn bộ để lần quét/gõ sau thay thế. */
+  /** Sau khi thêm hàng: xóa ô tìm (tránh dropdown che màn hình), focus lại để quét tiếp. */
   const afterSuccessfulHeaderAdd = useCallback(() => {
+    setHeaderSearch('')
     setHeaderSearchInvalid(false)
     setHeaderSearchFeedback('')
     setHeaderSuggestOpen(false)
@@ -3450,21 +3447,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return () => window.clearTimeout(t)
   }, [sellOrders, activeSellOrderId, sellWholesaleMode, products, fileName])
 
-  /** Khi catalog (Hàng hóa / Excel) đổi — cập nhật ĐƠN VỊ TÍNH / biến thể / giá trên dòng giỏ ngay (sau bước khôi phục nháp). */
+  /** Khi catalog đổi (tab Hàng hóa / nhập hàng) — đồng bộ giá vốn, tồn, ĐVT trên mọi đơn đang mở. */
   useEffect(() => {
-    if (activeView !== 'sell') return
-    if (!catalogDataFingerprint) return
-    queueMicrotask(() => {
-      if (posDraftHydratingRef.current) return
-      const prods = productsRef.current
-      setSellOrders((orders) =>
-        orders.map((o) => ({
-          ...o,
-          cart: (o.cart || []).map((line) => remapCartLineFromCatalog(line, prods, sellWholesaleMode)),
-        }))
-      )
-    })
-  }, [catalogDataFingerprint, sellWholesaleMode, activeView])
+    if (!products.length) return
+    if (posDraftHydratingRef.current) return
+    setSellOrders((orders) =>
+      orders.map((o) => ({
+        ...o,
+        cart: (o.cart || []).map((line) => remapCartLineFromCatalog(line, products, sellWholesaleMode)),
+      }))
+    )
+  }, [products, sellWholesaleMode])
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(new Date()), 1000)
@@ -3554,6 +3547,26 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const o = createEmptySellOrder()
     setSellOrders((prev) => [...prev, o])
     setActiveSellOrderId(o.id)
+  }, [])
+
+  /** Sau thanh toán thành công: gỡ tab đơn đã bán, chuyển sang đơn liền trước (không tạo tab trùng số). */
+  const finalizePaidSellOrder = useCallback((paidOrderId) => {
+    setCartQtyDraftByLine({})
+    setCartPriceDraftByLine({})
+    let nextActiveId = null
+    setSellOrders((orders) => {
+      const idx = orders.findIndex((o) => o.id === paidOrderId)
+      if (idx < 0) return orders
+      const remaining = orders.filter((o) => o.id !== paidOrderId)
+      if (remaining.length === 0) {
+        const fresh = createEmptySellOrder()
+        nextActiveId = fresh.id
+        return [fresh]
+      }
+      nextActiveId = remaining[Math.max(0, idx - 1)].id
+      return remaining
+    })
+    if (nextActiveId) setActiveSellOrderId(nextActiveId)
   }, [])
 
   const closeSellTab = useCallback(
@@ -3789,7 +3802,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         if (!queryLooksLikeBarcodeKeyInput(buf)) return
         e.preventDefault()
         e.stopPropagation()
-        const { setHeaderSearch, logBarcodeReceived, afterSuccessfulHeaderAdd, markBarcodeNotFound } =
+        const { logBarcodeReceived, afterSuccessfulHeaderAdd, markBarcodeNotFound } =
           scanHeaderRef.current
         const hit = findProductByBarcodeCached(catalogBarcodeCachesRef.current, buf)
         if (!hit) {
@@ -3797,10 +3810,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           return
         }
         const scanCtx = buildBarcodeScanLogContext(hit, buf)
-        const headerLabel = scanCtx
-          ? displayNameForCartVariant(hit.product, scanCtx.variant)
-          : buf
-        setHeaderSearch(headerLabel)
         if (scanCtx) logBarcodeReceived(buf, scanCtx)
         else logBarcodeReceived(buf)
         playScannerBeep()
@@ -3853,12 +3862,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const barHit = findProductByBarcodeCached(catalogBarcodeCaches, raw)
     if (barHit) {
       const scanCtx = buildBarcodeScanLogContext(barHit, raw)
-      if (scanCtx) {
-        setHeaderSearch(displayNameForCartVariant(barHit.product, scanCtx.variant))
-        logBarcodeReceived(raw, scanCtx)
-      } else {
-        logBarcodeReceived(raw)
-      }
+      if (scanCtx) logBarcodeReceived(raw, scanCtx)
+      else logBarcodeReceived(raw)
       playScannerBeep()
       addToCartWithVariant(barHit.product, barHit.variantId)
       afterSuccessfulHeaderAdd()
@@ -4043,12 +4048,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     (row) => {
       if (!row) return
       const v = resolveHeaderSuggestVariant(row, headerSuggestUnitPickByProductId)
-      setHeaderSearch(displayNameForCartVariant(row.product, v))
       addToCartWithVariant(row.product, v.id)
       setHeaderHighlightIndex(0)
       afterSuccessfulHeaderAdd()
     },
-    [addToCartWithVariant, afterSuccessfulHeaderAdd, headerSuggestUnitPickByProductId, setHeaderSearch]
+    [addToCartWithVariant, afterSuccessfulHeaderAdd, headerSuggestUnitPickByProductId]
   )
 
   const onHeaderSearchKeyDown = useCallback(
@@ -4073,12 +4077,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const bar = raw ? findProductByBarcodeCached(catalogBarcodeCaches, raw) : null
       if (bar) {
         const scanCtx = buildBarcodeScanLogContext(bar, raw)
-        if (scanCtx) {
-          setHeaderSearch(displayNameForCartVariant(bar.product, scanCtx.variant))
-          logBarcodeReceived(raw, scanCtx)
-        } else {
-          logBarcodeReceived(raw)
-        }
+        if (scanCtx) logBarcodeReceived(raw, scanCtx)
+        else logBarcodeReceived(raw)
         playScannerBeep()
         addToCartWithVariant(bar.product, bar.variantId)
         afterSuccessfulHeaderAdd()
@@ -4096,23 +4096,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           return
         }
       }
-      if (
-        headerSuggestOpen &&
-        showPosQuickAddProductRow &&
-        headerHighlightIndex === 0
-      ) {
-        setHeaderSuggestOpen(false)
-        setPosGoodsCreateModalOpen(true)
-        return
-      }
-      if (
-        headerSuggestOpen &&
-        headerSuggestRows.length > 0 &&
-        headerHighlightIndex >= (showPosQuickAddProductRow ? 1 : 0) &&
-        headerHighlightIndex < posHeaderSuggestTotalRows
-      ) {
-        const rowIdx = headerHighlightIndex - (showPosQuickAddProductRow ? 1 : 0)
-        pickHeaderSuggestRow(headerSuggestRows[rowIdx])
+      if (headerSuggestRows.length > 0) {
+        pickHeaderSuggestRow(headerSuggestRows[0])
         return
       }
       tryAddProductFromHeader()
@@ -4141,17 +4126,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const t = String(text || '').trim()
       if (!t) return
       blurActiveElement()
-      if (posScanAddFromDecodedText(t, { fromCamera: true })) return
-      setHeaderSearch(t)
-      setHeaderSearchInvalid(false)
-      setHeaderSearchFeedback('')
-      setHeaderSuggestOpen(true)
-      setHeaderHighlightIndex(0)
-      queueMicrotask(() => {
-        tryAddProductFromHeader(t)
-      })
+      posScanAddFromDecodedText(t, { fromCamera: true })
     },
-    [posScanAddFromDecodedText, tryAddProductFromHeader]
+    [posScanAddFromDecodedText]
   )
 
   const setLineVariant = useCallback((lineId, variantId) => {
@@ -4339,10 +4316,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [cashGivenNum, payTotal])
 
   const handleThanhToan = useCallback(async () => {
+    if (isCheckingOut) return
     if (cart.length === 0) {
       alert('Chưa có sản phẩm để in')
       return
     }
+    const paidOrderId = activeSellOrderId
     const hasInvalidQty = cart.some((l) => {
       const q = effectiveCartLineQty(l, cartQtyDraftByLine)
       return !Number.isFinite(q) || q <= 0
@@ -4365,6 +4344,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       window.alert('Vui lòng chọn lô — hạn sử dụng trước khi thanh toán.')
       return
     }
+    setIsCheckingOut(true)
+    try {
     const fixedAt = new Date()
     const invoiceNo = formatInvoiceNo(fixedAt)
     const items = cart.map((l) => {
@@ -4435,8 +4416,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       ...(noteStr ? { note: noteStr } : {}),
       sellWholesaleMode: !!sellWholesaleMode,
     }
+    let orderSaved = false
     try {
       await saveOrder(order)
+      orderSaved = true
       setSalesRefresh((k) => k + 1)
       const cartForStock = cart.map((l) => ({
         ...l,
@@ -4499,23 +4482,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (eInvoiceSettings.autoPrint) {
       printReceiptHtml(html)
     }
-    setSellOrders((orders) =>
-      orders.map((o) =>
-        o.id === activeSellOrderId
-          ? {
-              ...o,
-              cart: [],
-              orderDiscountStr: '',
-              cashGivenStr: '',
-              customerName: '',
-              customerPhone: '',
-              customerQuery: '',
-              orderNote: '',
-            }
-          : o
-      )
-    )
-    setSellWholesaleMode(false)
+    if (orderSaved) {
+      finalizePaidSellOrder(paidOrderId)
+      setSellWholesaleMode(false)
+    }
+  } finally {
+    setIsCheckingOut(false)
+  }
   }, [
     cart,
     cartQtyDraftByLine,
@@ -4533,6 +4506,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     applyServerCatalogAfterPersist,
     cashGivenNum,
     activeSeller,
+    isCheckingOut,
+    finalizePaidSellOrder,
   ])
 
   handleThanhToanRef.current = handleThanhToan
@@ -6337,9 +6312,31 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 type="button"
                 className="pos-btn-checkout"
                 onClick={handleThanhToan}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || isCheckingOut}
+                aria-busy={isCheckingOut}
               >
-                THANH TOÁN (F1)
+                {isCheckingOut ? (
+                  <svg
+                    className="pos-btn-checkout-spinner"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray="42"
+                      strokeDashoffset="12"
+                    />
+                  </svg>
+                ) : null}
+                <span>{isCheckingOut ? 'Đang thanh toán…' : 'THANH TOÁN (F1)'}</span>
               </button>
             </div>
           </aside>
