@@ -22,11 +22,7 @@ import {
   parseConversionRatio,
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
-import {
-  CATALOG_PRODUCT_DB_COLUMNS,
-  PRODUCT_PK_COLUMN,
-  PRODUCT_ROW_ID_COLUMN,
-} from './kiotProductSchema.js'
+import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
@@ -48,32 +44,8 @@ const PRODUCTS_IN_QUERY_CHUNK = 200
 /** Khi một lần upsert toàn bộ lỗi — tách song song (Promise.all). */
 const PRODUCTS_UPSERT_FALLBACK_CHUNK = 1500
 
-/** `id` (UUID) → payload đã finalize — chỉ upsert dòng thay đổi thật sự. */
-const productUpsertBaselineByRowId = new Map()
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-function isValidProductRowUuid(value) {
-  return UUID_RE.test(String(value ?? '').trim())
-}
-
-function newProductRowUuid() {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, '0').slice(-12)}`
-}
-
-/** UUID gửi Supabase — ưu tiên `raw.id` / `supabaseRowId`, không dùng id client `sb-…`. */
-export function resolveProductRowId(variant) {
-  const fromRaw = variant?.raw?.[PRODUCT_ROW_ID_COLUMN] ?? variant?.raw?.id
-  if (isValidProductRowUuid(fromRaw)) return String(fromRaw).trim()
-  const fromStored = variant?.supabaseRowId
-  if (isValidProductRowUuid(fromStored)) return String(fromStored).trim()
-  const fromId = variant?.id
-  if (isValidProductRowUuid(fromId)) return String(fromId).trim()
-  return newProductRowUuid()
-}
+/** `ma_hang` → payload đã finalize — chỉ upsert dòng thay đổi thật sự. */
+const productUpsertBaselineByMaHang = new Map()
 
 /** Thông báo toast đỏ chuẩn khi ghi DB thất bại. */
 export function catalogDbErrorToastMessage(err) {
@@ -90,28 +62,28 @@ function stableSerializeFinalizedProductRow(row) {
 
 /** Gọi sau khi đọc được danh mục từ Supabase/IDB (và sau revalidate). */
 export function seedProductUpsertBaselineFromDisplayCatalog(products) {
-  productUpsertBaselineByRowId.clear()
+  productUpsertBaselineByMaHang.clear()
   if (!Array.isArray(products) || products.length === 0) return
   const flat = flattenDisplayCatalogToVariants(products)
   const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
   for (const v of flat) {
     const raw = pickProductRowDbColumns(displayVariantToProductsRow(v))
-    const rowId = String(raw[PRODUCT_ROW_ID_COLUMN] ?? '').trim()
-    if (!rowId) continue
+    const code = String(raw[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
     const fin = finalizeProductRowForSupabase(raw, allow)
-    productUpsertBaselineByRowId.set(rowId, stableSerializeFinalizedProductRow(fin))
+    productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
   }
 }
 
 function filterFinalizedRowsDiffFromBaseline(rows) {
   if (!rows.length) return rows
-  if (productUpsertBaselineByRowId.size === 0) return rows
+  if (productUpsertBaselineByMaHang.size === 0) return rows
   const out = []
   for (const row of rows) {
-    const rowId = String(row[PRODUCT_ROW_ID_COLUMN] ?? '').trim()
-    if (!rowId) continue
+    const code = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
     const ser = stableSerializeFinalizedProductRow(row)
-    if (productUpsertBaselineByRowId.get(rowId) === ser) continue
+    if (productUpsertBaselineByMaHang.get(code) === ser) continue
     out.push(row)
   }
   return out
@@ -123,9 +95,9 @@ function mergeBaselineFromUpsertReturnedRows(returnedRows) {
   for (const dbRow of returnedRows) {
     const raw = pickProductRowDbColumns(dbRow)
     const fin = finalizeProductRowForSupabase(raw, allow)
-    const rowId = String(fin[PRODUCT_ROW_ID_COLUMN] ?? '').trim()
-    if (!rowId) continue
-    productUpsertBaselineByRowId.set(rowId, stableSerializeFinalizedProductRow(fin))
+    const code = String(fin[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (!code) continue
+    productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
   }
 }
 
@@ -336,7 +308,6 @@ function displayVariantToProductsRow(v) {
   const tonKho =
     sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0
   return {
-    [PRODUCT_ROW_ID_COLUMN]: resolveProductRowId(v),
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
     ten_hang: dbTextCell(v?.name),
@@ -399,11 +370,11 @@ function finalizeProductRowForSupabase(row, allow) {
   return o
 }
 
-/** Trùng `id` trong một request — giữ bản cuối. */
-function dedupeRowsByProductRowId(rows) {
+/** Trùng khóa `Mã hàng` trong một request — giữ bản cuối. */
+function dedupeRowsByProductCode(rows) {
   const map = new Map()
   for (const r of rows) {
-    const key = String(r[PRODUCT_ROW_ID_COLUMN] ?? '').trim()
+    const key = String(r[PRODUCT_PK_COLUMN] ?? '').trim()
     if (!key) continue
     map.set(key, r)
   }
@@ -540,10 +511,10 @@ function catalogSnapshotDedupeKey(products, fileName) {
  * @returns {{ written: number, skipped: number, lastError?: object }}
  */
 async function upsertProductChunkResilient(sb, part) {
-  const missingId = part.filter((row) => !String(row[PRODUCT_ROW_ID_COLUMN] ?? '').trim())
-  if (missingId.length > 0) {
+  const missingCode = part.filter((row) => !String(row[PRODUCT_PK_COLUMN] ?? '').trim())
+  if (missingCode.length > 0) {
     const err = new Error(
-      `Upsert «products»: thiếu cột «${PRODUCT_ROW_ID_COLUMN}» (UUID) trên ${missingId.length} dòng.`
+      `Upsert «products»: thiếu «${PRODUCT_PK_COLUMN}» trên ${missingCode.length} dòng.`
     )
     return { written: 0, skipped: part.length, lastError: err, returnedRows: [] }
   }
@@ -551,7 +522,7 @@ async function upsertProductChunkResilient(sb, part) {
   console.log('Payload gửi lên Supabase:', part)
   const { data: upsertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
-    .upsert(part, { onConflict: PRODUCT_ROW_ID_COLUMN })
+    .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
     .select('*')
   if (bulkError) {
     const err = new Error(describeCatalogPersistError(bulkError))
@@ -582,21 +553,17 @@ const PRODUCT_ROW_KEYS_FOR_DB = new Set(CATALOG_PRODUCT_DB_COLUMNS)
  */
 async function upsertRawProductRows(sb, rawRows, opts = {}) {
   const bypassBaselineDiff = opts && opts.bypassBaselineDiff === true
-  const withCode = rawRows.filter(
-    (r) =>
-      String(r[PRODUCT_ROW_ID_COLUMN] ?? '').trim().length > 0 &&
-      String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0
-  )
+  const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   const skippedNoCode = rawRows.length - withCode.length
   if (skippedNoCode > 0) {
     console.warn(
-      `[saveProductsToSupabase] Đã loại ${skippedNoCode} dòng thiếu «${PRODUCT_ROW_ID_COLUMN}» hoặc «${PRODUCT_PK_COLUMN}», không gửi lên Supabase.`
+      `[saveProductsToSupabase] Đã loại ${skippedNoCode} dòng không có «${PRODUCT_PK_COLUMN}», không gửi lên Supabase.`
     )
   }
-  const deduped = dedupeRowsByProductRowId(withCode)
+  const deduped = dedupeRowsByProductCode(withCode)
   if (deduped.length < withCode.length) {
     console.warn(
-      `[saveProductsToSupabase] Gộp trùng ${PRODUCT_ROW_ID_COLUMN}: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
+      `[saveProductsToSupabase] Gộp trùng ${PRODUCT_PK_COLUMN}: ${withCode.length} → ${deduped.length} dòng (giữ bản sau cùng).`
     )
   }
   const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
@@ -635,8 +602,8 @@ async function upsertRawProductRows(sb, rawRows, opts = {}) {
     mergeBaselineFromUpsertReturnedRows(agg.returnedRows)
   } else if (agg.written > 0 && agg.skipped === 0) {
     for (const fin of changed) {
-      const rowId = String(fin[PRODUCT_ROW_ID_COLUMN] ?? '').trim()
-      if (rowId) productUpsertBaselineByRowId.set(rowId, stableSerializeFinalizedProductRow(fin))
+      const code = String(fin[PRODUCT_PK_COLUMN] ?? '').trim()
+      if (code) productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
     }
   }
 
@@ -665,7 +632,7 @@ async function upsertProductRowsFromDisplayCatalog(sb, products) {
 }
 
 /**
- * Upsert toàn bộ biến thể catalog POS → `public.products` (`onConflict`: {@link PRODUCT_ROW_ID_COLUMN}).
+ * Upsert toàn bộ biến thể catalog POS → `public.products` (`onConflict`: {@link PRODUCT_PK_COLUMN}).
  * Chỉ gọi từ hành động người dùng (Lưu, nhập file, khởi tạo…) — không gắn useEffect.
  * @param {Array} products — display catalog (nhóm + groupVariants)
  * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}
@@ -683,7 +650,7 @@ export async function saveProductsToSupabase(products) {
   const flat = flattenDisplayCatalogToVariants(products || [])
   const rawRows = flat.map(displayVariantToProductsRow)
   const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
-  const toSend = dedupeRowsByProductRowId(withCode)
+  const toSend = dedupeRowsByProductCode(withCode)
   try {
     if (flat.length > 0 && toSend.length === 0) {
       const err = new Error(
@@ -729,33 +696,6 @@ export async function saveProductsToSupabase(products) {
  * @param {Array<object>} products — catalog nhóm + groupVariants
  * @param {Array<string|number>} variantIds — `variant.id`
  */
-/**
- * UUID cột `products.id` của các biến thể bị xóa (ưu tiên `supabaseRowId` / `raw.id`).
- * @param {Array<object>} products
- * @param {Array<string|number>} variantIds
- */
-export function collectProductRowIdsForVariantIds(products, variantIds) {
-  if (!Array.isArray(products) || !Array.isArray(variantIds) || variantIds.length === 0) return []
-  const idSet = new Set(variantIds.map((x) => String(x)))
-  const rowIds = []
-  for (const p of products) {
-    for (const gv of p.groupVariants || [p]) {
-      if (!gv || !idSet.has(String(gv.id))) continue
-      const fromRaw = gv?.raw?.[PRODUCT_ROW_ID_COLUMN] ?? gv?.raw?.id
-      if (isValidProductRowUuid(fromRaw)) {
-        rowIds.push(String(fromRaw).trim())
-        continue
-      }
-      if (isValidProductRowUuid(gv?.supabaseRowId)) {
-        rowIds.push(String(gv.supabaseRowId).trim())
-        continue
-      }
-      if (isValidProductRowUuid(gv?.id)) rowIds.push(String(gv.id).trim())
-    }
-  }
-  return [...new Set(rowIds)]
-}
-
 export function collectMaHangCodesForVariantIds(products, variantIds) {
   if (!Array.isArray(products) || !Array.isArray(variantIds) || variantIds.length === 0) return []
   const idSet = new Set(variantIds.map((x) => String(x)))
@@ -771,66 +711,11 @@ export function collectMaHangCodesForVariantIds(products, variantIds) {
 }
 
 /**
- * Xóa dòng `public.products` theo UUID (`id`) — bắt buộc sau khi gỡ ĐVT khỏi UI.
- * @param {Iterable<string>} rowIdList
- */
-export async function deleteProductsFromSupabaseByRowIds(rowIdList) {
-  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const sb = getSupabaseClient()
-  if (!sb) {
-    const err = new Error('[deleteProductsFromSupabaseByRowIds] Không tạo được Supabase client.')
-    notifySupabasePersistFailure(err)
-    return { ok: false, error: err }
-  }
-  const uniq = [
-    ...new Set(
-      [...rowIdList]
-        .map((x) => String(x ?? '').trim())
-        .filter((x) => isValidProductRowUuid(x))
-    ),
-  ]
-  if (uniq.length === 0) return { ok: true, deleted: 0 }
-  try {
-    // eslint-disable-next-line no-console
-    console.log('Payload xóa Supabase (products.delete theo id):', uniq)
-    const chunks = []
-    for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
-      chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
-    }
-    const results = await Promise.all(
-      chunks.map((chunk) =>
-        sb.from(PRODUCTS_TABLE).delete().in(PRODUCT_ROW_ID_COLUMN, chunk).select(PRODUCT_ROW_ID_COLUMN)
-      )
-    )
-    let deleted = 0
-    for (const { data, error } of results) {
-      if (error) {
-        const err = new Error(
-          describeCatalogPersistError(error) ||
-            `Xóa bảng «products»: lỗi (${PRODUCT_ROW_ID_COLUMN}). Kiểm tra RLS policy DELETE.`
-        )
-        err.cause = error
-        notifySupabasePersistFailure(err, error)
-        return { ok: false, error, deleted }
-      }
-      deleted += Array.isArray(data) ? data.length : chunk.length
-    }
-    console.log(`[deleteProductsFromSupabaseByRowIds] Đã xóa ${deleted} dòng.`)
-    return { ok: true, deleted }
-  } catch (error) {
-    notifySupabasePersistFailure(error)
-    return { ok: false, error }
-  }
-}
-
-/**
- * Xóa biến thể đã gỡ khỏi catalog: ưu tiên `id` UUID, fallback `ma_hang`.
+ * Xóa biến thể đã gỡ khỏi catalog theo `ma_hang`.
  * @param {Array<object>} products — catalog trước khi sửa
  * @param {Array<string|number>} variantIds
  */
 export async function deleteProductsForRemovedVariants(products, variantIds) {
-  const rowIds = collectProductRowIdsForVariantIds(products, variantIds)
-  if (rowIds.length > 0) return deleteProductsFromSupabaseByRowIds(rowIds)
   const codes = collectMaHangCodesForVariantIds(products, variantIds)
   return deleteProductsFromSupabaseByMaHang(codes)
 }
@@ -894,12 +779,8 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
   const sb = getSupabaseClient()
   if (!sb || !flatDisplayVariants?.length) return { ok: true }
   const rawRows = flatDisplayVariants.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
-  const eligible = dedupeRowsByProductRowId(
-    rawRows.filter(
-      (r) =>
-        String(r[PRODUCT_ROW_ID_COLUMN] ?? '').trim().length > 0 &&
-        String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0
-    )
+  const eligible = dedupeRowsByProductCode(
+    rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   )
   try {
     if (eligible.length === 0) {
@@ -1196,11 +1077,8 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
   const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
-  const dbRowId = row[PRODUCT_ROW_ID_COLUMN]
-  const stableUuid = isValidProductRowUuid(dbRowId) ? String(dbRowId).trim() : null
   return {
-    id: stableUuid ?? `sb-${rowIndex}-${code}`,
-    supabaseRowId: stableUuid,
+    id: `sb-${rowIndex}-${code}`,
     code,
     barcode,
     name,
