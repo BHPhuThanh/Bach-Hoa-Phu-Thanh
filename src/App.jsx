@@ -4628,6 +4628,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setShowConversionByLineId({})
   }, [activeSellOrderId])
 
+  /** Sau thanh toán / chuyển tab đơn: neo focus vào ô tìm (tránh F1 bị Chrome Help chiếm). */
+  useEffect(() => {
+    if (activeView !== 'sell' || !activeSellOrderId) return
+    const tid = window.setTimeout(() => {
+      const el =
+        headerSearchRef.current ?? document.getElementById('pos-header-search')
+      if (el && typeof el.focus === 'function') {
+        try {
+          el.focus({ preventScroll: true })
+        } catch {
+          el.focus()
+        }
+      }
+    }, 50)
+    return () => window.clearTimeout(tid)
+  }, [activeSellOrderId, activeView])
+
   useEffect(() => {
     if (!scannerMenuOpen) return
     const onDoc = (e) => {
@@ -4885,6 +4902,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   useEffect(() => {
     const onKey = (e) => {
+      if (activeView === 'sell' && e.key === 'F1') {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+
       if (activeView !== 'sell' || products.length === 0) return
       if (shortcutsHelpOpen) return
       if (eInvoiceModalOpen) return
@@ -4893,34 +4915,38 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (batchPickLineId) return
       if (posMaHhLienConvModal) return
       if (e.key === 'F1') {
-        e.preventDefault()
         handleThanhToanRef.current()
         return
       }
       if (e.key === 'F2') {
         e.preventDefault()
+        e.stopPropagation()
         cashGivenInputRef.current?.focus()
         cashGivenInputRef.current?.select()
         return
       }
       if (e.key === 'F3') {
         e.preventDefault()
+        e.stopPropagation()
         openHeaderSearchPanel()
         return
       }
       if (e.key === 'F10') {
         e.preventDefault()
+        e.stopPropagation()
         customerSearchRef.current?.focus()
         customerSearchRef.current?.select()
         return
       }
       if (e.key === 'F4') {
         e.preventDefault()
+        e.stopPropagation()
         addSellTab()
         return
       }
       if (e.key === 'Home') {
         e.preventDefault()
+        e.stopPropagation()
         if (cart.length === 0) return
         const id =
           selectedCartLineId != null && cart.some((l) => l.lineId === selectedCartLineId)
@@ -4937,16 +4963,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       if (e.key === 'F11' && e.altKey && activeSellerId === 'admin') {
         e.preventDefault()
+        e.stopPropagation()
         setScannerMenuOpen((open) => !open)
         return
       }
       if (e.key === 'F11' && !e.altKey && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation()
         if (activeSellerId === 'admin') {
-          e.preventDefault()
           openDoanhThuInNewTab()
           return
         }
-        e.preventDefault()
         setScannerMenuOpen((open) => !open)
         return
       }
@@ -4954,12 +4981,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (isEditableFieldElement(ae)) return
       if (e.key === 'F6') {
         e.preventDefault()
+        e.stopPropagation()
         focusDiscountField()
         return
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [
     activeView,
     products.length,
