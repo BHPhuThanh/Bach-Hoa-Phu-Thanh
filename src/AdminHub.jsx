@@ -148,6 +148,7 @@ import {
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
+  deleteProductsForRemovedVariants,
   updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
 import { fetchInboundInvoices, insertInboundHistoryEntry } from './supabaseInboundHistory.js'
@@ -1860,21 +1861,33 @@ export default function AdminHub({
   }, [revenueReadOnly])
 
   const replaceCatalogGroupFromModal = useCallback(
-    (anchorVariantId, replacements) => {
+    async (anchorVariantId, replacements, opts = {}) => {
       if (onReplaceCatalogGroup) {
-        onReplaceCatalogGroup(anchorVariantId, replacements)
-        return
+        return onReplaceCatalogGroup(anchorVariantId, replacements, opts)
       }
-      if (!catalogList?.length) return
+      if (!catalogList?.length) return { ok: false }
+      const deletedVariantIds = Array.isArray(opts.deletedVariantIds)
+        ? opts.deletedVariantIds.map(String).filter(Boolean)
+        : []
       const flat = catalogList.flatMap((p) => p.groupVariants || [p])
       const target = flat.find((v) => v.id === anchorVariantId)
-      if (!target) return
+      if (!target) return { ok: false }
       const root = normalizeGroupRoot(target.code, target.linkedMasterCode)
       const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
       const merged = [...kept, ...replacements]
       const nextDisplay = buildDisplayCatalog(merged)
       const fn = standaloneCatalog?.fileName || catalogFileName || ''
-      void persistStandaloneProducts(nextDisplay, fn)
+      if (deletedVariantIds.length > 0 && isSupabaseConfigured()) {
+        const dr = await deleteProductsForRemovedVariants(catalogList, deletedVariantIds)
+        if (!dr.ok && !dr.skipped) {
+          window.alert(
+            describeCatalogPersistError(dr.error) ||
+              'Không xóa được đơn vị tính đã gỡ trên Supabase.'
+          )
+          return { ok: false }
+        }
+      }
+      return persistStandaloneProducts(nextDisplay, fn, replacements)
     },
     [onReplaceCatalogGroup, catalogList, standaloneCatalog, catalogFileName, persistStandaloneProducts]
   )
@@ -1911,6 +1924,7 @@ export default function AdminHub({
       anchorVariantId: String(anchor),
       lines: createUnitModalLinesFromVariants(ctx.variants),
       source: 'goods',
+      deletedVariantIds: [],
     })
   }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
 
@@ -1983,7 +1997,8 @@ export default function AdminHub({
         dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
       })
       recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
-      onUpdateCatalogVariant(goodsDetailVariant.id, patch)
+      const saveR = await onUpdateCatalogVariant(goodsDetailVariant.id, patch)
+      if (saveR?.ok === false) return
       triggerGoodsSaveSuccessToast()
       return
     }
@@ -2540,10 +2555,11 @@ export default function AdminHub({
       anchorVariantId: String(soloActiveVariantId),
       lines: createUnitModalLinesFromVariants(ctx.variants),
       source: 'solo',
+      deletedVariantIds: [],
     })
   }, [catalogList, soloActiveVariantId])
 
-  const commitUnitModal = useCallback(() => {
+  const commitUnitModal = useCallback(async () => {
     if (!unitModal) return
 
     const ctx = findVariantContext(catalogList, unitModal.anchorVariantId)
@@ -2599,7 +2615,20 @@ export default function AdminHub({
     }))
     // eslint-disable-next-line no-console
     console.log('[Đơn vị tính · Lưu] Payload gửi Supabase (nhóm biến thể / products):', supabasePayload)
-    replaceCatalogGroupFromModal(unitModal.anchorVariantId, replacements)
+    const nextIds = new Set(replacements.map((v) => String(v.id)))
+    const implicitDeleted = ctx.variants
+      .map((v) => String(v.id))
+      .filter((id) => !nextIds.has(id))
+    const deletedVariantIds = [
+      ...new Set([
+        ...(unitModal.deletedVariantIds || []).map(String),
+        ...implicitDeleted,
+      ]),
+    ]
+    const saveR = await replaceCatalogGroupFromModal(unitModal.anchorVariantId, replacements, {
+      deletedVariantIds,
+    })
+    if (saveR && saveR.ok === false) return
     triggerGoodsSaveSuccessToast()
     const mainId = replacements[0]?.id
     const src = unitModal.source
@@ -2715,12 +2744,16 @@ export default function AdminHub({
   const removeUnitModalRowKey = useCallback((key) => {
     setUnitModal((m) => {
       if (!m || m.lines.length <= 1) return m
+      const removed = m.lines.find((r) => r.key === key)
+      const deletedVariantIds = [...(m.deletedVariantIds || [])]
+      const vid = String(removed?.variantId ?? '').trim()
+      if (vid) deletedVariantIds.push(vid)
       let lines = m.lines.filter((r) => r.key !== key)
       lines = sortUnitModalLinesByConversion(lines)
       const bc = parseMoneyDigitsVi(lines[0].cost)
       const bp = parseMoneyDigitsVi(lines[0].price)
       lines = propagateBaseUnitMoney(lines, bc, bp)
-      return { ...m, lines }
+      return { ...m, lines, deletedVariantIds }
     })
   }, [])
 
