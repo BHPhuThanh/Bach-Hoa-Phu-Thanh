@@ -2177,6 +2177,7 @@ function buildHeaderSuggestRows(
   productsByBarcodeKey = null
 ) {
   const q = String(queryRaw ?? '').trim()
+  if (!q) return []
   const catalogList = resolvePosSuggestCatalog({
     products,
     posScanList,
@@ -3250,21 +3251,30 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [sellWholesaleMode, showPosScanToastMessage]
   )
 
-  /** Sau khi thêm hàng: xóa ô tìm (tránh dropdown che màn hình), focus lại để quét tiếp. */
-  const afterSuccessfulHeaderAdd = useCallback(() => {
+  /** Hard block: xóa ô tìm, đóng dropdown, blur — không mở gợi ý khi input trống. */
+  const hardDismissHeaderSearch = useCallback(() => {
+    headerSearchDebounceRef.current?.cancel()
+    setHeaderSearchDebounced('')
     setHeaderSearch('')
     setHeaderSearchInvalid(false)
     setHeaderSearchFeedback('')
     setHeaderSuggestOpen(false)
-    focusHeaderSearchSelect()
-  }, [focusHeaderSearchSelect])
-
-  /** Đóng gợi ý / lỗi ô tìm — không focus (dùng sau quét camera để không bật bàn phím ảo). */
-  const dismissHeaderSearchChromeNoFocus = useCallback(() => {
-    setHeaderSearchInvalid(false)
-    setHeaderSearchFeedback('')
-    setHeaderSuggestOpen(false)
+    setHeaderHighlightIndex(0)
+    setHeaderSuggestUnitPickByProductId({})
+    queueMicrotask(() => {
+      headerSearchRef.current?.blur()
+    })
   }, [])
+
+  /** Sau khi thêm hàng (quét / Enter): không focus lại — tránh dropdown bung khi input rỗng. */
+  const afterSuccessfulHeaderAdd = useCallback(() => {
+    hardDismissHeaderSearch()
+  }, [hardDismissHeaderSearch])
+
+  /** Đóng gợi ý sau quét camera — cùng hard dismiss (blur, không focus). */
+  const dismissHeaderSearchChromeNoFocus = useCallback(() => {
+    hardDismissHeaderSearch()
+  }, [hardDismissHeaderSearch])
 
   const markBarcodeNotFound = useCallback((raw, opts) => {
     const skipFocus = opts && opts.skipFocus === true
@@ -3277,12 +3287,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [focusHeaderSearchSelect])
 
   const clearPosSearchForScan = useCallback(() => {
-    setHeaderSearch('')
-    setHeaderSearchInvalid(false)
-    setHeaderSearchFeedback('')
+    hardDismissHeaderSearch()
     setLastBarcodeReceived('')
-    setHeaderSuggestOpen(false)
-  }, [])
+  }, [hardDismissHeaderSearch])
+
+  useEffect(() => {
+    if (headerSearch.trim().length === 0) setHeaderSuggestOpen(false)
+  }, [headerSearch])
 
   scanHeaderRef.current = {
     setHeaderSearch,
@@ -3670,8 +3681,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return [...s].sort((a, b) => a.localeCompare(b, 'vi'))
   }, [products])
 
+  const headerSearchHasQuery = headerSearch.trim().length > 0
+
   const showPosQuickAddProductRow =
-    activeView === 'sell' && activeSellerId === 'admin' && headerSuggestOpen
+    activeView === 'sell' &&
+    activeSellerId === 'admin' &&
+    headerSearchHasQuery &&
+    headerSuggestOpen
 
   const posHeaderSuggestTotalRows =
     (showPosQuickAddProductRow ? 1 : 0) + headerSuggestRows.length
@@ -5341,24 +5357,33 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     placeholder="Thêm sản phẩm vào đơn (F3)"
                     value={headerSearch}
                     role="combobox"
-                    aria-expanded={headerSuggestOpen}
+                    aria-expanded={headerSearchHasQuery && headerSuggestOpen}
                     aria-invalid={headerSearchInvalid}
-                    aria-controls="pos-header-suggest-list"
+                    aria-controls={
+                      headerSearchHasQuery && headerSuggestOpen
+                        ? 'pos-header-suggest-list'
+                        : undefined
+                    }
                     aria-autocomplete="list"
                     aria-activedescendant={
-                      headerSuggestOpen && posHeaderSuggestTotalRows > 0
+                      headerSearchHasQuery &&
+                      headerSuggestOpen &&
+                      posHeaderSuggestTotalRows > 0
                         ? `pos-header-sug-${headerHighlightIndex}`
                         : undefined
                     }
                     onInput={(e) => {
-                      setHeaderSearch(e.currentTarget.value)
+                      const v = e.currentTarget.value
+                      setHeaderSearch(v)
                       setHeaderHighlightIndex(0)
                       setHeaderSuggestUnitPickByProductId({})
                       setHeaderSearchInvalid(false)
                       setHeaderSearchFeedback('')
-                      setHeaderSuggestOpen(true)
+                      setHeaderSuggestOpen(v.trim().length > 0)
                     }}
-                    onFocus={() => setHeaderSuggestOpen(true)}
+                    onFocus={() => {
+                      if (headerSearch.trim().length > 0) setHeaderSuggestOpen(true)
+                    }}
                     onKeyDown={onHeaderSearchKeyDown}
                     autoComplete="off"
                     aria-label="Thêm sản phẩm vào đơn"
@@ -5376,7 +5401,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       onClick={() => {
                         clearPosSearchForScan()
                         setHeaderHighlightIndex(0)
-                        headerSearchRef.current?.focus()
                       }}
                     >
                       ×
@@ -5405,7 +5429,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     {headerSearchFeedback}
                   </p>
                 ) : null}
-                {headerSuggestOpen && (
+                {headerSearchHasQuery && headerSuggestOpen && (
                   <div
                     className="pos-header-suggest"
                     id="pos-header-suggest-list"
