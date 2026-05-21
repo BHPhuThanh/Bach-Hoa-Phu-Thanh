@@ -103,6 +103,7 @@ import {
   collectMaHangCodesForVariantIds,
   deleteProductsFromSupabaseByMaHang,
   deleteProductsForRemovedVariants,
+  updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
@@ -2894,10 +2895,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist]
   )
 
-  const handleUpdateCatalogVariant = useCallback(
-    async (variantId, patch) => {
+  const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
-      const prev = productsRef.current
+      const previousState = productsRef.current
+      const prev = previousState
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
@@ -2968,57 +2969,85 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ? String(patch.code ?? '').trim()
         : oldCode
 
+      startTransition(() => setProducts(next))
+
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
-        startTransition(() => setProducts(next))
         return { ok: true }
       }
 
-      try {
-        if (isSupabaseConfigured()) {
-          if (oldCode && newCode && oldCode !== newCode) {
-            const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
-            if (!dr.ok && !dr.skipped) {
-              throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
+      const prevBrand = String(target?.brand ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const newBrand = Object.prototype.hasOwnProperty.call(patch, 'brand')
+        ? String(patch.brand ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+        : prevBrand
+
+      void (async () => {
+        try {
+          if (isSupabaseConfigured()) {
+            if (
+              String(newCode ?? '').trim() &&
+              newBrand !== prevBrand
+            ) {
+              const br = await updateProductThuongHieuByMaHang(newCode, newBrand)
+              if (!br.ok) {
+                throw (
+                  br.error ||
+                  new Error('Không lưu được thương hiệu lên Supabase (bảng «products»).')
+                )
+              }
+            }
+            if (oldCode && newCode && oldCode !== newCode) {
+              const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
+              if (!dr.ok && !dr.skipped) {
+                throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
+              }
+            }
+            const flatNext = flattenDisplayCatalogToVariants(next)
+            const idSet = new Set(affectedIdsForLog.map(String))
+            const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
+            if (upsertOnly.length === 0) {
+              throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
+            }
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+              upsertOnlyVariants: upsertOnly,
+            })
+            if (!r.ok) {
+              throw r.error || new Error(describeCatalogPersistError(r.error))
+            }
+            await applyServerCatalogAfterPersist()
+            if (inventoryLogMeta) {
+              try {
+                const rows = buildStockAdjustInventoryLogRows(
+                  inventoryLogMeta.prev,
+                  inventoryLogMeta.next,
+                  inventoryLogMeta.ids,
+                  { staffName: staffNameForInventoryLog() }
+                )
+                await insertInventoryLogRows(rows)
+              } catch (logErr) {
+                console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
+              }
+            }
+            setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
+          } else {
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            if (!r.ok) {
+              throw r.error || new Error(describeCatalogPersistError(r.error))
             }
           }
-          const flatNext = flattenDisplayCatalogToVariants(next)
-          const idSet = new Set(affectedIdsForLog.map(String))
-          const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
-          if (upsertOnly.length === 0) {
-            throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
-          }
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-            upsertOnlyVariants: upsertOnly,
-          })
-          if (!r.ok) {
-            throw r.error || new Error(describeCatalogPersistError(r.error))
-          }
-          await applyServerCatalogAfterPersist()
-          if (inventoryLogMeta) {
-            try {
-              const rows = buildStockAdjustInventoryLogRows(
-                inventoryLogMeta.prev,
-                inventoryLogMeta.next,
-                inventoryLogMeta.ids,
-                { staffName: staffNameForInventoryLog() }
-              )
-              await insertInventoryLogRows(rows)
-            } catch (logErr) {
-              console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
-            }
-          }
-          setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
-        } else {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          startTransition(() => setProducts(next))
+        } catch (e) {
+          console.error('[App] handleUpdateCatalogVariant', e)
+          startTransition(() => setProducts(previousState))
+          showPosPersistErrorToast(
+            `Lỗi đồng bộ: ${describeCatalogPersistError(e)}. Đã hoàn tác thay đổi!`
+          )
         }
-        return { ok: true }
-      } catch (e) {
-        console.error('[App] handleUpdateCatalogVariant', e)
-        showPosPersistErrorToast(e)
-        await applyServerCatalogAfterPersist()
-        return { ok: false, error: e }
-      }
+      })()
+
+      return { ok: true }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
@@ -3057,19 +3086,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
    * @param {{ inboundInventoryMeta?: { documentCode?: string, inboundOrderId?: string } }} [opts]
    * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
    */
-  const handleBulkPatchCatalogVariants = useCallback(async (patches, opts) => {
+  const handleBulkPatchCatalogVariants = useCallback((patches, opts) => {
     const valid = (patches || []).filter(
       (e) => e && e.variantId != null && e.patch && typeof e.patch === 'object'
     )
     const updatedCount = valid.length
-    if (updatedCount === 0) return { ok: true, updatedCount: 0 }
+    if (updatedCount === 0) return Promise.resolve({ ok: true, updatedCount: 0 })
 
     if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
-      return {
+      return Promise.resolve({
         ok: false,
         updatedCount: 0,
         error: 'Danh mục chưa tải xong hoặc chưa sẵn sàng để ghi.',
-      }
+      })
     }
 
     const snapshotPrev = bulkCatalogProductsRef.current
@@ -3088,47 +3117,43 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setProducts(next)
     })
 
-    try {
-      const flatNext = flattenDisplayCatalogToVariants(next)
-      const touchedIds = new Set(valid.map((e) => String(e.variantId)))
-      const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-      const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-        upsertOnlyVariants,
-      })
-      if (!r.ok) {
+    return (async () => {
+      try {
+        const flatNext = flattenDisplayCatalogToVariants(next)
+        const touchedIds = new Set(valid.map((e) => String(e.variantId)))
+        const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+        const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+          upsertOnlyVariants,
+        })
+        if (!r.ok) {
+          const msg =
+            describeCatalogPersistError(r.error) || 'Không ghi được danh mục lên Supabase.'
+          startTransition(() => {
+            setProducts(snapshotPrev)
+          })
+          showPosPersistErrorToast(`Lỗi đồng bộ: ${msg}. Đã hoàn tác thay đổi!`)
+          return { ok: false, updatedCount: 0, error: msg }
+        }
+        setCatalogSupabaseDirty(false)
+        await applyServerCatalogAfterPersist()
+        if (ib?.documentCode && isSupabaseConfigured()) {
+          const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
+            documentCode: ib.documentCode,
+            inboundOrderId: ib.inboundOrderId ?? '',
+            staffName: staffNameForInventoryLog(),
+          })
+          await insertInventoryLogRows(logRows)
+        }
+        return { ok: true, updatedCount }
+      } catch (e) {
         startTransition(() => {
           setProducts(snapshotPrev)
         })
-        showPosPersistErrorToast(r.error)
-        return {
-          ok: false,
-          updatedCount: 0,
-          error: msg,
-        }
+        const msg = describeCatalogPersistError(e)
+        showPosPersistErrorToast(`Lỗi đồng bộ: ${msg}. Đã hoàn tác thay đổi!`)
+        return { ok: false, updatedCount: 0, error: msg }
       }
-      setCatalogSupabaseDirty(false)
-      await applyServerCatalogAfterPersist()
-      if (ib?.documentCode && isSupabaseConfigured()) {
-        const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
-          documentCode: ib.documentCode,
-          inboundOrderId: ib.inboundOrderId ?? '',
-          staffName: staffNameForInventoryLog(),
-        })
-        await insertInventoryLogRows(logRows)
-      }
-      return { ok: true, updatedCount }
-    } catch (e) {
-      startTransition(() => {
-        setProducts(snapshotPrev)
-      })
-      const msg = e instanceof Error ? e.message : String(e)
-      showPosPersistErrorToast(msg)
-      return {
-        ok: false,
-        updatedCount: 0,
-        error: msg,
-      }
-    }
+    })()
   }, [applyServerCatalogAfterPersist, showPosPersistErrorToast])
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */

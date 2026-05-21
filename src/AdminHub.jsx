@@ -505,6 +505,14 @@ function safeMoney(n) {
   return Number.isFinite(x) ? x : 0
 }
 
+/** Snapshot danh sách phiếu nhập để rollback khi đồng bộ Supabase thất bại. */
+function snapshotInboundOrdersList(rows) {
+  return (rows || []).map((o) => ({
+    ...o,
+    lines: (o.lines || []).map((l) => ({ ...l })),
+  }))
+}
+
 /** Số lượng trả từ ô nhập (hỗ trợ số thập phân), không vượt max. */
 function parseReturnQtyDraft(raw, maxVal) {
   const max = Math.max(0, Number(maxVal) || 0)
@@ -1928,7 +1936,7 @@ export default function AdminHub({
     })
   }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
 
-  const saveGoodsDetail = useCallback(async () => {
+  const saveGoodsDetail = useCallback(() => {
     if (!goodsDetailVariant || !goodsDetailDraft) return
     const nameTrim = String(goodsDetailDraft.name ?? '')
       .replace(/\u00A0/g, ' ')
@@ -1965,23 +1973,6 @@ export default function AdminHub({
       afterQty: patch.stockQty,
     })
     if (onUpdateCatalogVariant) {
-      const prevBrand = String(goodsDetailVariant.brand ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (
-        isSupabaseConfigured() &&
-        String(patch.code ?? '').trim() &&
-        patch.brand !== prevBrand
-      ) {
-        const br = await updateProductThuongHieuByMaHang(patch.code, patch.brand)
-        if (!br.ok) {
-          window.alert(
-            describeCatalogPersistError(br.error) ||
-              'Không lưu được thương hiệu lên Supabase. Kiểm tra mạng và quyền ghi bảng «products».'
-          )
-          return
-        }
-      }
       // eslint-disable-next-line no-console
       console.log('[Hàng hóa · Lưu] Payload gửi Supabase (cột bảng products):', {
         variantId: goodsDetailVariant.id,
@@ -1997,8 +1988,7 @@ export default function AdminHub({
         dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
       })
       recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
-      const saveR = await onUpdateCatalogVariant(goodsDetailVariant.id, patch)
-      if (saveR?.ok === false) return
+      onUpdateCatalogVariant(goodsDetailVariant.id, patch)
       triggerGoodsSaveSuccessToast()
       return
     }
@@ -2908,6 +2898,8 @@ export default function AdminHub({
 
   /* —— Nhập hàng —— */
   const [inboundOrders, setInboundOrders] = useState(() => loadInboundOrdersFromStorage())
+  const inboundOrdersRef = useRef(inboundOrders)
+  inboundOrdersRef.current = inboundOrders
   const [inboundRemoteLoading, setInboundRemoteLoading] = useState(false)
   const [inboundQ, setInboundQ] = useState('')
   const inboundDebounced = useDebounced(inboundQ)
@@ -3075,8 +3067,6 @@ export default function AdminHub({
   const inboundCompletePendingRef = useRef(null)
   /** Modal xác nhận ghi đè giá vốn khi Hoàn thành. */
   const [inboundCostDiffModal, setInboundCostDiffModal] = useState(null)
-  /** Đang ghi danh mục sau nhập hàng (Supabase / standalone) — chặn đóng tab cho đến khi xong. */
-  const [inboundCatalogBulkSaving, setInboundCatalogBulkSaving] = useState(false)
   const [inboundFormLines, setInboundFormLines] = useState([])
   const inboundFormLinesRef = useRef(inboundFormLines)
   inboundFormLinesRef.current = inboundFormLines
@@ -3269,7 +3259,6 @@ export default function AdminHub({
   }, [])
 
   const closeInboundForm = useCallback(() => {
-    if (inboundCatalogBulkSaving) return
     if (standaloneInboundCreate) {
       window.close()
       return
@@ -3278,7 +3267,7 @@ export default function AdminHub({
     setActiveTab((prev) => (prev === TAB_INBOUND_DRAFT ? TAB_INBOUND : prev))
     resetInboundForm()
     syncHubUrlToMainTab(TAB_INBOUND)
-  }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab, inboundCatalogBulkSaving])
+  }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab])
 
   const addInboundFormLine = useCallback((product, variant) => {
     const hint = brandThuongHieuFromProductVariant(product, variant)
@@ -3922,31 +3911,39 @@ export default function AdminHub({
   )
 
   /**
-   * Hoàn thành phiếu mới: await catalog + Supabase (hàng đợi), rồi cập nhật list + đóng form.
+   * Hoàn thành phiếu mới: cập nhật UI + đóng form ngay; đồng bộ Supabase nền (rollback nếu lỗi).
    */
   const finalizeInboundCompleted = useCallback(
-    async (fulfillmentPatches) => {
-      const row = buildInboundOrderPayload('completed')
-      try {
-        const saved = await queueInboundCompletion(() =>
-          persistInboundFulfillmentAndHistory(row, fulfillmentPatches)
-        )
-        startTransition(() => {
-          setInboundOrders((prev) => {
-            const rest = prev.filter((o) => o.id !== saved.id)
-            return [saved, ...rest]
+    (fulfillmentPatches) => {
+      const row = normalizeInboundRow(buildInboundOrderPayload('completed'))
+      const ordersSnapshot = snapshotInboundOrdersList(inboundOrdersRef.current)
+      startTransition(() => {
+        setInboundOrders((prev) => {
+          const rest = prev.filter((o) => o.id !== row.id)
+          return [row, ...rest]
+        })
+      })
+      completeInboundFlowReturnToList()
+      triggerInboundSaveToast()
+
+      void queueInboundCompletion(() =>
+        persistInboundFulfillmentAndHistory(row, fulfillmentPatches)
+      )
+        .then((saved) => {
+          startTransition(() => {
+            setInboundOrders((prev) => {
+              const rest = prev.filter((o) => o.id !== saved.id && o.id !== row.id)
+              return [saved, ...rest]
+            })
           })
         })
-        completeInboundFlowReturnToList()
-        triggerInboundSaveToast()
-        return true
-      } catch (e) {
-        console.error('[inbound] Hoàn thành phiếu mới thất bại', e)
-        const msg = e instanceof Error ? e.message : String(e)
-        setInboundSyncErrMsg(msg)
-        window.alert(`Lỗi: ${msg}`)
-        return false
-      }
+        .catch((e) => {
+          console.error('[inbound] Hoàn thành phiếu mới thất bại', e)
+          setInboundOrders(ordersSnapshot)
+          setInboundSyncErrMsg(
+            `Lỗi đồng bộ: ${e instanceof Error ? e.message : String(e)}. Đã hoàn tác thay đổi!`
+          )
+        })
     },
     [
       buildInboundOrderPayload,
@@ -3958,11 +3955,11 @@ export default function AdminHub({
   )
 
   const finalizeInboundEditCompleted = useCallback(
-    async (fulfillmentPatches) => {
+    (fulfillmentPatches) => {
       const editId = inboundFormEditOrderId
-      if (!editId) return false
+      if (!editId) return
       const prevRow = inboundOrders.find((o) => o.id === editId)
-      if (!prevRow) return false
+      if (!prevRow) return
       const payload = buildInboundOrderPayload('completed')
       const merged = normalizeInboundRow({
         ...payload,
@@ -3971,27 +3968,35 @@ export default function AdminHub({
         createdAtMs: prevRow.createdAtMs,
         status: computeInboundStatusAfterLines(payload.lines),
       })
-      try {
-        const saved = await queueInboundCompletion(() =>
-          persistInboundFulfillmentAndHistory(merged, fulfillmentPatches)
-        )
-        startTransition(() => {
-          setInboundOrders((prev) => {
-            const rest = prev.filter((o) => o.id !== editId)
-            return [saved, ...rest]
-          })
-          setInboundFormEditOrderId(null)
+      const ordersSnapshot = snapshotInboundOrdersList(inboundOrdersRef.current)
+      startTransition(() => {
+        setInboundOrders((prev) => {
+          const rest = prev.filter((o) => o.id !== editId)
+          return [merged, ...rest]
         })
-        completeInboundFlowReturnToList()
-        triggerInboundSaveToast()
-        return true
-      } catch (e) {
-        console.error('[inbound] Hoàn thành sửa phiếu thất bại', e)
-        const msg = e instanceof Error ? e.message : String(e)
-        setInboundSyncErrMsg(msg)
-        window.alert(`Lỗi: ${msg}`)
-        return false
-      }
+        setInboundFormEditOrderId(null)
+      })
+      completeInboundFlowReturnToList()
+      triggerInboundSaveToast()
+
+      void queueInboundCompletion(() =>
+        persistInboundFulfillmentAndHistory(merged, fulfillmentPatches)
+      )
+        .then((saved) => {
+          startTransition(() => {
+            setInboundOrders((prev) => {
+              const rest = prev.filter((o) => o.id !== editId && o.id !== saved.id)
+              return [saved, ...rest]
+            })
+          })
+        })
+        .catch((e) => {
+          console.error('[inbound] Hoàn thành sửa phiếu thất bại', e)
+          setInboundOrders(ordersSnapshot)
+          setInboundSyncErrMsg(
+            `Lỗi đồng bộ: ${e instanceof Error ? e.message : String(e)}. Đã hoàn tác thay đổi!`
+          )
+        })
     },
     [
       inboundFormEditOrderId,
@@ -4021,7 +4026,6 @@ export default function AdminHub({
       return
     }
     void (async () => {
-      setInboundCatalogBulkSaving(true)
       try {
         const linesSnap = inboundFormLinesRef.current
         const catSnap = catalogForInboundRef.current
@@ -4061,12 +4065,12 @@ export default function AdminHub({
           return
         }
         if (inboundFormEditOrderId) {
-          await finalizeInboundEditCompleted(patches)
+          finalizeInboundEditCompleted(patches)
         } else {
-          await finalizeInboundCompleted(patches)
+          finalizeInboundCompleted(patches)
         }
-      } finally {
-        setInboundCatalogBulkSaving(false)
+      } catch (e) {
+        console.error('[inbound] handleInboundCompleteClick', e)
       }
     })()
   }, [
@@ -4078,12 +4082,11 @@ export default function AdminHub({
   ])
 
   const cancelInboundCostDiffModal = useCallback(() => {
-    if (inboundCatalogBulkSaving) return
     inboundCompletePendingRef.current = null
     setInboundCostDiffModal(null)
-  }, [inboundCatalogBulkSaving])
+  }, [])
 
-  const confirmInboundCostSave = useCallback(async () => {
+  const confirmInboundCostSave = useCallback(() => {
     const pending = inboundCompletePendingRef.current
     if (!pending?.patches?.length) {
       cancelInboundCostDiffModal()
@@ -4103,47 +4106,49 @@ export default function AdminHub({
 
     if (mode === 'detail_edit' && mergedRow && oldRow) {
       const oid = mergedRow.id
+      const ordersSnapshot = snapshotInboundOrdersList(inboundOrdersRef.current)
       closeInboundCostDiffModal()
-      setInboundCatalogBulkSaving(true)
-      try {
-        const saved = await queueInboundCompletion(() =>
-          persistInboundFulfillmentAndHistory(mergedRow, patches)
-        )
-        startTransition(() => {
-          setInboundOrders((p) => {
-            const rest = p.filter((o) => o.id !== oid)
-            return [saved, ...rest]
-          })
-          setInboundDetailLineDrafts((prev) => {
-            if (!prev[oid]) return prev
-            const n = { ...prev }
-            delete n[oid]
-            return n
+      startTransition(() => {
+        setInboundOrders((p) => {
+          const rest = p.filter((o) => o.id !== oid)
+          return [normalizeInboundRow(mergedRow), ...rest]
+        })
+        setInboundDetailLineDrafts((prev) => {
+          if (!prev[oid]) return prev
+          const n = { ...prev }
+          delete n[oid]
+          return n
+        })
+      })
+      completeInboundFlowReturnToList()
+      triggerInboundSaveToast()
+
+      void queueInboundCompletion(() =>
+        persistInboundFulfillmentAndHistory(mergedRow, patches)
+      )
+        .then((saved) => {
+          startTransition(() => {
+            setInboundOrders((p) => {
+              const rest = p.filter((o) => o.id !== oid && o.id !== saved.id)
+              return [saved, ...rest]
+            })
           })
         })
-        completeInboundFlowReturnToList()
-        triggerInboundSaveToast()
-      } catch (e) {
-        console.error('[inbound] Hoàn thành chi tiết phiếu thất bại', e)
-        const msg = e instanceof Error ? e.message : String(e)
-        window.alert(`Lỗi: ${msg}`)
-        setInboundSyncErrMsg(msg)
-      } finally {
-        setInboundCatalogBulkSaving(false)
-      }
+        .catch((e) => {
+          console.error('[inbound] Hoàn thành chi tiết phiếu thất bại', e)
+          setInboundOrders(ordersSnapshot)
+          setInboundSyncErrMsg(
+            `Lỗi đồng bộ: ${e instanceof Error ? e.message : String(e)}. Đã hoàn tác thay đổi!`
+          )
+        })
       return
     }
 
     closeInboundCostDiffModal()
-    setInboundCatalogBulkSaving(true)
-    try {
-      if (mode === 'edit') {
-        await finalizeInboundEditCompleted(patches)
-      } else {
-        await finalizeInboundCompleted(patches)
-      }
-    } finally {
-      setInboundCatalogBulkSaving(false)
+    if (mode === 'edit') {
+      finalizeInboundEditCompleted(patches)
+    } else {
+      finalizeInboundCompleted(patches)
     }
   }, [
     finalizeInboundCompleted,
@@ -4214,14 +4219,10 @@ export default function AdminHub({
       }
       if (inboundCostDiffModal) {
         e.preventDefault()
-        if (!inboundCatalogBulkSaving) cancelInboundCostDiffModal()
+        cancelInboundCostDiffModal()
         return
       }
       if (inboundReturnModal || inboundCancelModal) {
-        e.preventDefault()
-        return
-      }
-      if (inboundCatalogBulkSaving) {
         e.preventDefault()
         return
       }
@@ -4237,7 +4238,6 @@ export default function AdminHub({
     inboundReturnModal,
     inboundCancelModal,
     cancelInboundCostDiffModal,
-    inboundCatalogBulkSaving,
   ])
 
   useEffect(() => {
@@ -4248,7 +4248,6 @@ export default function AdminHub({
       if (
         supplierModalOpen ||
         inboundCostDiffModal ||
-        inboundCatalogBulkSaving ||
         inboundReturnModal ||
         inboundCancelModal
       )
@@ -4264,7 +4263,6 @@ export default function AdminHub({
     inboundQuickPickOpen,
     supplierModalOpen,
     inboundCostDiffModal,
-    inboundCatalogBulkSaving,
     inboundReturnModal,
     inboundCancelModal,
   ])
@@ -4569,35 +4567,40 @@ export default function AdminHub({
         return
       }
       appendInboundCostChangeNotifications(diffs)
-      setInboundCatalogBulkSaving(true)
-      void (async () => {
-        try {
-          const saved = await queueInboundCompletion(() =>
-            persistInboundFulfillmentAndHistory(merged, patches)
-          )
+      const ordersSnapshot = snapshotInboundOrdersList(inboundOrdersRef.current)
+      startTransition(() => {
+        setInboundOrders((p) => {
+          const rest = p.filter((o) => o.id !== oid)
+          return [merged, ...rest]
+        })
+        setInboundDetailLineDrafts((prev) => {
+          if (!prev[oid]) return prev
+          const n = { ...prev }
+          delete n[oid]
+          return n
+        })
+      })
+      completeInboundFlowReturnToList()
+      triggerInboundSaveToast()
+
+      void queueInboundCompletion(() =>
+        persistInboundFulfillmentAndHistory(merged, patches)
+      )
+        .then((saved) => {
           startTransition(() => {
             setInboundOrders((p) => {
-              const rest = p.filter((o) => o.id !== oid)
+              const rest = p.filter((o) => o.id !== oid && o.id !== saved.id)
               return [saved, ...rest]
             })
-            setInboundDetailLineDrafts((prev) => {
-              if (!prev[oid]) return prev
-              const n = { ...prev }
-              delete n[oid]
-              return n
-            })
           })
-          completeInboundFlowReturnToList()
-          triggerInboundSaveToast()
-        } catch (e) {
+        })
+        .catch((e) => {
           console.error('[inbound] Lưu chi tiết phiếu thất bại', e)
-          const msg = e instanceof Error ? e.message : String(e)
-          window.alert(`Lỗi: ${msg}`)
-          setInboundSyncErrMsg(msg)
-        } finally {
-          setInboundCatalogBulkSaving(false)
-        }
-      })()
+          setInboundOrders(ordersSnapshot)
+          setInboundSyncErrMsg(
+            `Lỗi đồng bộ: ${e instanceof Error ? e.message : String(e)}. Đã hoàn tác thay đổi!`
+          )
+        })
     })()
   }, [
     activeTab,
@@ -8694,7 +8697,6 @@ export default function AdminHub({
                 <button
                   type="button"
                   className="ah-inbound-footer-btn ah-inbound-footer-btn--draft"
-                  disabled={inboundCatalogBulkSaving}
                   onClick={() => saveInboundForm('saved_temp')}
                 >
                   Lưu tạm
@@ -8703,7 +8705,6 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
-                disabled={inboundCatalogBulkSaving}
                 onClick={() => saveInboundForm('completed')}
               >
                 Hoàn thành
@@ -8841,24 +8842,11 @@ export default function AdminHub({
         onSubmit={submitNewEmployeeAdmin}
       />
 
-      {inboundCatalogBulkSaving && (
-        <div
-          className="ah-inbound-catalog-saving-overlay"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <span className="ah-inbound-catalog-saving-spinner" aria-hidden />
-          <span className="ah-inbound-catalog-saving-msg">Đang hoàn thành phiếu nhập…</span>
-        </div>
-      )}
-
       {inboundCostDiffModal && (
         <div
           className="ah-iv-modal-backdrop"
           role="presentation"
           onClick={(e) => {
-            if (inboundCatalogBulkSaving) return
             if (e.target === e.currentTarget) cancelInboundCostDiffModal()
           }}
         >
@@ -8904,7 +8892,6 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--ghost"
-                disabled={inboundCatalogBulkSaving}
                 onClick={cancelInboundCostDiffModal}
               >
                 Hủy
@@ -8912,8 +8899,7 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--primary"
-                disabled={inboundCatalogBulkSaving}
-                onClick={() => void confirmInboundCostSave()}
+                onClick={confirmInboundCostSave}
               >
                 Cập nhật
               </button>
