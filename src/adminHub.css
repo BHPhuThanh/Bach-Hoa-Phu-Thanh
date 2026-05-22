@@ -1340,12 +1340,22 @@
     gap: 0.65rem;
   }
 
+  /* Mobile: toolbar không cắt dropdown Thương hiệu */
+  .ah-goods-catalog-shell > .ah-goods-toolbar,
+  .ah-goods-catalog-shell > .ah-goods-catalog-toolbar {
+    overflow: visible;
+    position: relative;
+    z-index: 45;
+  }
+
   /* Mobile row1: Tìm kiếm → Thương hiệu → Nút hành động */
-  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1 {
+  .ah-goods-toolbar__row1--with-brand {
+    display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
     flex-wrap: nowrap;
+    width: 100%;
   }
 
   .ah-goods-toolbar__row1-brand {
@@ -1357,18 +1367,33 @@
     flex: 0 0 auto;
     order: 1;
     box-sizing: border-box;
+    position: relative;
+    z-index: 46;
+    overflow: visible;
   }
 
   .ah-goods-toolbar__row1-brand .ah-goods-toolbar-brand-wrap,
-  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-input-wrap {
+  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-input-wrap,
+  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-wrap {
+    display: block;
     width: 100%;
     max-width: none;
     box-sizing: border-box;
+    overflow: visible;
   }
 
   .ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-input {
+    display: block;
     width: 100%;
     box-sizing: border-box;
+  }
+
+  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-dropdown {
+    z-index: 100040;
+  }
+
+  .ah-goods-filter-field--brand-drawer {
+    display: none;
   }
 
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
@@ -1835,14 +1860,37 @@
   max-height: none;
 }
 
-.ah-goods-toolbar__row1 {
+/* Mobile-first: cột; PC: hàng ngang (Thương hiệu row1 ẩn — dùng drawer row2) */
+.ah-goods-toolbar__row1,
+.ah-goods-toolbar__row1--with-brand {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
   justify-content: flex-start;
-  gap: 0.5rem 0.75rem;
+  gap: 8px;
   width: 100%;
   box-sizing: border-box;
+}
+
+.ah-goods-toolbar__row1-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 46;
+  overflow: visible;
+}
+
+.ah-goods-toolbar__row1-brand .ah-goods-toolbar-brand-wrap,
+.ah-goods-toolbar__row1-brand .ah-inbound-ncc-input-wrap,
+.ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-wrap {
+  display: block;
+  width: 100%;
+  max-width: none;
+  overflow: visible;
 }
 
 /* PC: đúng 2 nhánh — ô tìm (max ~400px / max-w-md) | cụm nút (margin-left: auto) */
@@ -1854,24 +1902,31 @@
   box-sizing: border-box;
 }
 
-/* Mobile: hàng tìm + Lọc cạnh nhau (chỉ khi có class --with-loc) */
-.ah-goods-toolbar__row1-search--with-loc {
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 0.5rem;
-  width: 100%;
-  max-width: none;
+/* Mobile: hàng tìm + Lọc cạnh nhau */
+@media (max-width: 768px) {
+  .ah-goods-toolbar__row1-search--with-loc {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.5rem;
+    width: 100%;
+    max-width: none;
+  }
+
+  .ah-goods-toolbar__row1-search--with-loc .ah-goods-search-combo {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+  }
 }
 
-.ah-goods-toolbar__row1-search--with-loc .ah-goods-search-combo {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
-}
-
-.ah-goods-toolbar__row1-brand {
-  display: none;
+@media (min-width: 769px) {
+  .ah-goods-toolbar__row1-search--with-loc {
+    display: block;
+    flex: 0 0 auto;
+    width: 400px;
+    max-width: min(100%, 28rem);
+  }
 }
 
 .ah-goods-toolbar__row1-actions {
@@ -1963,6 +2018,21 @@
 }
 
 @media (min-width: 769px) {
+  .ah-goods-toolbar__row1--with-brand {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .ah-goods-toolbar__row1-brand {
+    display: none;
+  }
+
+  .ah-goods-filter-field--brand-drawer {
+    display: flex;
+  }
+
   .ah-goods-toolbar--v2 .ah-goods-toolbar-filters--row2.ah-goods-filters-drawer-target {
     position: static;
     transform: none !important;
