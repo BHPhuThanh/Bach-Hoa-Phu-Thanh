@@ -124,10 +124,10 @@ import {
   markAllLocalNotificationsRead,
 } from './appNotificationsStorage.js'
 import {
-  evaluateLowStockNotificationsAfterSale,
   fetchNotificationsFromSupabase,
   markAllNotificationsReadInSupabase,
   NOTIFICATIONS_BUMP_EVENT,
+  runLowStockAlertsInBackground,
 } from './notificationsRepository.js'
 import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
 import {
@@ -2565,6 +2565,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [supabaseNotifications, setSupabaseNotifications] = useState([])
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false)
 
+  const mergeCreatedLowStockNotifications = useCallback((lowStockRows) => {
+    if (!lowStockRows?.length) return
+    setSupabaseNotifications((p) => {
+      const ids = new Set(lowStockRows.map((x) => x.id))
+      const rest = p.filter((x) => !ids.has(x.id))
+      return [...lowStockRows, ...rest]
+    })
+  }, [])
+
   const refreshSupabaseNotifications = useCallback(async () => {
     if (!isSupabaseConfigured()) {
       setSupabaseNotifications([])
@@ -2919,7 +2928,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       })()
     },
-    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
   const handleAppendCatalogVariants = useCallback((variants) => {
@@ -3102,6 +3111,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               } catch (logErr) {
                 console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
               }
+              runLowStockAlertsInBackground(
+                {
+                  catalog: next,
+                  touchedVariantIds: inventoryLogMeta.ids,
+                  userId: activeSellerId,
+                },
+                mergeCreatedLowStockNotifications
+              )
             }
             setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
           } else {
@@ -3121,7 +3138,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       return { ok: true }
     },
-    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
   const showPosScanToastMessage = useCallback((text) => {
@@ -3301,7 +3318,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       })
     },
-    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
@@ -4708,18 +4725,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               if (isSupabaseConfigured()) {
                 const invRows = buildPosSaleInventoryLogRows(prev, next, order, cartForStock)
                 await insertInventoryLogRows(invRows)
-                const lowStockRows = await evaluateLowStockNotificationsAfterSale({
-                  catalog: next,
-                  touchedVariantIds,
-                  userId: activeSellerId,
-                })
-                if (lowStockRows.length > 0) {
-                  setSupabaseNotifications((p) => {
-                    const ids = new Set(lowStockRows.map((x) => x.id))
-                    const rest = p.filter((x) => !ids.has(x.id))
-                    return [...lowStockRows, ...rest]
-                  })
-                }
+                runLowStockAlertsInBackground(
+                  {
+                    catalog: next,
+                    touchedVariantIds,
+                    userId: activeSellerId,
+                  },
+                  mergeCreatedLowStockNotifications
+                )
               }
             }
           })()
@@ -4775,6 +4788,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     applyServerCatalogAfterPersist,
     activeSeller,
     activeSellerId,
+    mergeCreatedLowStockNotifications,
     isCheckingOut,
     finalizePaidSellOrder,
   ])
@@ -5292,7 +5306,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         </button>
         {lowStockAlertOpen ? (
           <div
-            className="app-header-low-stock-popover"
+            className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
             role="dialog"
             aria-label="Thông báo"
           >

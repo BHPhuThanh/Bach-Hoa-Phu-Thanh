@@ -114,7 +114,7 @@ export async function hasUnreadLowStockNotificationToday({ variantId, userId }) 
     .eq('is_read', false)
     .eq('variant_id', vid)
     .gte('created_at', start.toISOString())
-    .ilike('message', '%sắp hết hàng%')
+    .ilike('message', '%chạm đáy%')
     .limit(1)
 
   const uid = String(userId ?? '').trim()
@@ -210,12 +210,13 @@ export async function evaluateLowStockNotificationsAfterSale({
     if (already) continue
 
     const name = String(v.name ?? v.nameRaw ?? v.code ?? '').trim() || '—'
+    const code = String(v.code ?? '').trim()
     const qtyLabel = formatRoundedStockQtyVi(stock)
-    const message = `Sản phẩm ${name} sắp hết hàng (Chỉ còn ${qtyLabel}). Vui lòng nhập thêm!`
+    const message = `Sản phẩm ${name} đã chạm đáy tồn kho an toàn (Còn lại: ${qtyLabel}). Hãy nhập thêm hàng!`
 
     const inserted = await insertNotificationRow({
       variantId: vid,
-      productCode: String(v.code ?? '').trim(),
+      productCode: code,
       message,
       userId,
       kind: NOTIFICATION_KIND_LOW_STOCK,
@@ -224,4 +225,20 @@ export async function evaluateLowStockNotificationsAfterSale({
   }
 
   return created
+}
+
+/**
+ * Chạy nền — không chặn luồng bán hàng / lưu kho.
+ * @param {{ catalog: object[], touchedVariantIds: Iterable<string>, userId?: string }} params
+ * @param {(rows: AppNotificationRow[]) => void} [onCreated]
+ */
+export function runLowStockAlertsInBackground({ catalog, touchedVariantIds, userId }, onCreated) {
+  if (!isSupabaseConfigured() || !catalog?.length) return
+  void evaluateLowStockNotificationsAfterSale({ catalog, touchedVariantIds, userId })
+    .then((rows) => {
+      if (rows?.length) onCreated?.(rows)
+    })
+    .catch((err) => {
+      console.warn('[notifications] low stock background', err)
+    })
 }
