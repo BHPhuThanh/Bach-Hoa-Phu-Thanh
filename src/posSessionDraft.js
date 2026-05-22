@@ -62,3 +62,32 @@ export function sellOrdersHaveAnyCartLines(sellOrders) {
   if (!Array.isArray(sellOrders)) return false
   return sellOrders.some((o) => Array.isArray(o?.cart) && o.cart.length > 0)
 }
+
+/**
+ * Ghi hoặc xóa nháp POS ngay (không debounce) — sau thanh toán để F5 không khôi phục giỏ đã chốt.
+ */
+export function syncPosSessionDraftNow({
+  products,
+  fileName,
+  sellOrders,
+  activeSellOrderId,
+  sellWholesaleMode,
+}) {
+  if (!products?.length) {
+    clearPosSessionDraft()
+    return
+  }
+  if (!sellOrdersHaveAnyCartLines(sellOrders)) {
+    clearPosSessionDraft()
+    return
+  }
+  savePosSessionDraft({
+    v: POS_SESSION_DRAFT_VERSION,
+    fingerprint: buildCatalogFingerprint(products, fileName),
+    fileName: fileName || '',
+    sellOrders,
+    activeSellOrderId,
+    sellWholesaleMode: sellWholesaleMode === true,
+    savedAt: new Date().toISOString(),
+  })
+}

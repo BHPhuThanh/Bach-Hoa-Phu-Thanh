@@ -21,6 +21,7 @@ import {
   loadPosSessionDraft,
   savePosSessionDraft,
   sellOrdersHaveAnyCartLines,
+  syncPosSessionDraftNow,
 } from './posSessionDraft.js'
 import {
   E_INVOICE_TEMPLATE_CODE,
@@ -2550,6 +2551,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   })
   productsRef.current = products
   sellOrdersRef.current = sellOrders
+  const activeSellOrderIdRef = useRef(activeSellOrderId)
+  activeSellOrderIdRef.current = activeSellOrderId
+  const sellWholesaleModeRef = useRef(sellWholesaleMode)
+  sellWholesaleModeRef.current = sellWholesaleMode
 
   const codeSalesMapRef = useRef({})
   codeSalesMapRef.current = codeSalesMap
@@ -3703,7 +3708,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const fp = buildCatalogFingerprint(products, fileName)
     const t = window.setTimeout(() => {
       if (posDraftHydratingRef.current) return
-      if (!sellOrdersHaveAnyCartLines(sellOrders)) {
+      const orders = sellOrdersRef.current
+      const activeId = activeSellOrderIdRef.current
+      const wholesale = sellWholesaleModeRef.current
+      if (!sellOrdersHaveAnyCartLines(orders)) {
         clearPosSessionDraft()
         return
       }
@@ -3711,9 +3719,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         v: POS_SESSION_DRAFT_VERSION,
         fingerprint: fp,
         fileName,
-        sellOrders,
-        activeSellOrderId,
-        sellWholesaleMode,
+        sellOrders: orders,
+        activeSellOrderId: activeId,
+        sellWholesaleMode: wholesale,
         savedAt: new Date().toISOString(),
       })
     }, 420)
@@ -3822,22 +3830,49 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setActiveSellOrderId(o.id)
   }, [])
 
-  /** Sau thanh toán: lọc đơn đã bán, active = đơn liền trước trong mảng (theo id, không index UI). */
+  /** Sau thanh toán: xóa đơn khỏi state + LocalStorage ngay; giỏ/form sạch cho đơn tiếp theo. */
   const finalizePaidSellOrder = useCallback((paidOrderId) => {
     setCartQtyDraftByLine({})
     setCartPriceDraftByLine({})
-    setSellOrders((orders) => {
-      const currentIndex = orders.findIndex((o) => o.id === paidOrderId)
-      if (currentIndex < 0) return orders
-      const remainingOrders = orders.filter((o) => o.id !== paidOrderId)
-      if (remainingOrders.length === 0) {
-        const fresh = createEmptySellOrder()
-        setActiveSellOrderId(fresh.id)
-        return [fresh]
-      }
-      const nextActiveOrder = remainingOrders[currentIndex - 1] || remainingOrders[0]
-      setActiveSellOrderId(nextActiveOrder.id)
-      return remainingOrders
+    setShowConversionByLineId({})
+    setBatchPickLineId(null)
+    setBatchDraftId(null)
+    setBatchSearch('')
+    setUnitPickerProduct(null)
+    setSelectedCartLineId(null)
+    setHeaderSearch('')
+    setHeaderSearchDebounced('')
+    setHeaderSearchInvalid(false)
+    setHeaderSearchFeedback('')
+
+    const orders = sellOrdersRef.current
+    const currentIndex = orders.findIndex((o) => o.id === paidOrderId)
+    if (currentIndex < 0) return
+
+    const remainingOrders = orders.filter((o) => o.id !== paidOrderId)
+    let nextOrders
+    let nextActiveId
+    if (remainingOrders.length === 0) {
+      const fresh = createEmptySellOrder()
+      nextOrders = [fresh]
+      nextActiveId = fresh.id
+    } else {
+      nextOrders = remainingOrders
+      const nextActiveOrder = remainingOrders[currentIndex - 1] ?? remainingOrders[0]
+      nextActiveId = nextActiveOrder.id
+    }
+
+    sellOrdersRef.current = nextOrders
+    setSellOrders(nextOrders)
+    setActiveSellOrderId(nextActiveId)
+    setSellWholesaleMode(false)
+
+    syncPosSessionDraftNow({
+      products: productsRef.current,
+      fileName: fileNameRef.current,
+      sellOrders: nextOrders,
+      activeSellOrderId: nextActiveId,
+      sellWholesaleMode: false,
     })
   }, [])
 
@@ -4780,7 +4815,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
     if (orderSaved) {
       finalizePaidSellOrder(paidOrderId)
-      setSellWholesaleMode(false)
     }
   } finally {
     setIsCheckingOut(false)
