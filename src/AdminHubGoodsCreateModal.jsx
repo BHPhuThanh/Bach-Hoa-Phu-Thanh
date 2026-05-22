@@ -936,6 +936,7 @@ export default function AdminHubGoodsCreateModal({
                 ×
               </button>
             </header>
+            <div className="ah-unit-modal__scroll">
             <div className="ah-unit-modal__body">
               <section className="ah-unit-modal__section">
                 <h3 className="ah-unit-modal__section-title">Đơn vị tính</h3>
@@ -943,7 +944,7 @@ export default function AdminHubGoodsCreateModal({
                   Thêm đơn vị bán hoặc nhập như chai, lốc, thùng. Đặt công thức quy đổi để tính nhanh giá và tồn
                   kho. Ví dụ: 1 lốc = 6 chai, 1 thùng = 24 chai.
                 </p>
-                <div className="ah-unit-modal__chips" aria-label="Danh sách đơn vị">
+                <div className="ah-unit-modal__chips ah-unit-modal__chips--desktop" aria-label="Danh sách đơn vị">
                   {gcUnitModalSortedRows.map((row, idx) => {
                     const baseLbl =
                       normalizeCatalogUnitLabel(gcUnitModalSortedRows[0]?.unitLabel || '').trim() ||
@@ -1010,7 +1011,11 @@ export default function AdminHubGoodsCreateModal({
                     )
                   })}
                 </div>
-                <button type="button" className="ah-unit-modal__add-inline" onClick={addUnitModalRow}>
+                <button
+                  type="button"
+                  className="ah-unit-modal__add-inline ah-unit-modal__add-inline--desktop"
+                  onClick={addUnitModalRow}
+                >
                   + Thêm đơn vị
                 </button>
               </section>
@@ -1025,7 +1030,7 @@ export default function AdminHubGoodsCreateModal({
                   lệ quy đổi (có thể chỉnh tay từng dòng).
                 </p>
                 <div className="admin-hub-table-wrap ah-unit-modal__table-wrap">
-                  <table className="admin-hub-table ah-unit-modal__table">
+                  <table className="admin-hub-table ah-unit-modal__table ah-unit-modal__table--desktop">
                     <thead>
                       <tr>
                         <th>Đơn vị</th>
@@ -1142,6 +1147,7 @@ export default function AdminHubGoodsCreateModal({
                   </table>
                 </div>
               </section>
+            </div>
             </div>
             <footer className="ah-unit-modal__foot">
               <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={closeGcUnitModal}>

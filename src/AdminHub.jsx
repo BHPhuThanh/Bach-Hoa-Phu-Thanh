@@ -1869,33 +1869,56 @@ export default function AdminHub({
   }, [revenueReadOnly])
 
   const replaceCatalogGroupFromModal = useCallback(
-    async (anchorVariantId, replacements, opts = {}) => {
+    (anchorVariantId, replacements, opts = {}) => {
       if (onReplaceCatalogGroup) {
         return onReplaceCatalogGroup(anchorVariantId, replacements, opts)
       }
-      if (!catalogList?.length) return { ok: false }
+      if (!catalogList?.length) return Promise.resolve({ ok: false })
       const deletedVariantIds = Array.isArray(opts.deletedVariantIds)
         ? opts.deletedVariantIds.map(String).filter(Boolean)
         : []
       const flat = catalogList.flatMap((p) => p.groupVariants || [p])
       const target = flat.find((v) => v.id === anchorVariantId)
-      if (!target) return { ok: false }
+      if (!target) return Promise.resolve({ ok: false })
       const root = normalizeGroupRoot(target.code, target.linkedMasterCode)
       const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
       const merged = [...kept, ...replacements]
       const nextDisplay = buildDisplayCatalog(merged)
       const fn = standaloneCatalog?.fileName || catalogFileName || ''
-      if (deletedVariantIds.length > 0 && isSupabaseConfigured()) {
-        const dr = await deleteProductsForRemovedVariants(catalogList, deletedVariantIds)
-        if (!dr.ok && !dr.skipped) {
+      const prevStandalone = standaloneCatalog
+
+      setStandaloneCatalog({
+        products: nextDisplay,
+        fileName: fn,
+      })
+
+      return (async () => {
+        try {
+          if (deletedVariantIds.length > 0 && isSupabaseConfigured()) {
+            const dr = await deleteProductsForRemovedVariants(catalogList, deletedVariantIds)
+            if (!dr.ok && !dr.skipped) {
+              throw (
+                dr.error ||
+                new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
+              )
+            }
+          }
+          const pr = await persistStandaloneProducts(nextDisplay, fn, replacements)
+          if (!pr?.ok) {
+            throw new Error(pr?.error || 'Không lưu được đơn vị tính.')
+          }
+          return { ok: true }
+        } catch (e) {
+          console.error('[replaceCatalogGroupFromModal]', e)
+          if (prevStandalone) {
+            setStandaloneCatalog(prevStandalone)
+          }
           window.alert(
-            describeCatalogPersistError(dr.error) ||
-              'Không xóa được đơn vị tính đã gỡ trên Supabase.'
+            `Lỗi đồng bộ: ${describeCatalogPersistError(e)}. Đã hoàn tác thay đổi đơn vị tính!`
           )
-          return { ok: false }
+          return { ok: false, error: e }
         }
-      }
-      return persistStandaloneProducts(nextDisplay, fn, replacements)
+      })()
     },
     [onReplaceCatalogGroup, catalogList, standaloneCatalog, catalogFileName, persistStandaloneProducts]
   )
@@ -2549,7 +2572,7 @@ export default function AdminHub({
     })
   }, [catalogList, soloActiveVariantId])
 
-  const commitUnitModal = useCallback(async () => {
+  const commitUnitModal = useCallback(() => {
     if (!unitModal) return
 
     const ctx = findVariantContext(catalogList, unitModal.anchorVariantId)
@@ -2615,15 +2638,14 @@ export default function AdminHub({
         ...implicitDeleted,
       ]),
     ]
-    const saveR = await replaceCatalogGroupFromModal(unitModal.anchorVariantId, replacements, {
-      deletedVariantIds,
-    })
-    if (saveR && saveR.ok === false) return
-    triggerGoodsSaveSuccessToast()
     const mainId = replacements[0]?.id
     const src = unitModal.source
     const oldAnchor = unitModal.anchorVariantId
+    const anchorForSave = unitModal.anchorVariantId
+
     setUnitModal(null)
+    triggerGoodsSaveSuccessToast()
+
     if (mainId && src === 'goods') {
       setGoodsDetailSelectedVid(mainId)
       goodsDraftSeedKeyRef.current = ''
@@ -2636,6 +2658,8 @@ export default function AdminHub({
       delete soloGoodsDraftSeedFpByVariantIdRef.current[mainId]
       setActiveTab(toSoloProductTabId(mainId))
     }
+
+    void replaceCatalogGroupFromModal(anchorForSave, replacements, { deletedVariantIds })
   }, [
     unitModal,
     catalogList,
@@ -9229,7 +9253,7 @@ export default function AdminHub({
                   Thêm đơn vị bán hoặc nhập như chai, lốc, thùng. Đặt công thức quy đổi để tính nhanh giá và tồn
                   kho. Ví dụ: 1 lốc = 6 chai, 1 thùng = 24 chai.
                 </p>
-                <div className="ah-unit-modal__chips" aria-label="Danh sách đơn vị">
+                <div className="ah-unit-modal__chips ah-unit-modal__chips--desktop" aria-label="Danh sách đơn vị">
                   {unitModalSortedRows.map((row, idx) => {
                     const baseLbl =
                       normalizeCatalogUnitLabel(unitModalSortedRows[0]?.unitLabel || '').trim() ||
@@ -9296,7 +9320,11 @@ export default function AdminHub({
                     )
                   })}
                 </div>
-                <button type="button" className="ah-unit-modal__add-inline" onClick={addUnitModalRow}>
+                <button
+                  type="button"
+                  className="ah-unit-modal__add-inline ah-unit-modal__add-inline--desktop"
+                  onClick={addUnitModalRow}
+                >
                   + Thêm đơn vị
                 </button>
               </section>
@@ -9430,64 +9458,138 @@ export default function AdminHub({
                     className="ah-unit-modal__dvt-cards-mobile"
                     aria-label="Đơn vị tính: nhập liệu dạng thẻ (mobile)"
                   >
-                    {unitModalSortedRows.map((row, idx) => (
-                      <div key={`um-mob-${row.key}`} className="ah-unit-modal__dvt-card">
-                        <div className="ah-unit-modal__dvt-card-field">
-                          <label htmlFor={`um-mob-u-${row.key}`}>Tên ĐVT</label>
-                          <input
-                            id={`um-mob-u-${row.key}`}
-                            className="ah-goods-card-input ah-unit-modal__cell-input"
-                            value={row.unitLabel}
-                            onChange={(e) =>
-                              setUnitModal((m) =>
-                                m
-                                  ? {
-                                      ...m,
-                                      lines: m.lines.map((r) =>
-                                        r.key === row.key ? { ...r, unitLabel: e.target.value } : r
-                                      ),
-                                    }
-                                  : m
-                              )
-                            }
-                          />
+                    {unitModalSortedRows.map((row, idx) => {
+                      const baseLbl =
+                        normalizeCatalogUnitLabel(unitModalSortedRows[0]?.unitLabel || '').trim() ||
+                        'đơn vị cơ bản'
+                      const conv = parsePositiveConversion(row.conversion) ?? 1
+                      const sub =
+                        idx === 0
+                          ? 'Đơn vị cơ bản'
+                          : `1 ${normalizeCatalogUnitLabel(row.unitLabel) || '…'} = ${conv} ${baseLbl}`
+                      return (
+                        <div
+                          key={`um-mob-${row.key}`}
+                          className={`ah-unit-modal__dvt-card${idx === 0 ? ' ah-unit-modal__dvt-card--base' : ''}`}
+                        >
+                          <p className="ah-unit-modal__dvt-card-meta">{sub}</p>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-u-${row.key}`}>Tên ĐVT</label>
+                            <input
+                              id={`um-mob-u-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                              value={row.unitLabel}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-c-${row.key}`}>Quy đổi</label>
+                            <input
+                              id={`um-mob-c-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                              inputMode="decimal"
+                              value={row.conversion}
+                              onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                            />
+                          </div>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-code-${row.key}`}>Mã hàng</label>
+                            <input
+                              id={`um-mob-code-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                              value={row.code}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, code: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-bc-${row.key}`}>Mã vạch</label>
+                            <input
+                              id={`um-mob-bc-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                              value={row.barcode}
+                              onChange={(e) =>
+                                setUnitModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        lines: m.lines.map((r) =>
+                                          r.key === row.key ? { ...r, barcode: e.target.value } : r
+                                        ),
+                                      }
+                                    : m
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-cost-${row.key}`}>Giá vốn</label>
+                            <input
+                              id={`um-mob-cost-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money ah-unit-modal__touch-input"
+                              inputMode="numeric"
+                              value={row.cost}
+                              onChange={(e) =>
+                                updateUnitModalCostAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </div>
+                          <div className="ah-unit-modal__dvt-card-field">
+                            <label htmlFor={`um-mob-p-${row.key}`}>Giá bán</label>
+                            <input
+                              id={`um-mob-p-${row.key}`}
+                              className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money ah-unit-modal__touch-input"
+                              inputMode="numeric"
+                              value={row.price}
+                              onChange={(e) =>
+                                updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                              }
+                            />
+                          </div>
+                          {idx > 0 ? (
+                            <button
+                              type="button"
+                              className="ah-unit-modal__row-remove ah-unit-modal__row-remove--mobile-block"
+                              onClick={() => removeUnitModalRowKey(row.key)}
+                            >
+                              Xóa đơn vị
+                            </button>
+                          ) : null}
                         </div>
-                        <div className="ah-unit-modal__dvt-card-field">
-                          <label htmlFor={`um-mob-c-${row.key}`}>Giá trị quy đổi</label>
-                          <input
-                            id={`um-mob-c-${row.key}`}
-                            className="ah-goods-card-input ah-unit-modal__cell-input"
-                            inputMode="decimal"
-                            value={row.conversion}
-                            onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
-                          />
-                        </div>
-                        <div className="ah-unit-modal__dvt-card-field">
-                          <label htmlFor={`um-mob-p-${row.key}`}>Giá bán</label>
-                          <input
-                            id={`um-mob-p-${row.key}`}
-                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money"
-                            inputMode="numeric"
-                            value={row.price}
-                            onChange={(e) =>
-                              updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
-                            }
-                          />
-                        </div>
-                        {idx > 0 ? (
-                          <button
-                            type="button"
-                            className="ah-unit-modal__row-remove ah-unit-modal__row-remove--mobile-block"
-                            onClick={() => removeUnitModalRowKey(row.key)}
-                          >
-                            Xóa dòng ĐVT
-                          </button>
-                        ) : null}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
+                  <button
+                    type="button"
+                    className="ah-unit-modal__add-inline ah-unit-modal__add-inline--mobile"
+                    onClick={addUnitModalRow}
+                  >
+                    + Thêm đơn vị
+                  </button>
                 </div>
               </section>
+            </div>
             </div>
             <footer className="ah-unit-modal__foot">
               <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={closeUnitModal}>
@@ -9497,7 +9599,6 @@ export default function AdminHub({
                 Xong
               </button>
             </footer>
-            </div>
           </div>
         </div>
       )}

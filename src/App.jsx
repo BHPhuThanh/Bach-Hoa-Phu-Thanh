@@ -2804,9 +2804,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   )
 
   const handleReplaceCatalogGroup = useCallback(
-    async (anchorVariantId, replacements, opts = {}) => {
+    (anchorVariantId, replacements, opts = {}) => {
       if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) {
-        return { ok: false }
+        return Promise.resolve({ ok: false })
       }
       const deletedVariantIds = Array.isArray(opts.deletedVariantIds)
         ? opts.deletedVariantIds.map(String).filter(Boolean)
@@ -2818,38 +2818,47 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         replacements,
       })
 
+      startTransition(() => setProducts(next))
+
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
-        startTransition(() => setProducts(next))
-        return { ok: true }
+        return Promise.resolve({ ok: true })
       }
 
-      try {
-        if (isSupabaseConfigured()) {
-          if (deletedVariantIds.length > 0) {
-            const dr = await deleteProductsForRemovedVariants(prev, deletedVariantIds)
+      return (async () => {
+        try {
+          if (isSupabaseConfigured()) {
+            const deleteTask =
+              deletedVariantIds.length > 0
+                ? deleteProductsForRemovedVariants(prev, deletedVariantIds)
+                : Promise.resolve({ ok: true, skipped: true })
+            const persistTask = persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+              upsertOnlyVariants: replacements,
+            })
+            const [dr, r] = await Promise.all([deleteTask, persistTask])
             if (!dr.ok && !dr.skipped) {
               throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
             }
+            if (!r.ok) {
+              throw r.error || new Error(describeCatalogPersistError(r.error))
+            }
+            await applyServerCatalogAfterPersist()
+            setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
+          } else {
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+            if (!r.ok) {
+              throw r.error || new Error(describeCatalogPersistError(r.error))
+            }
           }
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-            upsertOnlyVariants: replacements,
-          })
-          if (!r.ok) {
-            throw r.error || new Error(describeCatalogPersistError(r.error))
-          }
-          await applyServerCatalogAfterPersist()
-          setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
-        } else {
-          await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-          startTransition(() => setProducts(next))
+          return { ok: true }
+        } catch (e) {
+          console.error('[App] handleReplaceCatalogGroup', e)
+          startTransition(() => setProducts(prev))
+          showPosPersistErrorToast(
+            `Lỗi đồng bộ: ${describeCatalogPersistError(e)}. Đã hoàn tác thay đổi đơn vị tính!`
+          )
+          return { ok: false, error: e }
         }
-        return { ok: true }
-      } catch (e) {
-        console.error('[App] handleReplaceCatalogGroup', e)
-        showPosPersistErrorToast(e)
-        await applyServerCatalogAfterPersist()
-        return { ok: false, error: e }
-      }
+      })()
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
