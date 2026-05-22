@@ -3820,7 +3820,7 @@ a.ah-inbound-line-code-link:hover {
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0.75rem 1rem 0.9rem;
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
 }
 
 .ah-inbound-ret-table {
@@ -3924,6 +3924,70 @@ a.ah-inbound-line-code-link:hover {
 .ah-return-qty-input:focus {
   outline: none;
   border-bottom-color: #0369a1;
+}
+
+/* Panel trả hàng (nền tối): chữ sáng, ô SL dễ đọc */
+.ah-inbound-float-panel__card .ah-return-prod-name {
+  color: #f8fafc;
+}
+
+.ah-inbound-float-panel__card .ah-return-prod-sub {
+  color: #94a3b8;
+}
+
+.ah-inbound-float-panel__card .ah-return-prod-code {
+  color: #7dd3fc;
+}
+
+.ah-inbound-float-panel__card .ah-inbound-ret-table th,
+.ah-inbound-float-panel__card .ah-inbound-ret-table td {
+  border-bottom-color: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+.ah-inbound-float-panel__card .ah-inbound-ret-table th {
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.55);
+}
+
+.ah-inbound-float-panel__card .ah-return-qty-input--panel,
+.ah-inbound-float-panel__card .ah-return-qty-input {
+  color: #fff;
+  background: #374151;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  box-sizing: border-box;
+}
+
+.ah-inbound-float-panel__card .ah-return-qty-input--panel::placeholder,
+.ah-inbound-float-panel__card .ah-return-qty-input::placeholder {
+  color: #9ca3af;
+}
+
+.ah-inbound-float-panel__card .ah-return-qty-input--panel:focus,
+.ah-inbound-float-panel__card .ah-return-qty-input:focus {
+  outline: none;
+  border-color: #38bdf8;
+  color: #fff;
+  background: #3f4f63;
+}
+
+.ah-inbound-float-panel__card .ah-return-qty-sep,
+.ah-inbound-float-panel__card .ah-return-qty-max {
+  color: #cbd5e1;
+}
+
+.ah-inbound-float-panel__card .ah-return-qty-cap {
+  color: #94a3b8;
+}
+
+.ah-inbound-float-panel__card .ah-return-strike {
+  color: #94a3b8;
+}
+
+.ah-inbound-float-panel__card .ah-inbound-ret-code {
+  color: #7dd3fc;
 }
 
 .ah-return-qty-sep {
@@ -8466,4 +8530,280 @@ li.ah-inbound-suggest-empty {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+}
+
+/* —— Responsive: Đơn hàng / Doanh thu — card trên mobile —— */
+@media (max-width: 767px) {
+  .ah-responsive-table-wrap {
+    overflow-x: visible;
+    border: none;
+    background: transparent;
+  }
+
+  .ah-responsive-table-wrap .ah-responsive-table,
+  .ah-responsive-table-wrap .ah-responsive-table thead,
+  .ah-responsive-table-wrap .ah-responsive-table tbody,
+  .ah-responsive-table-wrap .ah-responsive-table tfoot {
+    display: block;
+    width: 100%;
+  }
+
+  .ah-responsive-table-wrap .ah-responsive-table thead {
+    display: none;
+  }
+
+  .ah-responsive-table-wrap .ah-responsive-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    margin: 0;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    background: #161b22;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row:hover {
+    background: #1a222c;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.35rem 0.75rem;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    text-align: left;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #94a3b8;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td[data-label='']::before {
+    display: none;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td.ah-num,
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td.pos-return-modal-td-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td.pos-return-modal-td-act {
+    justify-content: stretch;
+    margin-top: 0.25rem;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-card-row td.pos-return-modal-td-act .pos-return-modal-pick-btn {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-empty {
+    display: block;
+    border: 1px dashed #334155;
+    border-radius: 10px;
+    padding: 1rem;
+    background: #161b22;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-empty td {
+    display: block;
+    text-align: center;
+    padding: 0;
+  }
+
+  .ah-responsive-table-wrap tr.ah-responsive-table-empty td::before {
+    display: none;
+  }
+
+  .ah-responsive-table-wrap .ah-revenue-row.is-active {
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+  }
+
+  .ah-pos-return-detail-table-wrap tr.ah-responsive-table-card-row td {
+    color: #fed7aa;
+  }
+
+  .ah-pos-return-detail-table-wrap tr.ah-responsive-table-card-row td::before {
+    color: #fdba74;
+  }
+
+  /* Trả hàng: từng dòng sản phẩm = card */
+  .ah-inbound-float-panel--return-sheet {
+    left: max(0.35rem, env(safe-area-inset-left, 0px));
+    right: max(0.35rem, env(safe-area-inset-right, 0px));
+    width: auto;
+    max-height: min(92vh, 820px);
+  }
+
+  .ah-return-lines-wrap .ah-return-lines-table,
+  .ah-return-lines-wrap .ah-return-lines-table thead,
+  .ah-return-lines-wrap .ah-return-lines-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .ah-return-lines-wrap .ah-return-lines-table thead {
+    display: none;
+  }
+
+  .ah-return-lines-wrap .ah-return-lines-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ah-return-lines-wrap tr.ah-return-line-card-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 10px;
+    background: rgba(30, 41, 59, 0.45);
+  }
+
+  .ah-return-lines-wrap tr.ah-return-line-card-row td {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-stt,
+  .ah-return-lines-wrap .ah-return-col-thumb,
+  .ah-return-lines-wrap .ah-return-col-unit {
+    display: none !important;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-prod::before {
+    display: none;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-prod .ah-return-prod-name {
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.3;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-price::before,
+  .ah-return-lines-wrap .ah-return-col-qty::before,
+  .ah-return-lines-wrap .ah-return-col-refund::before {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 0.25rem;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-price::before {
+    display: none;
+  }
+
+  .ah-return-price-purchased-mobile {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.5rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .ah-return-price-purchased-sep {
+    opacity: 0.55;
+  }
+
+  .ah-return-price-desktop {
+    display: none;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-qty::before {
+    content: 'Số lượng trả';
+  }
+
+  .ah-return-lines-wrap .ah-return-col-refund::before {
+    content: attr(data-label);
+  }
+
+  .ah-return-lines-wrap .ah-return-col-price {
+    font-size: 0.88rem;
+    color: #cbd5e1;
+  }
+
+  .ah-return-lines-wrap .ah-return-qty-split {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  .ah-inbound-float-panel__card .ah-return-lines-wrap .ah-return-qty-input,
+  .ah-inbound-float-panel__card .ah-return-lines-wrap .ah-return-qty-input--panel {
+    width: 100%;
+    min-width: 0;
+    height: 2.75rem;
+    font-size: 1rem;
+    text-align: left;
+    padding: 0 0.75rem;
+  }
+
+  .ah-return-lines-wrap .ah-return-qty-sep {
+    display: none;
+  }
+
+  .ah-return-lines-wrap .ah-return-qty-max {
+    font-size: 0.82rem;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-refund {
+    margin-top: 0.15rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    font-size: 1rem;
+  }
+
+  .ah-return-lines-wrap .ah-return-col-refund strong {
+    color: #fbbf24;
+  }
+}
+
+.ah-return-price-purchased-mobile {
+  display: none;
+}
+
+.ah-return-price-desktop {
+  display: inline;
+}
+
+@media (min-width: 768px) {
+  .ah-orders-list-toolbar {
+    flex-wrap: nowrap;
+  }
 }

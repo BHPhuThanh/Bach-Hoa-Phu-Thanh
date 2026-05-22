@@ -309,6 +309,14 @@ function formatMoneyDraftVi(n) {
   return x.toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
+/** Khách hàng trên thẻ đơn POS (mobile). */
+function formatPosOrderCustomerDisplay(order) {
+  const name = String(order?.customerName ?? '').trim()
+  const phone = String(order?.customerPhone ?? '').trim()
+  if (name && phone) return `${name} · ${phone}`
+  return name || phone || '—'
+}
+
 function parseMoneyDraftVi(raw) {
   const d = String(raw ?? '').replace(/[^\d]/g, '')
   if (!d) return 0
@@ -6728,8 +6736,8 @@ export default function AdminHub({
 
             {ordersSubTab === 'inbound' && (
               <>
-                <div className="admin-hub-table-wrap ah-inbound-table-wrap">
-                  <table className="admin-hub-table ah-inbound-table">
+                <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-responsive-table-wrap">
+                  <table className="admin-hub-table ah-inbound-table ah-responsive-table">
                     <thead>
                       <tr>
                         <th>Mã đơn nhập</th>
@@ -6741,7 +6749,7 @@ export default function AdminHub({
                     </thead>
                     <tbody>
                       {inboundRowsOrdersTab.length === 0 ? (
-                        <tr>
+                        <tr className="ah-responsive-table-empty">
                           <td colSpan={5} className="admin-hub-muted">
                             {inboundOrders.length === 0
                               ? 'Chưa có phiếu nhập.'
@@ -6752,8 +6760,8 @@ export default function AdminHub({
                         </tr>
                       ) : (
                         inboundRowsOrdersTab.map((r) => (
-                          <tr key={r.id}>
-                            <td className="ah-inbound-code">
+                          <tr key={r.id} className="ah-responsive-table-card-row">
+                            <td className="ah-inbound-code" data-label="Mã đơn nhập">
                               <button
                                 type="button"
                                 className="ah-inbound-code-link"
@@ -6762,14 +6770,14 @@ export default function AdminHub({
                                 {r.code || '—'}
                               </button>
                             </td>
-                            <td className="ah-inbound-time">
+                            <td className="ah-inbound-time" data-label="Ngày nhập">
                               {new Date(r.createdAtMs).toLocaleString('vi-VN')}
                             </td>
-                            <td>{r.supplier || '—'}</td>
-                            <td className="ah-num ah-inbound-value">
+                            <td data-label="Nhà cung cấp">{r.supplier || '—'}</td>
+                            <td className="ah-num ah-inbound-value" data-label="Giá trị đơn">
                               {r.totalValue.toLocaleString('vi-VN')} đ
                             </td>
-                            <td>
+                            <td data-label="Trạng thái">
                               <span
                                 className={`ah-inbound-status ah-inbound-status--${r.status}`}
                                 title={inboundStatusLabel(r.status)}
@@ -6788,12 +6796,13 @@ export default function AdminHub({
 
             {ordersSubTab === 'pos' && (
               <>
-                <div className="admin-hub-table-wrap">
-                  <table className="admin-hub-table">
+                <div className="admin-hub-table-wrap ah-responsive-table-wrap">
+                  <table className="admin-hub-table ah-responsive-table">
                     <thead>
                       <tr>
                         <th>Mã đơn</th>
                         <th>Thời gian</th>
+                        <th className="ah-orders-th-customer">Khách hàng</th>
                         <th>Trạng thái</th>
                         <th className="ah-num">Tổng tiền</th>
                         <th className="ah-num">Lợi nhuận</th>
@@ -6801,14 +6810,14 @@ export default function AdminHub({
                     </thead>
                     <tbody>
                       {loading ? (
-                        <tr>
-                          <td colSpan={5} className="admin-hub-muted">
+                        <tr className="ah-responsive-table-empty">
+                          <td colSpan={6} className="admin-hub-muted">
                             Đang tải…
                           </td>
                         </tr>
                       ) : ordList.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className="admin-hub-muted">
+                        <tr className="ah-responsive-table-empty">
+                          <td colSpan={6} className="admin-hub-muted">
                             {orders.length === 0
                               ? 'Chưa có đơn bán.'
                               : ordFiltered.length === 0
@@ -6828,8 +6837,8 @@ export default function AdminHub({
                             ? safeMoney(raw.totalProfit)
                             : safeMoney(orderTotalProfit(raw))
                           return (
-                          <tr key={raw.id}>
-                            <td>
+                          <tr key={raw.id} className="ah-responsive-table-card-row">
+                            <td data-label="Mã đơn">
                               <button
                                 type="button"
                                 className="ah-inbound-code-link"
@@ -6838,8 +6847,11 @@ export default function AdminHub({
                                 {raw.invoiceNo || '—'}
                               </button>
                             </td>
-                            <td>{new Date(raw.createdAt).toLocaleString('vi-VN')}</td>
-                            <td>
+                            <td data-label="Thời gian">{new Date(raw.createdAt).toLocaleString('vi-VN')}</td>
+                            <td className="ah-orders-cell-customer" data-label="Khách hàng">
+                              {formatPosOrderCustomerDisplay(raw)}
+                            </td>
+                            <td data-label="Trạng thái">
                               <span
                                 className={`ah-inbound-status ah-inbound-status--${rowStatus === 'cancelled' ? 'cancelled' : rowStatus === 'returned_full' ? 'returned_full' : rowStatus === 'returned_partial' ? 'returned_partial' : 'completed'}`}
                                 title={posOrderStatusLabel(rowStatus)}
@@ -6847,8 +6859,12 @@ export default function AdminHub({
                                 {posOrderStatusLabel(rowStatus)}
                               </span>
                             </td>
-                            <td className="ah-num">{rowTotal.toLocaleString('vi-VN')} đ</td>
-                            <td className="ah-num">{rowProfit.toLocaleString('vi-VN')} đ</td>
+                            <td className="ah-num" data-label="Tổng tiền">
+                              {rowTotal.toLocaleString('vi-VN')} đ
+                            </td>
+                            <td className="ah-num" data-label="Lợi nhuận">
+                              {rowProfit.toLocaleString('vi-VN')} đ
+                            </td>
                           </tr>
                           )
                         })
@@ -8173,8 +8189,8 @@ export default function AdminHub({
                     </button>
                   </div>
                 </header>
-                <div className="admin-hub-table-wrap ah-pos-return-detail-table-wrap">
-                  <table className="admin-hub-table ah-pos-return-detail-table">
+                <div className="admin-hub-table-wrap ah-pos-return-detail-table-wrap ah-responsive-table-wrap">
+                  <table className="admin-hub-table ah-pos-return-detail-table ah-responsive-table">
                     <thead>
                       <tr>
                         <th>Mã hàng</th>
@@ -8188,21 +8204,21 @@ export default function AdminHub({
                     <tbody>
                       {Array.isArray(posReturnDetailEntry.lines) && posReturnDetailEntry.lines.length > 0 ? (
                         posReturnDetailEntry.lines.map((ln, idx) => (
-                          <tr key={`${ln.code}-${idx}`}>
-                            <td>{String(ln.code || '').trim() || '—'}</td>
-                            <td>{String(ln.name || '').trim() || '—'}</td>
-                            <td>{String(ln.unitLabel || '').trim() || '—'}</td>
-                            <td className="ah-num">
+                          <tr key={`${ln.code}-${idx}`} className="ah-responsive-table-card-row">
+                            <td data-label="Mã hàng">{String(ln.code || '').trim() || '—'}</td>
+                            <td data-label="Tên hàng">{String(ln.name || '').trim() || '—'}</td>
+                            <td data-label="ĐVT">{String(ln.unitLabel || '').trim() || '—'}</td>
+                            <td className="ah-num" data-label="Số lượng trả">
                               {Number.isFinite(Number(ln.qtyReturned))
                                 ? Number(ln.qtyReturned).toLocaleString('vi-VN')
                                 : '—'}
                             </td>
-                            <td className="ah-num">
+                            <td className="ah-num" data-label="Đơn giá hoàn tiền">
                               {Number.isFinite(Number(ln.unitRefund))
                                 ? `${Math.round(Number(ln.unitRefund)).toLocaleString('vi-VN')} đ`
                                 : '—'}
                             </td>
-                            <td className="ah-num">
+                            <td className="ah-num" data-label="Thành tiền hoàn trả">
                               {Number.isFinite(Number(ln.lineRefund))
                                 ? `${Math.round(Number(ln.lineRefund)).toLocaleString('vi-VN')} đ`
                                 : '—'}
@@ -8210,7 +8226,7 @@ export default function AdminHub({
                           </tr>
                         ))
                       ) : (
-                        <tr>
+                        <tr className="ah-responsive-table-empty">
                           <td colSpan={6} className="admin-hub-muted">
                             Giao dịch lưu trước khi có chi tiết từng dòng — chỉ có tổng hoàn bên dưới.
                           </td>
@@ -8866,6 +8882,7 @@ export default function AdminHub({
               <strong>trừ tồn kho</strong> theo số lượng trả. Bạn vẫn có thể chuyển tab khác.
             </p>
             <div className="ah-inbound-float-panel__scroll">
+              <div className="ah-return-lines-wrap">
               <table className="ah-inbound-ret-table ah-return-lines-table">
                 <thead>
                   <tr>
@@ -8896,21 +8913,21 @@ export default function AdminHub({
                     return list.map((row, idx) => {
                       const { ln, rq, purchased, draft, unitP, refund, lineGross } = row
                       return (
-                        <tr key={ln.lineId}>
+                        <tr key={ln.lineId} className="ah-return-line-card-row">
                           <td className="ah-return-col-stt">{idx + 1}</td>
                           <td className="ah-return-col-thumb">
                             <div className="ah-return-thumb" title="Ảnh" />
                           </td>
-                          <td>
+                          <td className="ah-return-col-prod" data-label="Sản phẩm">
                             <div className="ah-return-prod-name">{ln.name || '—'}</div>
-                            <div className="ah-return-prod-sub">Mặc định</div>
+                            <div className="ah-return-prod-sub">Mặc định · {ln.unitLabel || '—'}</div>
                             <div className="ah-return-prod-code">{ln.code || '—'}</div>
                           </td>
-                          <td>{ln.unitLabel || '—'}</td>
-                          <td className="ah-return-col-qty">
+                          <td className="ah-return-col-unit" data-label="ĐVT">{ln.unitLabel || '—'}</td>
+                          <td className="ah-return-col-qty" data-label="Số lượng trả">
                             <span className="ah-return-qty-split">
                               <input
-                                className="ah-return-qty-input"
+                                className="ah-return-qty-input ah-return-qty-input--panel"
                                 type="text"
                                 inputMode="decimal"
                                 aria-label={`Số lượng trả ${ln.name}`}
@@ -8924,22 +8941,30 @@ export default function AdminHub({
                                 }
                               />
                               <span className="ah-return-qty-sep">/</span>
-                              <span className="ah-return-qty-max">{purchased.toLocaleString('vi-VN')}</span>
+                              <span className="ah-return-qty-max">Đã mua: {purchased.toLocaleString('vi-VN')}</span>
                             </span>
                             <div className="ah-return-qty-cap">Tối đa còn trả: {rq.toLocaleString('vi-VN')}</div>
                           </td>
-                          <td className="ah-num ah-return-col-price ah-inbound-ret-code">
-                            {unitP.toLocaleString('vi-VN')}
+                          <td
+                            className="ah-num ah-return-col-price ah-inbound-ret-code"
+                            data-label="Đơn giá"
+                          >
+                            <div className="ah-return-price-purchased-mobile">
+                              <span>Đơn giá: {unitP.toLocaleString('vi-VN')} đ</span>
+                              <span className="ah-return-price-purchased-sep">·</span>
+                              <span>Đã mua: {purchased.toLocaleString('vi-VN')}</span>
+                            </div>
+                            <span className="ah-return-price-desktop">{unitP.toLocaleString('vi-VN')} đ</span>
                           </td>
-                          <td className="ah-num ah-return-col-refund">
+                          <td className="ah-num ah-return-col-refund" data-label="Giá trị trả">
                             {draft > 0 ? (
                               <>
-                                <span className="ah-return-strike">{lineGross.toLocaleString('vi-VN')}</span>
+                                <span className="ah-return-strike">{lineGross.toLocaleString('vi-VN')} đ</span>
                                 <br />
-                                <strong>{refund.toLocaleString('vi-VN')}</strong>
+                                <strong>{refund.toLocaleString('vi-VN')} đ</strong>
                               </>
                             ) : (
-                              <strong>0</strong>
+                              <strong>0 đ</strong>
                             )}
                           </td>
                         </tr>
@@ -8948,6 +8973,7 @@ export default function AdminHub({
                   })()}
                 </tbody>
               </table>
+              </div>
             </div>
             <footer className="ah-inbound-float-panel__foot">
               <button
@@ -9035,6 +9061,7 @@ export default function AdminHub({
               nay</strong>; dòng khớp được biến thể trong danh mục thì <strong>cộng tồn kho</strong> tương ứng.
             </p>
             <div className="ah-inbound-float-panel__scroll">
+              <div className="ah-return-lines-wrap">
               <table className="ah-inbound-ret-table ah-return-lines-table">
                 <thead>
                   <tr>
@@ -9071,23 +9098,23 @@ export default function AdminHub({
                     return list.map((row, idx) => {
                       const { it, lid, rq, purchased, draft, price, refund, lineSold, hasVid } = row
                       return (
-                        <tr key={`${lid}-${idx}`}>
+                        <tr key={`${lid}-${idx}`} className="ah-return-line-card-row">
                           <td className="ah-return-col-stt">{idx + 1}</td>
                           <td className="ah-return-col-thumb">
                             <div className="ah-return-thumb" title="Ảnh" />
                           </td>
-                          <td>
+                          <td className="ah-return-col-prod" data-label="Sản phẩm">
                             <div className="ah-return-prod-name">{it.name || '—'}</div>
                             <div className="ah-return-prod-sub">
-                              {hasVid ? 'Mặc định' : 'Chưa khớp biến thể — hoàn tiền theo đơn; không tự cộng tồn'}
+                              {hasVid ? `Mặc định · ${it.unitLabel || '—'}` : 'Chưa khớp biến thể — hoàn tiền theo đơn'}
                             </div>
                             <div className="ah-return-prod-code">{it.code || '—'}</div>
                           </td>
-                          <td>{it.unitLabel || '—'}</td>
-                          <td className="ah-return-col-qty">
+                          <td className="ah-return-col-unit" data-label="ĐVT">{it.unitLabel || '—'}</td>
+                          <td className="ah-return-col-qty" data-label="Số lượng trả">
                             <span className="ah-return-qty-split">
                               <input
-                                className="ah-return-qty-input"
+                                className="ah-return-qty-input ah-return-qty-input--panel"
                                 type="text"
                                 inputMode="decimal"
                                 aria-label={`Số lượng trả ${it.name}`}
@@ -9101,22 +9128,30 @@ export default function AdminHub({
                                 }
                               />
                               <span className="ah-return-qty-sep">/</span>
-                              <span className="ah-return-qty-max">{purchased.toLocaleString('vi-VN')}</span>
+                              <span className="ah-return-qty-max">Đã mua: {purchased.toLocaleString('vi-VN')}</span>
                             </span>
                             <div className="ah-return-qty-cap">Tối đa còn trả: {rq.toLocaleString('vi-VN')}</div>
                           </td>
-                          <td className="ah-num ah-return-col-price ah-inbound-ret-code">
-                            {price.toLocaleString('vi-VN')}
+                          <td
+                            className="ah-num ah-return-col-price ah-inbound-ret-code"
+                            data-label="Đơn giá"
+                          >
+                            <div className="ah-return-price-purchased-mobile">
+                              <span>Đơn giá: {price.toLocaleString('vi-VN')} đ</span>
+                              <span className="ah-return-price-purchased-sep">·</span>
+                              <span>Đã mua: {purchased.toLocaleString('vi-VN')}</span>
+                            </div>
+                            <span className="ah-return-price-desktop">{price.toLocaleString('vi-VN')} đ</span>
                           </td>
-                          <td className="ah-num ah-return-col-refund">
+                          <td className="ah-num ah-return-col-refund" data-label="Tiền hoàn">
                             {draft > 0 ? (
                               <>
-                                <span className="ah-return-strike">{lineSold.toLocaleString('vi-VN')}</span>
+                                <span className="ah-return-strike">{lineSold.toLocaleString('vi-VN')} đ</span>
                                 <br />
-                                <strong>{refund.toLocaleString('vi-VN')}</strong>
+                                <strong>{refund.toLocaleString('vi-VN')} đ</strong>
                               </>
                             ) : (
-                              <strong>0</strong>
+                              <strong>0 đ</strong>
                             )}
                           </td>
                         </tr>
@@ -9125,6 +9160,7 @@ export default function AdminHub({
                   })()}
                 </tbody>
               </table>
+              </div>
             </div>
             <footer className="ah-inbound-float-panel__foot">
               <button

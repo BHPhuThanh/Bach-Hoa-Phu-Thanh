@@ -6899,21 +6899,29 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             ) : returnPickModalOrders.length === 0 ? (
               <p className="pos-return-modal-muted">Chưa có đơn đã thanh toán trên thiết bị này.</p>
             ) : (
-              <div className="pos-return-modal-table-wrap">
-                <table className="pos-return-modal-table">
+              <div className="pos-return-modal-table-wrap ah-responsive-table-wrap">
+                <table className="pos-return-modal-table ah-responsive-table">
                   <thead>
                     <tr>
                       <th>Mã đơn</th>
                       <th>Thời gian</th>
+                      <th className="ah-orders-th-customer">Khách hàng</th>
                       <th className="pos-return-modal-th-num">Tổng tiền</th>
                       <th />
                     </tr>
                   </thead>
                   <tbody>
-                    {returnPickModalOrders.map((o) => (
-                      <tr key={o.id}>
-                        <td>{o.invoiceNo || '—'}</td>
-                        <td>
+                    {returnPickModalOrders.map((o) => {
+                      const custName = String(o.customerName ?? '').trim()
+                      const custPhone = String(o.customerPhone ?? '').trim()
+                      const cust =
+                        custName && custPhone
+                          ? `${custName} · ${custPhone}`
+                          : custName || custPhone || '—'
+                      return (
+                      <tr key={o.id} className="ah-responsive-table-card-row">
+                        <td data-label="Mã đơn">{o.invoiceNo || '—'}</td>
+                        <td data-label="Thời gian">
                           {(() => {
                             try {
                               return new Date(o.createdAt).toLocaleString('vi-VN')
@@ -6922,10 +6930,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                             }
                           })()}
                         </td>
-                        <td className="pos-return-modal-td-num">
+                        <td className="ah-orders-cell-customer" data-label="Khách hàng">
+                          {cust}
+                        </td>
+                        <td className="pos-return-modal-td-num" data-label="Tổng tiền">
                           {Number(o.total ?? 0).toLocaleString('vi-VN')} đ
                         </td>
-                        <td className="pos-return-modal-td-act">
+                        <td className="pos-return-modal-td-act" data-label="">
                           <button
                             type="button"
                             className="pos-return-modal-pick-btn"
@@ -6935,7 +6946,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

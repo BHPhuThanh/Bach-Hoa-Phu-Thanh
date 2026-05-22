@@ -2886,6 +2886,35 @@
   background: #2d3548;
 }
 
+/* Chọn đơn trả hàng — card trên mobile (dùng chung .ah-responsive-table-wrap) */
+@media (max-width: 767px) {
+  .pos-return-modal {
+    width: min(100%, 26rem);
+    max-height: min(92vh, 36rem);
+    padding: 1rem 0.9rem;
+  }
+
+  .pos-return-modal-table-wrap.ah-responsive-table-wrap {
+    border: none;
+    background: transparent;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .pos-return-modal-table-wrap tr.ah-responsive-table-card-row {
+    border-color: #334155;
+    background: #1a222c;
+  }
+
+  .pos-return-modal-table-wrap tr.ah-responsive-table-card-row td {
+    color: #e2e8f0;
+  }
+
+  .pos-return-modal-table-wrap tr.ah-responsive-table-card-row td::before {
+    color: #94a3b8;
+  }
+}
+
 .pos-search-row {
   position: relative;
   flex-shrink: 0;

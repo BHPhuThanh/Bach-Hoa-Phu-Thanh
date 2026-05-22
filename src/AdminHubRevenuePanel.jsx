@@ -54,7 +54,7 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
         return (
           <tr
             key={`sale-${row.id}`}
-            className={`ah-revenue-row${active ? ' is-active' : ''}`}
+            className={`ah-revenue-row ah-responsive-table-card-row${active ? ' is-active' : ''}`}
             onClick={() => setSelected(o)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -66,8 +66,10 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
             tabIndex={0}
             title="Xem chi tiết đơn"
           >
-            <td className="ah-revenue-cell-code">{o.invoiceNo || '—'}</td>
-            <td className="ah-revenue-cell-time">
+            <td className="ah-revenue-cell-code" data-label="Mã đơn">
+              {o.invoiceNo || '—'}
+            </td>
+            <td className="ah-revenue-cell-time" data-label="Thời gian">
               {(() => {
                 try {
                   return new Date(o.createdAt).toLocaleString('vi-VN')
@@ -76,9 +78,13 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
                 }
               })()}
             </td>
-            <td className="ah-num">{formatVndSafe(o.total)}</td>
-            <td className="ah-num ah-revenue-profit">{formatVndSafe(profit)}</td>
-            <td className="ah-revenue-cell-detail" onClick={(e) => e.stopPropagation()}>
+            <td className="ah-num" data-label="Tổng tiền">
+              {formatVndSafe(o.total)}
+            </td>
+            <td className="ah-num ah-revenue-profit" data-label="Lợi nhuận">
+              {formatVndSafe(profit)}
+            </td>
+            <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
               <RevenueOrderDetailLink orderId={o.id} />
             </td>
           </tr>
@@ -91,10 +97,10 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
       return (
         <tr
           key={`ret-${row.id}`}
-          className="ah-revenue-row ah-revenue-row--return"
+          className="ah-revenue-row ah-revenue-row--return ah-responsive-table-card-row"
           title={canOpen ? 'Xem chi tiết hoàn trả' : 'Giao dịch hoàn trả'}
         >
-          <td className="ah-revenue-cell-code ah-revenue-cell-code--return">
+          <td className="ah-revenue-cell-code ah-revenue-cell-code--return" data-label="Mã đơn">
             {canOpen ? (
               <button
                 type="button"
@@ -110,7 +116,7 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
               (r.invoiceNo || '—')
             )}
           </td>
-          <td className="ah-revenue-cell-time">
+          <td className="ah-revenue-cell-time" data-label="Thời gian">
             {(() => {
               try {
                 return new Date(r.createdAt).toLocaleString('vi-VN')
@@ -119,9 +125,13 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
               }
             })()}
           </td>
-          <td className="ah-num ah-revenue-total--return">{formatVndSafe(r.displayTotal)}</td>
-          <td className="ah-num ah-revenue-profit ah-revenue-profit--return">{formatVndProfitReturn(r.displayProfit)}</td>
-          <td className="ah-revenue-cell-detail" onClick={(e) => e.stopPropagation()}>
+          <td className="ah-num ah-revenue-total--return" data-label="Tổng tiền">
+            {formatVndSafe(r.displayTotal)}
+          </td>
+          <td className="ah-num ah-revenue-profit ah-revenue-profit--return" data-label="Lợi nhuận">
+            {formatVndProfitReturn(r.displayProfit)}
+          </td>
+          <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
             <RevenueOrderDetailLink orderId={r.sourceOrderId} />
           </td>
         </tr>
@@ -130,7 +140,7 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
   } catch (e) {
     console.error('[AdminHubRevenuePanel] rows', e)
     return (
-      <tr>
+      <tr className="ah-responsive-table-empty">
         <td colSpan={5} className="dash-muted ah-revenue-empty">
           Không hiển thị được danh sách đơn (dữ liệu lỗi). Các chỉ số phía trên vẫn có thể dùng được.
         </td>
@@ -297,8 +307,8 @@ export default function AdminHubRevenuePanel({
         ) : noDataInRange ? (
           <p className="dash-muted ah-revenue-empty">Chưa có dữ liệu doanh thu trong khoảng thời gian này.</p>
         ) : (
-          <div className="admin-hub-table-wrap ah-revenue-table-wrap">
-            <table className="admin-hub-table ah-revenue-table">
+          <div className="admin-hub-table-wrap ah-revenue-table-wrap ah-responsive-table-wrap">
+            <table className="admin-hub-table ah-revenue-table ah-responsive-table">
               <thead>
                 <tr>
                   <th>Mã đơn</th>
