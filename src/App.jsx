@@ -58,6 +58,10 @@ import {
 } from './sellFrequency.js'
 import { buildK80ReceiptHtml, formatInvoiceNo } from './receiptHtml.js'
 import { enqueueInboundCompletion } from './inboundCompletionQueue.js'
+import {
+  runInboundSupabaseSync,
+  runInboundInventoryLogAfterSync,
+} from './inboundBackgroundSync.js'
 import { parseCatalogBlobFile } from './catalogParseClient.js'
 import {
   buildPosTextSearchScanList,
@@ -3156,6 +3160,82 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })()
   }, [applyServerCatalogAfterPersist, showPosPersistErrorToast])
 
+  /**
+   * Hoàn thành phiếu nhập — chạy tại App (không unmount khi đóng form Hub).
+   * Optimistic catalog đã áp trước; Supabase: snapshot + products + inbound_history song song.
+   * @param {{ row: object, patches: Array<{ variantId: string, patch: object }> }} payload
+   * @returns {Promise<object>} hàng đã ghi (normalized)
+   */
+  const handleConfirmInboundComplete = useCallback(
+    ({ row, patches }) => {
+      const valid = (patches || []).filter(
+        (e) => e && e.variantId != null && e.patch && typeof e.patch === 'object'
+      )
+      if (!row) {
+        return Promise.reject(new Error('Thiếu dữ liệu phiếu nhập.'))
+      }
+
+      let next = productsRef.current
+      for (const entry of valid) {
+        next = applyProductDataToCatalog(next, {
+          type: 'patch_variant',
+          variantId: entry.variantId,
+          patch: entry.patch,
+        })
+      }
+
+      const snapshotPrev = bulkCatalogProductsRef.current
+      startTransition(() => {
+        setProducts(next)
+      })
+
+      const flatNext = flattenDisplayCatalogToVariants(next)
+      const touchedIds = new Set(valid.map((e) => String(e.variantId)))
+      const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+
+      return enqueueInboundCompletion(async () => {
+        try {
+          const syncRes = await runInboundSupabaseSync({
+            catalogProductsNext: next,
+            catalogFileName: catalogFileNameRef.current,
+            upsertOnlyVariants,
+            orderRow: row,
+          })
+          await runInboundInventoryLogAfterSync({
+            snapshotPrev,
+            catalogProductsNext: next,
+            validPatches: valid,
+            inventoryMeta: {
+              documentCode: row.code,
+              inboundOrderId: row.id,
+            },
+          })
+          await applyServerCatalogAfterPersist()
+          if (syncRes.returnedDisplayVariants?.length) {
+            try {
+              inboundCatalogUpsertReconcileRef.current?.({
+                requested: upsertOnlyVariants,
+                returned: syncRes.returnedDisplayVariants,
+              })
+            } catch (reconcileErr) {
+              console.warn('[App] reconcile id phiếu nhập sau upsert', reconcileErr)
+            }
+          }
+          return syncRes.row || row
+        } catch (e) {
+          startTransition(() => {
+            setProducts(snapshotPrev)
+          })
+          showPosPersistErrorToast(
+            `Lỗi đồng bộ: ${describeCatalogPersistError(e)}. Đã hoàn tác thay đổi!`
+          )
+          throw e
+        }
+      })
+    },
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+  )
+
   /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
   useEffect(() => {
     let cancelled = false
@@ -5917,6 +5997,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           catalogSupabaseFlushBusy={catalogFlushBusy}
           onFlushCatalogToSupabase={flushCatalogToSupabase}
           runInboundCompletionJob={runInboundCompletionJob}
+          onConfirmInboundComplete={handleConfirmInboundComplete}
         />
       )}
 

@@ -127,10 +127,8 @@ import {
 } from './costAdjustStorage.js'
 import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
 import {
-  buildInboundInventoryLogRows,
   fetchInventoryLogsByMaHang,
   INVENTORY_LOG_UPDATED_EVENT,
-  insertInventoryLogRows,
   mapInventoryLogDbRowToDisplay,
   staffNameForInventoryLog,
 } from './inventoryLogRepository.js'
@@ -151,7 +149,7 @@ import {
   deleteProductsForRemovedVariants,
   updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
-import { fetchInboundInvoices, insertInboundHistoryEntry } from './supabaseInboundHistory.js'
+import { fetchInboundInvoices } from './supabaseInboundHistory.js'
 import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
@@ -1025,8 +1023,10 @@ export default function AdminHub({
   catalogSupabaseDirty = false,
   catalogSupabaseFlushBusy = false,
   onFlushCatalogToSupabase,
-  /** App: hàng đợi global — `await` trước khi đóng form (tránh dangling promise khi đổi tab). */
+  /** App: hàng đợi global — job Supabase không unmount khi đóng form nhập. */
   runInboundCompletionJob = null,
+  /** App: đồng bộ nền products + inbound_history (Promise.all) — Modal chỉ gọi hàm này. */
+  onConfirmInboundComplete = null,
 }) {
   /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
   const [returnDayLedger, setReturnDayLedger] = useState(() => {
@@ -3808,106 +3808,20 @@ export default function AdminHub({
     [applyInboundStockDeltas]
   )
 
-  /**
-   * Ghi `inbound_history` sau khi tồn kho/giá vốn đã lưu.
-   * @returns {Promise<{ ok: boolean, row?: object, error?: string }>}
-   */
-  const recordInboundCompletionHistory = useCallback(async (orderRow) => {
-    const r = await insertInboundHistoryEntry(orderRow)
-    if (r.ok) {
-      const merged = r.order ? normalizeInboundRow({ ...orderRow, ...r.order }) : normalizeInboundRow(orderRow)
-      return { ok: true, row: merged }
-    }
-    if (r.skipped) {
-      return { ok: true, row: normalizeInboundRow(orderRow) }
-    }
-    const msg =
-      r.error instanceof Error ? r.error.message : String(r.error?.message || r.error || 'Không ghi được phiếu nhập.')
-    return { ok: false, error: msg }
-  }, [])
-
-  /**
-   * Gộp một lần: tồn + giá vốn bình quân — không đổi giá bán; chờ persist xong.
-   * @returns {Promise<{ ok: boolean, updatedCount: number, error?: string }>}
-   */
-  const applyInboundFulfillmentPatches = useCallback(
-    async (patches, inventoryMetaForLog) => {
-      const valid = (patches || []).filter(
-        (p) => p && p.variantId != null && p.patch && typeof p.patch === 'object'
-      )
-      const n = valid.length
-      if (n === 0) return { ok: true, updatedCount: 0 }
-      if (typeof onBulkPatchCatalogVariants === 'function') {
-        const r = await onBulkPatchCatalogVariants(valid, {
-          inboundInventoryMeta: inventoryMetaForLog,
-        })
-        if (r?.ok) return { ok: true, updatedCount: r.updatedCount ?? n }
-        return { ok: false, updatedCount: 0, error: r?.error || 'Không ghi được danh mục.' }
+  /** Đồng bộ Supabase tại App — Hub không gọi `supabase.from` (tránh unmount / Auth lock). */
+  const syncInboundToApp = useCallback(
+    ({ row, patches }) => {
+      if (typeof onConfirmInboundComplete === 'function') {
+        return onConfirmInboundComplete({ row, patches })
       }
       if (!standaloneCatalog?.products?.length) {
-        return { ok: false, updatedCount: 0, error: 'Chưa có danh mục standalone để ghi.' }
+        return Promise.reject(new Error('Chưa có danh mục để ghi phiếu nhập.'))
       }
-      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
-      const byVid = new Map(valid.map((p) => [p.variantId, p.patch]))
-      const prevProducts = prepareCatalogForPosSearch(buildDisplayCatalog(flat))
-      const nextFlat = flat.map((v) =>
-        byVid.has(v.id) ? { ...v, ...byVid.get(v.id) } : v
+      return Promise.reject(
+        new Error('Chưa kết nối đồng bộ Supabase từ App (onConfirmInboundComplete).')
       )
-      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-      const persistRes = await persistStandaloneProducts(
-        nextProducts,
-        standaloneCatalog.fileName || ''
-      )
-      if (persistRes?.ok) {
-        if (inventoryMetaForLog?.documentCode && isSupabaseConfigured()) {
-          const logRows = buildInboundInventoryLogRows(prevProducts, nextProducts, valid, {
-            documentCode: inventoryMetaForLog.documentCode,
-            inboundOrderId: inventoryMetaForLog.inboundOrderId ?? '',
-            staffName: inventoryMetaForLog.staffName ?? staffNameForInventoryLog(),
-          })
-          await insertInventoryLogRows(logRows)
-        }
-        return { ok: true, updatedCount: n }
-      }
-      return {
-        ok: false,
-        updatedCount: 0,
-        error: persistRes?.error || 'Không ghi được danh mục.',
-      }
     },
-    [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
-  )
-
-  const queueInboundCompletion = useCallback(
-    (task) => {
-      if (typeof runInboundCompletionJob === 'function') {
-        return runInboundCompletionJob(task)
-      }
-      return task()
-    },
-    [runInboundCompletionJob]
-  )
-
-  /** Tồn kho + giá vốn + inbound_history — await xong mới đóng form. */
-  const persistInboundFulfillmentAndHistory = useCallback(
-    async (row, fulfillmentPatches) => {
-      const res = await applyInboundFulfillmentPatches(fulfillmentPatches || [], {
-        documentCode: row.code,
-        inboundOrderId: row.id,
-      })
-      if (!res?.ok) {
-        throw new Error(res?.error || 'Không ghi được danh mục sau khi hoàn thành phiếu.')
-      }
-      const hist = await recordInboundCompletionHistory(row)
-      if (!hist.ok) {
-        throw new Error(
-          hist.error ||
-            'Đã cập nhật tồn kho nhưng không ghi được phiếu vào lịch sử. Kiểm tra Supabase inbound_history.'
-        )
-      }
-      return hist.row || row
-    },
-    [applyInboundFulfillmentPatches, recordInboundCompletionHistory]
+    [onConfirmInboundComplete, standaloneCatalog?.products?.length]
   )
 
   /**
@@ -3926,14 +3840,13 @@ export default function AdminHub({
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
 
-      void queueInboundCompletion(() =>
-        persistInboundFulfillmentAndHistory(row, fulfillmentPatches)
-      )
+      void syncInboundToApp({ row, patches: fulfillmentPatches })
         .then((saved) => {
+          const merged = normalizeInboundRow(saved)
           startTransition(() => {
             setInboundOrders((prev) => {
-              const rest = prev.filter((o) => o.id !== saved.id && o.id !== row.id)
-              return [saved, ...rest]
+              const rest = prev.filter((o) => o.id !== merged.id && o.id !== row.id)
+              return [merged, ...rest]
             })
           })
         })
@@ -3947,8 +3860,7 @@ export default function AdminHub({
     },
     [
       buildInboundOrderPayload,
-      queueInboundCompletion,
-      persistInboundFulfillmentAndHistory,
+      syncInboundToApp,
       completeInboundFlowReturnToList,
       triggerInboundSaveToast,
     ]
@@ -3979,14 +3891,13 @@ export default function AdminHub({
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
 
-      void queueInboundCompletion(() =>
-        persistInboundFulfillmentAndHistory(merged, fulfillmentPatches)
-      )
+      void syncInboundToApp({ row: merged, patches: fulfillmentPatches })
         .then((saved) => {
+          const normalized = normalizeInboundRow(saved)
           startTransition(() => {
             setInboundOrders((prev) => {
-              const rest = prev.filter((o) => o.id !== editId && o.id !== saved.id)
-              return [saved, ...rest]
+              const rest = prev.filter((o) => o.id !== editId && o.id !== normalized.id)
+              return [normalized, ...rest]
             })
           })
         })
@@ -4002,8 +3913,7 @@ export default function AdminHub({
       inboundFormEditOrderId,
       inboundOrders,
       buildInboundOrderPayload,
-      queueInboundCompletion,
-      persistInboundFulfillmentAndHistory,
+      syncInboundToApp,
       completeInboundFlowReturnToList,
       triggerInboundSaveToast,
     ]
@@ -4123,14 +4033,13 @@ export default function AdminHub({
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
 
-      void queueInboundCompletion(() =>
-        persistInboundFulfillmentAndHistory(mergedRow, patches)
-      )
+      void syncInboundToApp({ row: mergedRow, patches })
         .then((saved) => {
+          const normalized = normalizeInboundRow(saved)
           startTransition(() => {
             setInboundOrders((p) => {
-              const rest = p.filter((o) => o.id !== oid && o.id !== saved.id)
-              return [saved, ...rest]
+              const rest = p.filter((o) => o.id !== oid && o.id !== normalized.id)
+              return [normalized, ...rest]
             })
           })
         })
@@ -4154,8 +4063,7 @@ export default function AdminHub({
     finalizeInboundCompleted,
     finalizeInboundEditCompleted,
     cancelInboundCostDiffModal,
-    queueInboundCompletion,
-    persistInboundFulfillmentAndHistory,
+    syncInboundToApp,
     triggerInboundSaveToast,
     completeInboundFlowReturnToList,
   ])
@@ -4583,14 +4491,13 @@ export default function AdminHub({
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
 
-      void queueInboundCompletion(() =>
-        persistInboundFulfillmentAndHistory(merged, patches)
-      )
+      void syncInboundToApp({ row: merged, patches })
         .then((saved) => {
+          const normalized = normalizeInboundRow(saved)
           startTransition(() => {
             setInboundOrders((p) => {
-              const rest = p.filter((o) => o.id !== oid && o.id !== saved.id)
-              return [saved, ...rest]
+              const rest = p.filter((o) => o.id !== oid && o.id !== normalized.id)
+              return [normalized, ...rest]
             })
           })
         })
@@ -4606,8 +4513,7 @@ export default function AdminHub({
     activeTab,
     inboundDetailLineDrafts,
     inboundOrders,
-    queueInboundCompletion,
-    persistInboundFulfillmentAndHistory,
+    syncInboundToApp,
     triggerInboundSaveToast,
     completeInboundFlowReturnToList,
   ])
