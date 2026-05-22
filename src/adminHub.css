@@ -1340,40 +1340,45 @@
     gap: 0.65rem;
   }
 
+  /* Mobile row1: Tìm kiếm → Thương hiệu → Nút hành động */
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1 {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.65rem;
-    flex-wrap: wrap;
+    gap: 8px;
+    flex-wrap: nowrap;
   }
 
   .ah-goods-toolbar__row1-brand {
     display: flex;
     flex-direction: column;
-    gap: 0.28rem;
+    gap: 8px;
     width: 100%;
-    flex: 1 1 100%;
+    max-width: none;
+    flex: 0 0 auto;
     order: 1;
+    box-sizing: border-box;
+  }
+
+  .ah-goods-toolbar__row1-brand .ah-goods-toolbar-brand-wrap,
+  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-input-wrap {
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+  }
+
+  .ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-input {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
     order: 0;
-  }
-
-  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions {
-    order: 2;
-  }
-
-  .ah-goods-filters-drawer-target .ah-goods-filter-field--brand {
-    display: none;
-  }
-
-  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
     width: 100%;
     max-width: none;
   }
 
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions {
+    order: 2;
     width: 100%;
     margin-left: 0;
     justify-content: stretch;
