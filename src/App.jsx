@@ -109,7 +109,7 @@ import {
   deleteProductsForRemovedVariants,
   updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
-import { isSupabaseConfigured } from './supabaseClient.js'
+import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 import {
   insertInventoryLogRows,
   buildPosSaleInventoryLogRows,
@@ -121,7 +121,14 @@ import {
   APP_NOTIFICATIONS_BUMP_EVENT,
   clearAppNotificationById,
   loadAppNotifications,
+  markAllLocalNotificationsRead,
 } from './appNotificationsStorage.js'
+import {
+  evaluateLowStockNotificationsAfterSale,
+  fetchNotificationsFromSupabase,
+  markAllNotificationsReadInSupabase,
+  NOTIFICATIONS_BUMP_EVENT,
+} from './notificationsRepository.js'
 import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
 import {
   fetchCustomersFromSupabase,
@@ -2552,32 +2559,84 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const catalogBarcodeCaches = useMemo(() => buildCatalogBarcodeCaches(products), [products])
 
-  const lowStockProducts = useMemo(() => {
-    const variants = flattenDisplayCatalogToVariants(products)
-    return variants.filter((v) => {
-      const tnRaw = v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
-      if (tnRaw == null) return false
-      if (typeof tnRaw === 'string' && tnRaw.trim() === '') return false
-      const tn = Number(tnRaw)
-      if (!Number.isFinite(tn) || tn <= 0) return false
-      const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
-      return Number(tkRaw) < Number(tnRaw)
-    })
-  }, [products])
-
   const [appCostChangeNotifications, setAppCostChangeNotifications] = useState(() =>
     loadAppNotifications()
   )
+  const [supabaseNotifications, setSupabaseNotifications] = useState([])
+  const [markingAllNotifications, setMarkingAllNotifications] = useState(false)
+
+  const refreshSupabaseNotifications = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setSupabaseNotifications([])
+      return
+    }
+    const rows = await fetchNotificationsFromSupabase(activeSellerId)
+    setSupabaseNotifications(rows)
+  }, [activeSellerId])
 
   useEffect(() => {
-    const sync = () => setAppCostChangeNotifications(loadAppNotifications())
-    window.addEventListener(APP_NOTIFICATIONS_BUMP_EVENT, sync)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(APP_NOTIFICATIONS_BUMP_EVENT, sync)
-      window.removeEventListener('storage', sync)
+    void refreshSupabaseNotifications()
+  }, [refreshSupabaseNotifications])
+
+  useEffect(() => {
+    const syncLocal = () => setAppCostChangeNotifications(loadAppNotifications())
+    const syncRemote = () => {
+      void refreshSupabaseNotifications()
     }
-  }, [])
+    window.addEventListener(APP_NOTIFICATIONS_BUMP_EVENT, syncLocal)
+    window.addEventListener(NOTIFICATIONS_BUMP_EVENT, syncRemote)
+    window.addEventListener('storage', syncLocal)
+    return () => {
+      window.removeEventListener(APP_NOTIFICATIONS_BUMP_EVENT, syncLocal)
+      window.removeEventListener(NOTIFICATIONS_BUMP_EVENT, syncRemote)
+      window.removeEventListener('storage', syncLocal)
+    }
+  }, [refreshSupabaseNotifications])
+
+  const supabaseUnreadCount = useMemo(
+    () => supabaseNotifications.filter((n) => !n.is_read).length,
+    [supabaseNotifications]
+  )
+
+  const markAllNotificationsRead = useCallback(async () => {
+    if (markingAllNotifications) return
+    setMarkingAllNotifications(true)
+    setSupabaseNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+    setAppCostChangeNotifications([])
+    markAllLocalNotificationsRead()
+    try {
+      if (isSupabaseConfigured()) {
+        const r = await markAllNotificationsReadInSupabase(activeSellerId)
+        if (!r.ok) {
+          void refreshSupabaseNotifications()
+        }
+      }
+    } finally {
+      setMarkingAllNotifications(false)
+    }
+  }, [markingAllNotifications, activeSellerId, refreshSupabaseNotifications])
+
+  const openSupabaseNotification = useCallback(
+    (n) => {
+      const rawId = String(n?.variantId || n?.code || '').trim()
+      if (!rawId) return
+      setLowStockAlertOpen(false)
+      setSupabaseNotifications((prev) =>
+        prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x))
+      )
+      if (isSupabaseConfigured()) {
+        void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
+      }
+      setActiveView('dashboard')
+      setPendingHangHoaGoodsOpen({ rawId })
+      try {
+        sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
+      } catch {
+        /* ignore */
+      }
+    },
+    []
+  )
 
   const openHangHoaFromCostNotification = useCallback(
     (n) => {
@@ -4649,6 +4708,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               if (isSupabaseConfigured()) {
                 const invRows = buildPosSaleInventoryLogRows(prev, next, order, cartForStock)
                 await insertInventoryLogRows(invRows)
+                const lowStockRows = await evaluateLowStockNotificationsAfterSale({
+                  catalog: next,
+                  touchedVariantIds,
+                  userId: activeSellerId,
+                })
+                if (lowStockRows.length > 0) {
+                  setSupabaseNotifications((p) => {
+                    const ids = new Set(lowStockRows.map((x) => x.id))
+                    const rest = p.filter((x) => !ids.has(x.id))
+                    return [...lowStockRows, ...rest]
+                  })
+                }
               }
             }
           })()
@@ -4703,6 +4774,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     sellWholesaleMode,
     applyServerCatalogAfterPersist,
     activeSeller,
+    activeSellerId,
     isCheckingOut,
     finalizePaidSellOrder,
   ])
@@ -5176,9 +5248,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       </button>
     )
 
-    const lowStockCount = lowStockProducts.length
     const costNotifyCount = appCostChangeNotifications.length
-    const totalNotifyCount = lowStockCount + costNotifyCount
+    const totalNotifyCount = supabaseUnreadCount + costNotifyCount
+    const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
     const bellBtn = (
       <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
         <button
@@ -5186,13 +5258,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           className="app-header-icon-btn"
           aria-label={
             totalNotifyCount > 0
-              ? `Thông báo — ${totalNotifyCount} mục`
+              ? `Thông báo — ${totalNotifyCount} mục chưa đọc`
               : 'Thông báo'
           }
           aria-expanded={lowStockAlertOpen}
           title={
             totalNotifyCount > 0
-              ? `${totalNotifyCount} thông báo (hết hàng: ${lowStockCount}, giá vốn: ${costNotifyCount})`
+              ? `${totalNotifyCount} thông báo chưa đọc`
               : 'Thông báo'
           }
           onClick={() => setLowStockAlertOpen((open) => !open)}
@@ -5224,35 +5296,46 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             role="dialog"
             aria-label="Thông báo"
           >
-            <div className="app-header-low-stock-popover-title">Thông báo</div>
+            <div className="app-header-low-stock-popover-head">
+              <span className="app-header-low-stock-popover-title">Thông báo</span>
+              {totalNotifyCount > 0 ? (
+                <button
+                  type="button"
+                  className="app-header-notify-mark-all"
+                  disabled={markingAllNotifications}
+                  title="Đánh dấu tất cả đã đọc"
+                  onClick={() => void markAllNotificationsRead()}
+                >
+                  <span className="app-header-notify-mark-all-icon" aria-hidden>
+                    ✓✓
+                  </span>
+                  Đọc tất cả
+                </button>
+              ) : null}
+            </div>
             <div className="app-header-low-stock-scroll">
-              {totalNotifyCount === 0 ? (
+              {supabaseNotifications.length === 0 && costNotifyCount === 0 ? (
                 <p className="app-header-low-stock-empty">Chưa có thông báo</p>
               ) : (
                 <>
-                  {lowStockCount > 0 ? (
+                  {supabaseLowStock.length > 0 ? (
                     <>
                       <div className="app-header-notify-section-h">Hàng sắp hết</div>
-                      <ul className="app-header-low-stock-list">
-                        {lowStockProducts.map((v) => {
-                          const tkRaw = v?.raw?.ton_kho ?? v?.ton_kho ?? v?.stockQty
-                          const tnRaw =
-                            v?.raw?.ton_nho_nhat ?? v?.ton_nho_nhat ?? v?.stockNormMin
-                          const code = String(v.code ?? '').trim()
-                          const name =
-                            String(v.name ?? v.nameRaw ?? code ?? '').trim() || code
-                          return (
-                            <li key={v.id ?? code} className="app-header-low-stock-item">
-                              <div className="app-header-low-stock-name">{name}</div>
-                              <div className="app-header-low-stock-code">
-                                Mã hàng: {code || '—'}
-                              </div>
-                              <div className="app-header-low-stock-warn">
-                                Tồn kho: {Number(tkRaw)} / Tối thiểu: {Number(tnRaw)}
-                              </div>
-                            </li>
-                          )
-                        })}
+                      <ul className="app-header-cost-notif-list">
+                        {supabaseLowStock.map((n) => (
+                          <li
+                            key={n.id}
+                            className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
+                          >
+                            <button
+                              type="button"
+                              className="app-header-supabase-notif-btn"
+                              onClick={() => openSupabaseNotification(n)}
+                            >
+                              {n.message}
+                            </button>
+                          </li>
+                        ))}
                       </ul>
                     </>
                   ) : null}

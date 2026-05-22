@@ -85,3 +85,8 @@ export function clearAppNotificationById(id) {
 export function clearAllCostChangeNotifications() {
   saveAppNotifications([])
 }
+
+/** Đánh dấu toàn bộ thông báo local (giá vốn) như đã xử lý — đồng bộ với «Đọc tất cả». */
+export function markAllLocalNotificationsRead() {
+  clearAllCostChangeNotifications()
+}
