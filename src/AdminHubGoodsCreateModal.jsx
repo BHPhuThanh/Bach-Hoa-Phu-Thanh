@@ -1018,6 +1018,139 @@ export default function AdminHubGoodsCreateModal({
                 >
                   + Thêm đơn vị
                 </button>
+                <div
+                  className="ah-unit-modal__dvt-cards-mobile"
+                  aria-label="Đơn vị tính: nhập liệu dạng thẻ (mobile)"
+                >
+                  {gcUnitModalSortedRows.map((row, idx) => {
+                    const baseLbl =
+                      normalizeCatalogUnitLabel(gcUnitModalSortedRows[0]?.unitLabel || '').trim() ||
+                      'đơn vị cơ bản'
+                    const conv = parsePositiveConversion(row.conversion) ?? 1
+                    const sub =
+                      idx === 0
+                        ? 'Đơn vị cơ bản'
+                        : `1 ${normalizeCatalogUnitLabel(row.unitLabel) || '…'} = ${conv} ${baseLbl}`
+                    return (
+                      <div
+                        key={`gc-mob-${row.key}`}
+                        className={`ah-unit-modal__dvt-card${idx === 0 ? ' ah-unit-modal__dvt-card--base' : ''}`}
+                      >
+                        <p className="ah-unit-modal__dvt-card-meta">{sub}</p>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-u-${row.key}`}>Tên ĐVT</label>
+                          <input
+                            id={`gc-mob-u-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                            value={row.unitLabel}
+                            onChange={(e) =>
+                              setGcUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, unitLabel: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-c-${row.key}`}>Quy đổi</label>
+                          <input
+                            id={`gc-mob-c-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                            inputMode="decimal"
+                            value={row.conversion}
+                            onChange={(e) => updateUnitModalConversionAtKey(row.key, e.target.value)}
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-code-${row.key}`}>Mã hàng</label>
+                          <input
+                            id={`gc-mob-code-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                            value={row.code}
+                            onChange={(e) =>
+                              setGcUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, code: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-bc-${row.key}`}>Mã vạch</label>
+                          <input
+                            id={`gc-mob-bc-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__touch-input"
+                            value={row.barcode}
+                            onChange={(e) =>
+                              setGcUnitModal((m) =>
+                                m
+                                  ? {
+                                      ...m,
+                                      lines: m.lines.map((r) =>
+                                        r.key === row.key ? { ...r, barcode: e.target.value } : r
+                                      ),
+                                    }
+                                  : m
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-cost-${row.key}`}>Giá vốn</label>
+                          <input
+                            id={`gc-mob-cost-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money ah-unit-modal__touch-input"
+                            inputMode="numeric"
+                            value={row.cost}
+                            onChange={(e) =>
+                              updateUnitModalCostAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                            }
+                          />
+                        </div>
+                        <div className="ah-unit-modal__dvt-card-field">
+                          <label htmlFor={`gc-mob-p-${row.key}`}>Giá bán</label>
+                          <input
+                            id={`gc-mob-p-${row.key}`}
+                            className="ah-goods-card-input ah-unit-modal__cell-input ah-unit-modal__cell-input--money ah-unit-modal__touch-input"
+                            inputMode="numeric"
+                            value={row.price}
+                            onChange={(e) =>
+                              updateUnitModalPriceAtKey(row.key, e.target.value.replace(/\D/g, ''))
+                            }
+                          />
+                        </div>
+                        {idx > 0 ? (
+                          <button
+                            type="button"
+                            className="ah-unit-modal__row-remove ah-unit-modal__row-remove--mobile-block"
+                            onClick={() => removeUnitModalRowKey(row.key)}
+                          >
+                            Xóa đơn vị
+                          </button>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className="ah-unit-modal__add-inline ah-unit-modal__add-inline--mobile"
+                  onClick={addUnitModalRow}
+                >
+                  + Thêm đơn vị
+                </button>
               </section>
               <section className="ah-unit-modal__section">
                 <h3 className="ah-unit-modal__section-title">Thuộc tính</h3>

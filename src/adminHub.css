@@ -1344,6 +1344,28 @@
     flex-direction: column;
     align-items: stretch;
     gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+
+  .ah-goods-toolbar__row1-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    width: 100%;
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
+    order: 0;
+  }
+
+  .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-actions {
+    order: 2;
+  }
+
+  .ah-goods-filters-drawer-target .ah-goods-filter-field--brand {
+    display: none;
   }
 
   .ah-goods-toolbar--v2 .ah-goods-toolbar__row1-search {
@@ -1841,6 +1863,10 @@
   flex: 1 1 auto;
   min-width: 0;
   max-width: none;
+}
+
+.ah-goods-toolbar__row1-brand {
+  display: none;
 }
 
 .ah-goods-toolbar__row1-actions {

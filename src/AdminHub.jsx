@@ -6119,6 +6119,26 @@ export default function AdminHub({
                     </button>
                   ) : null}
                 </div>
+                {goodsToolbarNarrow ? (
+                  <div className="ah-goods-toolbar__row1-brand" aria-label="Lọc thương hiệu">
+                    <span className="ah-goods-filter-lbl" id="ah-goods-brand-lbl-mobile">
+                      Thương hiệu
+                    </span>
+                    <div className="ah-inbound-ncc-input-wrap ah-inbound-ncc-input-wrap--combo ah-goods-toolbar-brand-wrap">
+                      <InboundThuongHieuAutocomplete
+                        id="ah-goods-toolbar-th-mobile"
+                        value={goodsBrandKey}
+                        onValueChange={(v) => {
+                          setHangHoaDeepLinkListScope('all')
+                          setGoodsBrandKey(String(v ?? '').trim())
+                        }}
+                        options={brandOptions}
+                        placeholder="Tất cả thương hiệu…"
+                        listMaxHeight={248}
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 <div className="ah-goods-toolbar__row1-actions">
                   <div className="ah-split-create" ref={goodsCreateWrapRef}>
                     <button
