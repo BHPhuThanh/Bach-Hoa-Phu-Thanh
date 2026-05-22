@@ -620,11 +620,12 @@
   background: transparent;
   color: #e2e8f0;
   font-size: 0.78rem;
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
   font-family: inherit;
   cursor: pointer;
   word-break: break-word;
+  white-space: pre-line;
 }
 
 .app-header-supabase-notif-btn:hover {

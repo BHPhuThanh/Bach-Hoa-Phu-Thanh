@@ -2568,9 +2568,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const mergeCreatedLowStockNotifications = useCallback((lowStockRows) => {
     if (!lowStockRows?.length) return
     setSupabaseNotifications((p) => {
-      const ids = new Set(lowStockRows.map((x) => x.id))
-      const rest = p.filter((x) => !ids.has(x.id))
-      return [...lowStockRows, ...rest]
+      const withoutLowStock = p.filter((x) => x.kind !== 'low_stock')
+      return [...lowStockRows, ...withoutLowStock]
     })
   }, [])
 
@@ -2602,10 +2601,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [refreshSupabaseNotifications])
 
-  const supabaseUnreadCount = useMemo(
-    () => supabaseNotifications.filter((n) => !n.is_read).length,
-    [supabaseNotifications]
-  )
+  const supabaseUnreadCount = useMemo(() => {
+    let count = 0
+    let digestUnread = false
+    for (const n of supabaseNotifications) {
+      if (n.is_read) continue
+      if (n.kind === 'low_stock') {
+        if (String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')) {
+          digestUnread = true
+        }
+        continue
+      }
+      count += 1
+    }
+    return count + (digestUnread ? 1 : 0)
+  }, [supabaseNotifications])
 
   const markAllNotificationsRead = useCallback(async () => {
     if (markingAllNotifications) return
@@ -5264,7 +5274,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const costNotifyCount = appCostChangeNotifications.length
     const totalNotifyCount = supabaseUnreadCount + costNotifyCount
-    const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
+    const supabaseLowStock = supabaseNotifications.filter(
+      (n) =>
+        n.kind === 'low_stock' &&
+        String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')
+    )
     const bellBtn = (
       <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
         <button
