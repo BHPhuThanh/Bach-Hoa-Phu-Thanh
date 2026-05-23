@@ -317,6 +317,40 @@ function formatPosOrderCustomerDisplay(order) {
   return name || phone || '—'
 }
 
+function renderInboundLineCodeLink(ln) {
+  const code = ln.code || '—'
+  const ma_hang = String(ln.ma_hang ?? ln.code ?? '').trim()
+  const url = ln.variantId ? buildOpenHangHoaGoodsAbsUrl(ln.variantId, ma_hang) : ''
+  if (!url) return code
+  return (
+    <a
+      className="ah-inbound-line-code-link"
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Mở chi tiết sản phẩm (tab mới)"
+    >
+      {code}
+    </a>
+  )
+}
+
+function renderInboundLineNameButton(ln, onOpenQuickEdit) {
+  const name = ln.name || '—'
+  const vid = String(ln.variantId || '').trim()
+  if (!vid || typeof onOpenQuickEdit !== 'function') return name
+  return (
+    <button
+      type="button"
+      className="ah-inbound-product-name-btn"
+      onClick={() => onOpenQuickEdit(vid)}
+      title="Sửa nhanh sản phẩm"
+    >
+      {name}
+    </button>
+  )
+}
+
 function parseMoneyDraftVi(raw) {
   const d = String(raw ?? '').replace(/[^\d]/g, '')
   if (!d) return 0
@@ -1035,6 +1069,9 @@ export default function AdminHub({
   runInboundCompletionJob = null,
   /** App: đồng bộ nền products + inbound_history (Promise.all) — Modal chỉ gọi hàm này. */
   onConfirmInboundComplete = null,
+  /** App: từ thông báo tồn thấp — mở phiếu nhập + thêm dòng sẵn. */
+  inboundLowStockPrefillRequest = null,
+  onInboundLowStockPrefillConsumed,
 }) {
   /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
   const [returnDayLedger, setReturnDayLedger] = useState(() => {
@@ -1546,6 +1583,11 @@ export default function AdminHub({
   const goodsCreateWrapRef = useRef(null)
   const [goodsSelected, setGoodsSelected] = useState(() => ({}))
   const [goodsExpandedId, setGoodsExpandedId] = useState(null)
+  /** Modal sửa nhanh SP từ màn Nhập hàng (không rời tab). */
+  const [inboundQuickEditExpandId, setInboundQuickEditExpandId] = useState(null)
+  const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
+  const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
+  const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const [goodsDetailSelectedVid, setGoodsDetailSelectedVid] = useState(null)
   const [goodsDetailDraft, setGoodsDetailDraft] = useState(null)
   /** Tab phụ trong panel chi tiết hàng: Mô tả (form) / Lịch sử kho (thẻ kho). */
@@ -1713,6 +1755,43 @@ export default function AdminHub({
     },
     [catalogList]
   )
+
+  const closeInboundProductQuickEdit = useCallback(() => {
+    setInboundQuickEditExpandId(null)
+    setInboundQuickEditSelectedVid(null)
+    setInboundQuickEditDraft(null)
+  }, [])
+
+  const openInboundProductQuickEdit = useCallback(
+    (variantId) => {
+      const vid = String(variantId || '').trim()
+      if (!vid) return
+      const ctx = findVariantContext(catalogList, vid)
+      const rowVariantId = ctx?.clicked?.id ?? vid
+      const baseVid = ctx?.variants?.[0]?.id ?? rowVariantId
+      const vOpen = ctx?.variants.find((x) => x.id === baseVid) ?? ctx?.clicked
+      if (vOpen) {
+        setInboundQuickEditDraft(buildGoodsDetailDraft(vOpen))
+        setInboundQuickEditSelectedVid(baseVid)
+      } else {
+        setInboundQuickEditDraft(null)
+        setInboundQuickEditSelectedVid(null)
+      }
+      setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+      setInboundQuickEditExpandId(rowVariantId)
+    },
+    [catalogList]
+  )
+
+  const inboundQuickEditCtx = useMemo(() => {
+    if (!inboundQuickEditExpandId) return null
+    return findVariantContext(catalogList, inboundQuickEditExpandId)
+  }, [catalogList, inboundQuickEditExpandId])
+
+  const inboundQuickEditVariant = useMemo(() => {
+    if (!inboundQuickEditCtx || !inboundQuickEditSelectedVid) return null
+    return inboundQuickEditCtx.variants.find((x) => x.id === inboundQuickEditSelectedVid) ?? null
+  }, [inboundQuickEditCtx, inboundQuickEditSelectedVid])
 
   const goodsDetailVariantFp = useMemo(() => {
     const v = goodsDetailVariant
@@ -3299,6 +3378,49 @@ export default function AdminHub({
       setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : hint))
     }
   }, [])
+
+  const openInboundDraftWithProductPairs = useCallback(
+    (pairs) => {
+      if (!Array.isArray(pairs) || pairs.length === 0) return
+      resetInboundForm()
+      setInboundDraftSession(true)
+      setActiveTab(TAB_INBOUND_DRAFT)
+      syncHubUrlToMainTab(TAB_INBOUND)
+      const lines = []
+      const seen = new Set()
+      let supplierHint = ''
+      for (const row of pairs) {
+        const product = row?.product
+        const variant = row?.variant
+        if (!product || !variant) continue
+        const vid = String(variant.id ?? '').trim()
+        if (vid && seen.has(vid)) continue
+        if (vid) seen.add(vid)
+        lines.push(createInboundFormLineFromProductVariant(product, variant))
+        if (!supplierHint) {
+          supplierHint = brandThuongHieuFromProductVariant(product, variant)
+        }
+      }
+      if (!lines.length) return
+      setInboundFormLines(lines)
+      if (supplierHint) {
+        setInboundFormSupplierName(supplierHint)
+        setInboundFormSupplierQ(supplierHint)
+      }
+    },
+    [resetInboundForm, syncHubUrlToMainTab]
+  )
+
+  useEffect(() => {
+    const pairs = inboundLowStockPrefillRequest?.pairs
+    if (!pairs?.length) return
+    openInboundDraftWithProductPairs(pairs)
+    onInboundLowStockPrefillConsumed?.()
+  }, [
+    inboundLowStockPrefillRequest,
+    openInboundDraftWithProductPairs,
+    onInboundLowStockPrefillConsumed,
+  ])
 
   const applyInboundScannedCode = useCallback(
     (raw) => {
@@ -4947,6 +5069,78 @@ export default function AdminHub({
     revenueReadOnly,
     openGoodsBrandSupplierModal,
     closeGoodsDetail,
+  ])
+
+  const inboundQuickEditSlot = useMemo(() => {
+    if (!inboundQuickEditExpandId || !inboundQuickEditCtx || !inboundQuickEditVariant || !inboundQuickEditDraft) {
+      return null
+    }
+    return (
+      <AdminHubGoodsExpandedBelow
+        GOODS_DETAIL_VIEW_TONKHO={GOODS_DETAIL_VIEW_TONKHO}
+        GOODS_DETAIL_VIEW_LICHSU={GOODS_DETAIL_VIEW_LICHSU}
+        GOODS_DETAIL_VIEW_COMBO={GOODS_DETAIL_VIEW_COMBO}
+        goodsDetailShelfTab={inboundQuickEditShelfTab}
+        setGoodsDetailShelfTab={setInboundQuickEditShelfTab}
+        discardGoodsDetailDraft={() => setInboundQuickEditDraft(null)}
+        saveGoodsDetail={saveGoodsDetail}
+        v={inboundQuickEditVariant}
+        d={inboundQuickEditDraft}
+        goodsDetailCtx={inboundQuickEditCtx}
+        goodsDetailSelectedVid={inboundQuickEditSelectedVid}
+        setGoodsDetailSelectedVid={setInboundQuickEditSelectedVid}
+        setGoodsDetailDraft={setInboundQuickEditDraft}
+        buildGoodsDetailDraft={buildGoodsDetailDraft}
+        copyGoodsDetail={copyGoodsDetail}
+        deleteGoodsDetailVariant={deleteGoodsDetailVariant}
+        formatMoneyDraftVi={formatMoneyDraftVi}
+        goodsStockLedgerMerged={goodsMergedInventoryLedgerRows}
+        goodsInventoryPreviewRows={goodsInventoryPreviewRows}
+        goodsInvLedgerDateFrom={goodsInvLedgerDateFrom}
+        goodsInvLedgerDateTo={goodsInvLedgerDateTo}
+        goodsInvLedgerDocumentSearch={goodsInvLedgerDocSearch}
+        onGoodsInvLedgerDateFromChange={setGoodsInvLedgerDateFrom}
+        onGoodsInvLedgerDateToChange={setGoodsInvLedgerDateTo}
+        onGoodsInvLedgerDocumentSearchChange={setGoodsInvLedgerDocSearch}
+        onInventoryDocumentActivate={handleInventoryLedgerDocActivate}
+        getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
+        openGoodsUnitModal={openGoodsUnitModal}
+        catalogList={catalogList}
+        isComboDetail={!!inboundQuickEditCtx?.product && isComboCatalogProduct(inboundQuickEditCtx.product)}
+        comboDetailProduct={inboundQuickEditCtx?.product ?? null}
+        onEditComboProduct={() => {
+          if (inboundQuickEditCtx?.product && isComboCatalogProduct(inboundQuickEditCtx.product)) {
+            setComboModal({ mode: 'edit', product: inboundQuickEditCtx.product })
+          }
+        }}
+        goodsBrandAutocompleteOptions={inboundNccAutocompleteOptions}
+        onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
+        onCloseGoodsDetail={closeInboundProductQuickEdit}
+      />
+    )
+  }, [
+    inboundQuickEditExpandId,
+    inboundQuickEditCtx,
+    inboundQuickEditVariant,
+    inboundQuickEditDraft,
+    inboundQuickEditShelfTab,
+    inboundQuickEditSelectedVid,
+    goodsMergedInventoryLedgerRows,
+    goodsInventoryPreviewRows,
+    goodsInvLedgerDateFrom,
+    goodsInvLedgerDateTo,
+    goodsInvLedgerDocSearch,
+    handleInventoryLedgerDocActivate,
+    saveGoodsDetail,
+    buildGoodsDetailDraft,
+    copyGoodsDetail,
+    deleteGoodsDetailVariant,
+    openGoodsUnitModal,
+    catalogList,
+    inboundNccAutocompleteOptions,
+    revenueReadOnly,
+    openGoodsBrandSupplierModal,
+    closeInboundProductQuickEdit,
   ])
 
   const openPosReturnModal = useCallback(
@@ -7773,33 +7967,8 @@ export default function AdminHub({
                             return (
                               <tr key={ln.lineId}>
                                 <td className="ah-inbound-ln-stt">{idx + 1}</td>
-                                <td>{ln.code || '—'}</td>
-                                <td>
-                                  {ln.variantId ? (
-                                    <a
-                                      className="ah-inbound-detail-name-link"
-                                      href={
-                                        buildOpenHangHoaGoodsAbsUrl(
-                                          ln.variantId,
-                                          String(ln.ma_hang ?? ln.code ?? '').trim()
-                                        ) || '#'
-                                      }
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      title="Mở sản phẩm trên tab Hàng hóa"
-                                      onClick={(e) => {
-                                        const ma_hang = String(ln.ma_hang ?? ln.code ?? '').trim()
-                                        const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, ma_hang)
-                                        if (!u) e.preventDefault()
-                                        else console.log('LINK REDIRECT ĐẾN:', u)
-                                      }}
-                                    >
-                                      {ln.name || '—'}
-                                    </a>
-                                  ) : (
-                                    ln.name || '—'
-                                  )}
-                                </td>
+                                <td>{renderInboundLineCodeLink(ln)}</td>
+                                <td>{renderInboundLineNameButton(ln, openInboundProductQuickEdit)}</td>
                                 <td className="ah-inbound-ln-dvt-cell">
                                   {inboundDetailIsEditing ? (
                                     <select
@@ -7993,8 +8162,8 @@ export default function AdminHub({
                     </button>
                   </div>
                 )}
-                <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap">
-                  <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table">
+                <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap ah-responsive-table-wrap ah-pos-order-lines-wrap">
+                  <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table ah-responsive-table">
                     <thead>
                       <tr>
                         <th className="ah-inbound-ln-stt">STT</th>
@@ -8014,7 +8183,7 @@ export default function AdminHub({
                     </thead>
                     <tbody>
                       {(posDetailDraft ?? posDetailNorm).items.length === 0 ? (
-                        <tr>
+                        <tr className="ah-responsive-table-empty">
                           <td colSpan={posDetailIsEditing ? 9 : 9} className="admin-hub-muted">
                             Chưa có dòng hàng.
                           </td>
@@ -8022,34 +8191,36 @@ export default function AdminHub({
                       ) : (
                         (posDetailDraft ?? posDetailNorm).items.map((rawIt, idx) => {
                           const it = rawIt
+                          const lineTotal = Number(it.price) * Number(it.qty)
                           return (
-                            <tr key={it.orderLineId || idx}>
-                              <td className="ah-inbound-ln-stt">{idx + 1}</td>
-                                <td>{it.code || '—'}</td>
-                                <td>
-                                  {(() => {
-                                    const ma_hang = String(it.ma_hang ?? it.code ?? '').trim()
-                                    const url = buildOpenHangHoaGoodsAbsUrl(it.variantId, ma_hang)
-                                    if (!url) return it.name || '—'
-                                    return (
-                                      <a
-                                        className="ah-inbound-detail-name-link"
-                                        href={url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        title="Mở sản phẩm trên tab Hàng hóa"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          console.log('LINK REDIRECT ĐẾN:', url)
-                                        }}
-                                      >
-                                        {it.name || '—'}
-                                      </a>
-                                    )
-                                  })()}
-                                </td>
-                              <td>{it.unitLabel || '—'}</td>
-                              <td className="ah-num">
+                            <tr key={it.orderLineId || idx} className="ah-responsive-table-card-row ah-pos-order-line-card">
+                              <td className="ah-inbound-ln-stt ah-pos-order-line-stt">{idx + 1}</td>
+                              <td data-label="Mã hàng">{it.code || '—'}</td>
+                              <td className="ah-pos-order-line-name" data-label="Tên hàng">
+                                {(() => {
+                                  const ma_hang = String(it.ma_hang ?? it.code ?? '').trim()
+                                  const url = buildOpenHangHoaGoodsAbsUrl(it.variantId, ma_hang)
+                                  if (!url) return it.name || '—'
+                                  return (
+                                    <a
+                                      className="ah-inbound-detail-name-link"
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Mở sản phẩm trên tab Hàng hóa"
+                                    >
+                                      {it.name || '—'}
+                                    </a>
+                                  )
+                                })()}
+                              </td>
+                              <td data-label="ĐVT">{it.unitLabel || '—'}</td>
+                              <td className="ah-num ah-pos-order-line-qty" data-label="Số lượng">
+                                <span className="ah-pos-order-line-qty-price-mobile">
+                                  {Number(it.qty).toLocaleString('vi-VN')} ×{' '}
+                                  {Number(it.price).toLocaleString('vi-VN')} đ
+                                </span>
+                                <span className="ah-pos-order-line-qty-desktop">
                                 {posDetailIsEditing ? (
                                   <input
                                     className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
@@ -8070,8 +8241,10 @@ export default function AdminHub({
                                 ) : (
                                   Number(it.qty).toLocaleString('vi-VN')
                                 )}
+                                </span>
                               </td>
-                              <td className="ah-num">
+                              <td className="ah-num ah-pos-order-line-price" data-label="Đơn giá bán">
+                                <span className="ah-pos-order-line-qty-desktop">
                                 {posDetailIsEditing ? (
                                   <input
                                     className="ah-inbound-cell-input ah-inbound-cell-input--soft"
@@ -8089,10 +8262,13 @@ export default function AdminHub({
                                 ) : (
                                   `${Number(it.price).toLocaleString('vi-VN')} đ`
                                 )}
+                                </span>
                               </td>
-                              <td className="ah-num">{Number(it.cost).toLocaleString('vi-VN')} đ</td>
-                              <td className="ah-num">
-                                {(Number(it.price) * Number(it.qty)).toLocaleString('vi-VN')} đ
+                              <td className="ah-num" data-label="Giá vốn">
+                                {Number(it.cost).toLocaleString('vi-VN')} đ
+                              </td>
+                              <td className="ah-num ah-pos-order-line-sum" data-label="Thành tiền">
+                                {lineTotal.toLocaleString('vi-VN')} đ
                               </td>
                               {!posDetailIsEditing ? (
                                 <td className="ah-num">
@@ -8518,6 +8694,7 @@ export default function AdminHub({
                             updateInboundFormLine={updateInboundFormLine}
                             selectInboundInputOnFocus={selectInboundInputOnFocus}
                             handleInboundNumericKeyDown={handleInboundNumericKeyDown}
+                            onOpenProductQuickEdit={openInboundProductQuickEdit}
                           />
                         ))
                       )}
@@ -9234,6 +9411,37 @@ export default function AdminHub({
           revenueReadOnly={revenueReadOnly}
         />
       )}
+
+      {inboundQuickEditExpandId && inboundQuickEditSlot ? (
+        <div
+          className="ah-inbound-quick-edit-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeInboundProductQuickEdit()
+          }}
+        >
+          <div
+            className="ah-inbound-quick-edit-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sửa nhanh sản phẩm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="ah-inbound-quick-edit-head">
+              <h2 className="ah-inbound-quick-edit-title">Sửa nhanh sản phẩm</h2>
+              <button
+                type="button"
+                className="ah-inbound-quick-edit-close"
+                aria-label="Đóng"
+                onClick={closeInboundProductQuickEdit}
+              >
+                ×
+              </button>
+            </header>
+            <div className="ah-inbound-quick-edit-body">{inboundQuickEditSlot}</div>
+          </div>
+        </div>
+      ) : null}
 
       <BarcodeScanModal
         open={barcodeScanOpen}

@@ -62,6 +62,91 @@ export function formatLowStockDigestLine(code, name, stock) {
 }
 
 /**
+ * Bóc tách dòng trong digest tồn thấp: `- [MÃ] Tên (Còn: X)`.
+ * @param {string} message
+ * @returns {Array<{ code: string, name: string, stockLabel: string }>}
+ */
+export function parseLowStockDigestMessage(message) {
+  const items = []
+  for (const raw of String(message ?? '').split('\n')) {
+    const line = raw.trim()
+    if (!line.startsWith('-')) continue
+    const m = line.match(/^-\s*\[([^\]]+)\]\s*(.+?)\s*\(Còn:\s*([^)]+)\)\s*$/)
+    if (m) {
+      items.push({
+        code: m[1].trim(),
+        name: m[2].trim(),
+        stockLabel: m[3].trim(),
+      })
+    }
+  }
+  return items
+}
+
+/**
+ * Khớp mã digest với catalog để lấy product + variant.
+ * @param {Array} products
+ * @param {Array<{ code: string }>} parsedItems
+ */
+export function resolveLowStockItemsFromCatalog(products, parsedItems) {
+  if (!Array.isArray(products) || !Array.isArray(parsedItems)) return []
+  const out = []
+  const seen = new Set()
+  for (const item of parsedItems) {
+    const needle = String(item.code ?? '').trim().toLowerCase()
+    if (!needle || seen.has(needle)) continue
+    for (const p of products) {
+      const vars = Array.isArray(p?.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+      const v = vars.find((x) => String(x?.code ?? '').trim().toLowerCase() === needle)
+      if (v) {
+        seen.add(needle)
+        out.push({
+          code: String(v.code ?? item.code ?? '').trim(),
+          name: String(p.name || v.name || item.name || '').trim(),
+          stockLabel: item.stockLabel,
+          product: p,
+          variant: v,
+        })
+        break
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Quét catalog: ton_kho <= ton_nho_nhat (stockNormMin).
+ * @param {Array} products
+ */
+export function collectLowStockProductsFromCatalog(products) {
+  if (!Array.isArray(products)) return []
+  const out = []
+  const seen = new Set()
+  for (const p of products) {
+    const vars = Array.isArray(p?.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    for (const v of vars) {
+      const code = String(v?.code ?? '').trim()
+      if (!code) continue
+      const key = code.toLowerCase()
+      if (seen.has(key)) continue
+      const min = Number(v.stockNormMin ?? v.ton_nho_nhat)
+      const stock = Number(v.stockQty ?? v.ton_kho ?? v.stock)
+      if (!Number.isFinite(min) || min <= 0) continue
+      if (!Number.isFinite(stock) || stock > min) continue
+      seen.add(key)
+      out.push({
+        code,
+        name: String(p.name || v.name || '').trim() || code,
+        stockLabel: formatRoundedStockQtyVi(stock),
+        product: p,
+        variant: v,
+      })
+    }
+  }
+  return out
+}
+
+/**
  * @param {string} message
  * @param {string} code
  * @param {string} [name]

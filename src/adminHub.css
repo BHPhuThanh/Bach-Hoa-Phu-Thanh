@@ -1008,7 +1008,7 @@
     max-height: none;
     position: sticky;
     top: 0;
-    z-index: 40;
+    z-index: 12;
     margin-bottom: 1rem;
     background-color: #0a0c0f;
   }
@@ -1345,7 +1345,7 @@
   .ah-goods-catalog-shell > .ah-goods-catalog-toolbar {
     overflow: visible;
     position: relative;
-    z-index: 45;
+    z-index: 12;
   }
 
   /* Mobile row1: Tìm kiếm → Thương hiệu → Nút hành động */
@@ -1389,7 +1389,7 @@
   }
 
   .ah-goods-toolbar__row1-brand .ah-inbound-ncc-combo-dropdown {
-    z-index: 100040;
+    z-index: 30;
   }
 
   .ah-goods-filter-field--brand-drawer {
@@ -8806,4 +8806,143 @@ li.ah-inbound-suggest-empty {
   .ah-orders-list-toolbar {
     flex-wrap: nowrap;
   }
+}
+
+/* Chi tiết đơn POS — card từng dòng SP trên mobile */
+@media (max-width: 767px) {
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card .ah-inbound-ln-stt,
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card .ah-pos-order-line-stt {
+    display: none !important;
+  }
+
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card .ah-pos-order-line-name::before {
+    display: none;
+  }
+
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card .ah-pos-order-line-name .ah-inbound-detail-name-link,
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card .ah-pos-order-line-name {
+    font-size: 1rem;
+    font-weight: 800;
+    color: #f1f5f9;
+  }
+
+  .ah-pos-order-lines-wrap .ah-pos-order-line-qty-price-mobile {
+    display: block;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .ah-pos-order-lines-wrap .ah-pos-order-line-qty-desktop {
+    display: none;
+  }
+
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card td.ah-pos-order-line-price {
+    display: none !important;
+  }
+
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card td.ah-pos-order-line-sum {
+    margin-top: 0.25rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid #334155;
+    font-size: 1rem;
+    font-weight: 800;
+    color: #7dd3fc;
+  }
+
+  .ah-pos-order-lines-wrap tr.ah-pos-order-line-card td.ah-pos-order-line-sum::before {
+    color: #94a3b8;
+  }
+}
+
+@media (min-width: 768px) {
+  .ah-pos-order-lines-wrap .ah-pos-order-line-qty-price-mobile {
+    display: none;
+  }
+}
+
+.ah-inbound-product-name-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: #7dd3fc;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ah-inbound-product-name-btn:hover {
+  color: #bae6fd;
+}
+
+.ah-inbound-quick-edit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 93400;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+
+@media (min-width: 769px) {
+  .ah-inbound-quick-edit-backdrop {
+    align-items: center;
+  }
+}
+
+.ah-inbound-quick-edit-panel {
+  width: min(100%, 52rem);
+  max-height: min(92vh, 720px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: #11151a;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.ah-inbound-quick-edit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.ah-inbound-quick-edit-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.ah-inbound-quick-edit-close {
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ah-inbound-quick-edit-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ah-inbound-quick-edit-body .ah-goods-detail-after-virt {
+  max-height: none;
 }

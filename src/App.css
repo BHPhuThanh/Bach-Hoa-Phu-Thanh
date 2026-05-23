@@ -401,7 +401,7 @@
   align-items: center;
   vertical-align: middle;
   overflow: visible;
-  z-index: 100;
+  z-index: 100060;
 }
 
 .app-header-notify-wrap .app-header-icon-btn {
@@ -437,7 +437,7 @@
   width: auto;
   max-width: calc(100vw - 32px);
   max-height: min(360px, 70vh);
-  z-index: 9999 !important;
+  z-index: 100050 !important;
   display: flex;
   flex-direction: column;
   border-radius: 10px;
@@ -630,6 +630,145 @@
 
 .app-header-supabase-notif-btn:hover {
   background: rgba(56, 189, 248, 0.08);
+}
+
+/* Modal chi tiết tồn kho thấp */
+.app-low-stock-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100070;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.app-low-stock-detail-modal {
+  width: min(28rem, 100%);
+  max-height: min(88vh, 36rem);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: linear-gradient(180deg, #1a222c 0%, #121820 100%);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+  overflow: hidden;
+}
+
+.app-low-stock-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.65rem;
+  border-bottom: 1px solid #334155;
+}
+
+.app-low-stock-detail-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #f8fafc;
+}
+
+.app-low-stock-detail-close {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 8px;
+  background: #252b36;
+  color: #cbd5e1;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-low-stock-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+}
+
+.app-low-stock-detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.app-low-stock-detail-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #161b22;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.app-low-stock-detail-code {
+  font-weight: 800;
+  color: #7dd3fc;
+}
+
+.app-low-stock-detail-name {
+  flex: 1 1 8rem;
+  font-weight: 600;
+}
+
+.app-low-stock-detail-stock {
+  font-size: 0.78rem;
+  color: #fbbf24;
+  font-weight: 700;
+}
+
+.app-low-stock-detail-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.app-low-stock-detail-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 1rem;
+  border-top: 1px solid #334155;
+}
+
+.app-low-stock-detail-btn {
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #252b36;
+  color: #e2e8f0;
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+
+.app-low-stock-detail-btn--primary {
+  border-color: #1890ff;
+  background: #0b4f8c;
+  color: #fff;
+}
+
+.app-low-stock-detail-btn--primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .app-header-cost-notif-btn:hover {

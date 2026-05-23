@@ -41,7 +41,8 @@ function propsEqual(a, b) {
     a.removeInboundFormLine !== b.removeInboundFormLine ||
     a.updateInboundFormLine !== b.updateInboundFormLine ||
     a.selectInboundInputOnFocus !== b.selectInboundInputOnFocus ||
-    a.handleInboundNumericKeyDown !== b.handleInboundNumericKeyDown
+    a.handleInboundNumericKeyDown !== b.handleInboundNumericKeyDown ||
+    a.onOpenProductQuickEdit !== b.onOpenProductQuickEdit
   ) {
     return false
   }
@@ -56,6 +57,7 @@ const AdminHubInboundDraftLineRow = memo(function AdminHubInboundDraftLineRow({
   updateInboundFormLine,
   selectInboundInputOnFocus,
   handleInboundNumericKeyDown,
+  onOpenProductQuickEdit,
 }) {
   const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
   const inboundDvtLocked = inboundDvtOptions.length <= 1
@@ -102,7 +104,20 @@ const AdminHubInboundDraftLineRow = memo(function AdminHubInboundDraftLineRow({
           ln.code || '—'
         )}
       </td>
-      <td className="ah-inbound-draft-td-name">{ln.name || '—'}</td>
+      <td className="ah-inbound-draft-td-name">
+        {ln.variantId && typeof onOpenProductQuickEdit === 'function' ? (
+          <button
+            type="button"
+            className="ah-inbound-product-name-btn"
+            onClick={() => onOpenProductQuickEdit(String(ln.variantId))}
+            title="Sửa nhanh sản phẩm"
+          >
+            {ln.name || '—'}
+          </button>
+        ) : (
+          ln.name || '—'
+        )}
+      </td>
       <td
         className="ah-inbound-ln-mid ah-inbound-ln-spread ah-inbound-draft-td-ncc"
         title="thuong_hieu (file danh mục / trường brand)"

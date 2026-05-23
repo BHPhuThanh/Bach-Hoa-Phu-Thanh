@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import debounce from 'lodash/debounce'
 import { useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
@@ -125,9 +126,12 @@ import {
   markAllLocalNotificationsRead,
 } from './appNotificationsStorage.js'
 import {
+  collectLowStockProductsFromCatalog,
   fetchNotificationsFromSupabase,
   markAllNotificationsReadInSupabase,
   NOTIFICATIONS_BUMP_EVENT,
+  parseLowStockDigestMessage,
+  resolveLowStockItemsFromCatalog,
   runLowStockAlertsInBackground,
 } from './notificationsRepository.js'
 import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
@@ -2488,6 +2492,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   )
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
+  const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
+  const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
   const [storedCustomers, setStoredCustomers] = useState(() => loadStoredCustomers())
   const [customerAddOpen, setCustomerAddOpen] = useState(false)
   const [customerAddSaving, setCustomerAddSaving] = useState(false)
@@ -2642,6 +2648,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const openSupabaseNotification = useCallback(
     (n) => {
+      const isLowStockDigest =
+        n?.kind === 'low_stock' &&
+        String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')
+
+      if (isLowStockDigest) {
+        setLowStockAlertOpen(false)
+        setSupabaseNotifications((prev) =>
+          prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x))
+        )
+        if (isSupabaseConfigured()) {
+          void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
+        }
+        const parsed = parseLowStockDigestMessage(n.message)
+        let items = resolveLowStockItemsFromCatalog(products, parsed)
+        if (!items.length) {
+          items = collectLowStockProductsFromCatalog(products)
+        }
+        setLowStockDetailModal({ notification: n, items })
+        return
+      }
+
       const rawId = String(n?.variantId || n?.code || '').trim()
       if (!rawId) return
       setLowStockAlertOpen(false)
@@ -2659,8 +2686,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         /* ignore */
       }
     },
-    []
+    [products]
   )
+
+  const startInboundFromLowStockModal = useCallback(() => {
+    const items = lowStockDetailModal?.items ?? []
+    if (!items.length) return
+    setLowStockDetailModal(null)
+    setPendingInboundLowStockPrefill({
+      ts: Date.now(),
+      pairs: items.map((it) => ({ product: it.product, variant: it.variant })),
+    })
+    setActiveView('dashboard')
+  }, [lowStockDetailModal])
+
+  const clearPendingInboundLowStockPrefill = useCallback(() => {
+    setPendingInboundLowStockPrefill(null)
+  }, [])
 
   const openHangHoaFromCostNotification = useCallback(
     (n) => {
@@ -5352,13 +5394,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             </span>
           ) : null}
         </button>
-        {lowStockAlertOpen ? (
-          <div
-            className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
-            role="dialog"
-            aria-label="Thông báo"
-          >
-            <div className="app-header-low-stock-popover-head">
+        {lowStockAlertOpen && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
+                role="dialog"
+                aria-label="Thông báo"
+              >
+                <div className="app-header-low-stock-popover-head">
               <span className="app-header-low-stock-popover-title">Thông báo</span>
               {totalNotifyCount > 0 ? (
                 <button
@@ -5421,9 +5464,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   ) : null}
                 </>
               )}
-            </div>
-          </div>
-        ) : null}
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
       </div>
     )
 
@@ -6152,8 +6197,77 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           onFlushCatalogToSupabase={flushCatalogToSupabase}
           runInboundCompletionJob={runInboundCompletionJob}
           onConfirmInboundComplete={handleConfirmInboundComplete}
+          inboundLowStockPrefillRequest={pendingInboundLowStockPrefill}
+          onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
         />
       )}
+
+      {lowStockDetailModal &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="app-low-stock-detail-backdrop"
+            role="presentation"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setLowStockDetailModal(null)
+            }}
+          >
+            <div
+              className="app-low-stock-detail-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="app-low-stock-detail-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <header className="app-low-stock-detail-head">
+                <h2 id="app-low-stock-detail-title" className="app-low-stock-detail-title">
+                  📋 Danh sách sản phẩm cần nhập hàng
+                </h2>
+                <button
+                  type="button"
+                  className="app-low-stock-detail-close"
+                  aria-label="Đóng"
+                  onClick={() => setLowStockDetailModal(null)}
+                >
+                  ×
+                </button>
+              </header>
+              <div className="app-low-stock-detail-body">
+                {lowStockDetailModal.items.length === 0 ? (
+                  <p className="app-low-stock-detail-empty">Không có sản phẩm tồn thấp trong danh mục hiện tại.</p>
+                ) : (
+                  <ul className="app-low-stock-detail-list">
+                    {lowStockDetailModal.items.map((it) => (
+                      <li key={`${it.code}-${it.variant?.id ?? ''}`} className="app-low-stock-detail-item">
+                        <span className="app-low-stock-detail-code">[{it.code}]</span>{' '}
+                        <span className="app-low-stock-detail-name">{it.name}</span>
+                        <span className="app-low-stock-detail-stock">Còn: {it.stockLabel}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <footer className="app-low-stock-detail-foot">
+                <button
+                  type="button"
+                  className="app-low-stock-detail-btn app-low-stock-detail-btn--ghost"
+                  onClick={() => setLowStockDetailModal(null)}
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  className="app-low-stock-detail-btn app-low-stock-detail-btn--primary"
+                  disabled={!lowStockDetailModal.items.length}
+                  onClick={startInboundFromLowStockModal}
+                >
+                  Tạo đơn nhập hàng
+                </button>
+              </footer>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {activeView === 'sell' && products.length > 0 && (
         <main className="pos-main pos-main--dock">
