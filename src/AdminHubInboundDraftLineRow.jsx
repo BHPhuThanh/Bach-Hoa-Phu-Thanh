@@ -105,11 +105,14 @@ const AdminHubInboundDraftLineRow = memo(function AdminHubInboundDraftLineRow({
         )}
       </td>
       <td className="ah-inbound-draft-td-name">
-        {ln.variantId && typeof onOpenProductQuickEdit === 'function' ? (
+        {typeof onOpenProductQuickEdit === 'function' && (ln.variantId || ln.code) ? (
           <button
             type="button"
-            className="ah-inbound-product-name-btn"
-            onClick={() => onOpenProductQuickEdit(String(ln.variantId))}
+            className="ah-inbound-product-name-btn ah-inbound-product-name-btn--clickable"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenProductQuickEdit(ln, catalogListForInbound)
+            }}
             title="Sửa nhanh sản phẩm"
           >
             {ln.name || '—'}

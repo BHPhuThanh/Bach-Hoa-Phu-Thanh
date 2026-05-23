@@ -771,6 +771,15 @@
   cursor: not-allowed;
 }
 
+.app-low-stock-report-message {
+  margin: 0;
+  white-space: pre-line;
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
 .app-header-cost-notif-btn:hover {
   background: rgba(56, 189, 248, 0.08);
   color: #f8fafc;

@@ -335,20 +335,41 @@ function renderInboundLineCodeLink(ln) {
   )
 }
 
-function renderInboundLineNameButton(ln, onOpenQuickEdit) {
+function renderInboundLineNameButton(ln, onOpenQuickEdit, catalogList) {
   const name = ln.name || '—'
-  const vid = String(ln.variantId || '').trim()
+  const vid = resolveVariantIdForInboundLine(ln, catalogList)
   if (!vid || typeof onOpenQuickEdit !== 'function') return name
   return (
     <button
       type="button"
-      className="ah-inbound-product-name-btn"
-      onClick={() => onOpenQuickEdit(vid)}
+      className="ah-inbound-product-name-btn ah-inbound-product-name-btn--clickable"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpenQuickEdit(vid)
+      }}
       title="Sửa nhanh sản phẩm"
     >
       {name}
     </button>
   )
+}
+
+/** Tìm variant id từ dòng nhập — ưu tiên variantId, fallback mã hàng. */
+function resolveVariantIdForInboundLine(ln, catalogList) {
+  const vid = String(ln?.variantId ?? '').trim()
+  if (vid && catalogList?.length) {
+    const ctx = findVariantContext(catalogList, vid)
+    if (ctx?.clicked?.id) return String(ctx.clicked.id)
+    if (ctx) return vid
+  }
+  const needle = String(ln?.code ?? ln?.ma_hang ?? '').trim().toLowerCase()
+  if (!needle || !Array.isArray(catalogList)) return vid
+  for (const p of catalogList) {
+    const vars = Array.isArray(p?.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    const v = vars.find((x) => String(x?.code ?? '').trim().toLowerCase() === needle)
+    if (v?.id != null && String(v.id).trim()) return String(v.id)
+  }
+  return vid
 }
 
 function parseMoneyDraftVi(raw) {
@@ -1763,8 +1784,12 @@ export default function AdminHub({
   }, [])
 
   const openInboundProductQuickEdit = useCallback(
-    (variantId) => {
-      const vid = String(variantId || '').trim()
+    (variantIdOrLine, catalogHint) => {
+      const ln = variantIdOrLine && typeof variantIdOrLine === 'object' ? variantIdOrLine : null
+      const rawVid = ln
+        ? resolveVariantIdForInboundLine(ln, catalogHint || catalogList)
+        : String(variantIdOrLine || '').trim()
+      const vid = rawVid
       if (!vid) return
       const ctx = findVariantContext(catalogList, vid)
       const rowVariantId = ctx?.clicked?.id ?? vid
@@ -7968,7 +7993,7 @@ export default function AdminHub({
                               <tr key={ln.lineId}>
                                 <td className="ah-inbound-ln-stt">{idx + 1}</td>
                                 <td>{renderInboundLineCodeLink(ln)}</td>
-                                <td>{renderInboundLineNameButton(ln, openInboundProductQuickEdit)}</td>
+                                <td>{renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}</td>
                                 <td className="ah-inbound-ln-dvt-cell">
                                   {inboundDetailIsEditing ? (
                                     <select
@@ -9412,7 +9437,7 @@ export default function AdminHub({
         />
       )}
 
-      {inboundQuickEditExpandId && inboundQuickEditSlot ? (
+      {inboundQuickEditExpandId ? (
         <div
           className="ah-inbound-quick-edit-backdrop"
           role="presentation"
@@ -9438,7 +9463,13 @@ export default function AdminHub({
                 ×
               </button>
             </header>
-            <div className="ah-inbound-quick-edit-body">{inboundQuickEditSlot}</div>
+            <div className="ah-inbound-quick-edit-body">
+              {inboundQuickEditSlot ?? (
+                <p className="admin-hub-muted" style={{ padding: '1rem' }}>
+                  Không tìm thấy sản phẩm trong danh mục.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       ) : null}

@@ -39,6 +39,7 @@ import {
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
+import LowStockReportModal from './LowStockReportModal.jsx'
 import { blurActiveElement } from './scanFeedback.js'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
 import {
@@ -2512,6 +2513,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
   const lowStockAlertWrapRef = useRef(null)
+  const lowStockPopoverRef = useRef(null)
   const headerSuggestWrapRef = useRef(null)
   const scannerMenuRef = useRef(null)
   const posScanToastClearRef = useRef(null)
@@ -2646,47 +2648,70 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [markingAllNotifications, activeSellerId, refreshSupabaseNotifications])
 
-  const openSupabaseNotification = useCallback(
-    (n) => {
-      const isLowStockDigest =
-        n?.kind === 'low_stock' &&
-        String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')
+  const markSupabaseNotificationRead = useCallback((n) => {
+    if (!n?.id) return
+    setSupabaseNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
+    if (isSupabaseConfigured()) {
+      void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
+    }
+  }, [])
 
-      if (isLowStockDigest) {
-        setLowStockAlertOpen(false)
-        setSupabaseNotifications((prev) =>
-          prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x))
-        )
-        if (isSupabaseConfigured()) {
-          void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
-        }
+  const openProductEditFromNotification = useCallback((n) => {
+    const rawId = String(n?.variantId || n?.code || n?.product_code || '').trim()
+    if (!rawId) return
+    setActiveView('dashboard')
+    setPendingHangHoaGoodsOpen({ rawId })
+    try {
+      sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
+    } catch {
+      /* ignore */
+    }
+    const codeOrId = String(n?.code || n?.product_code || rawId).trim()
+    if (codeOrId) {
+      navigate(`/hang-hoa/${encodeURIComponent(codeOrId)}`, { replace: true })
+    }
+  }, [navigate])
+
+  /** Click từng item thông báo — rẽ nhánh theo kind, luôn đánh dấu đã đọc. */
+  const handleNotificationClick = useCallback(
+    (n, source = 'supabase') => {
+      if (!n) return
+      setLowStockAlertOpen(false)
+
+      if (source === 'local') {
+        const rawId = String(n?.variantId || n?.code || '').trim()
+        if (!rawId) return
+        clearAppNotificationById(n.id)
+        setAppCostChangeNotifications(loadAppNotifications())
+        openProductEditFromNotification(n)
+        return
+      }
+
+      markSupabaseNotificationRead(n)
+      const kind = String(n?.kind || '').trim()
+
+      if (kind === 'low_stock') {
         const parsed = parseLowStockDigestMessage(n.message)
         let items = resolveLowStockItemsFromCatalog(products, parsed)
         if (!items.length) {
           items = collectLowStockProductsFromCatalog(products)
         }
-        setLowStockDetailModal({ notification: n, items })
+        setLowStockDetailModal({
+          notification: n,
+          message: String(n.message ?? ''),
+          items,
+        })
         return
       }
 
-      const rawId = String(n?.variantId || n?.code || '').trim()
-      if (!rawId) return
-      setLowStockAlertOpen(false)
-      setSupabaseNotifications((prev) =>
-        prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x))
-      )
-      if (isSupabaseConfigured()) {
-        void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
+      if (kind === 'price_change' || kind === 'cost_change') {
+        openProductEditFromNotification(n)
+        return
       }
-      setActiveView('dashboard')
-      setPendingHangHoaGoodsOpen({ rawId })
-      try {
-        sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
-      } catch {
-        /* ignore */
-      }
+
+      openProductEditFromNotification(n)
     },
-    [products]
+    [products, markSupabaseNotificationRead, openProductEditFromNotification]
   )
 
   const startInboundFromLowStockModal = useCallback(() => {
@@ -2704,24 +2729,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setPendingInboundLowStockPrefill(null)
   }, [])
 
-  const openHangHoaFromCostNotification = useCallback(
-    (n) => {
-      const rawId = String(n?.variantId || n?.code || '').trim()
-      if (!rawId) return
-      setLowStockAlertOpen(false)
-      clearAppNotificationById(n.id)
-      setAppCostChangeNotifications(loadAppNotifications())
-      setActiveView('dashboard')
-      setPendingHangHoaGoodsOpen({ rawId })
-      try {
-        sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
-      } catch {
-        /* ignore */
-      }
-      navigate(`/hang-hoa/${encodeURIComponent(rawId)}`, { replace: true })
-    },
-    [navigate]
-  )
   const catalogBarcodeCachesRef = useRef(catalogBarcodeCaches)
   catalogBarcodeCachesRef.current = catalogBarcodeCaches
 
@@ -3804,7 +3811,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   useEffect(() => {
     if (!lowStockAlertOpen) return
     const onDoc = (e) => {
-      if (lowStockAlertWrapRef.current?.contains(e.target)) return
+      const t = e.target
+      if (lowStockAlertWrapRef.current?.contains(t)) return
+      if (lowStockPopoverRef.current?.contains(t)) return
       setLowStockAlertOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
@@ -5350,10 +5359,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const costNotifyCount = appCostChangeNotifications.length
     const totalNotifyCount = supabaseUnreadCount + costNotifyCount
-    const supabaseLowStock = supabaseNotifications.filter(
-      (n) =>
-        n.kind === 'low_stock' &&
-        String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')
+    const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
+    const supabasePriceChange = supabaseNotifications.filter(
+      (n) => n.kind === 'price_change' || n.kind === 'cost_change'
     )
     const bellBtn = (
       <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
@@ -5397,6 +5405,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         {lowStockAlertOpen && typeof document !== 'undefined'
           ? createPortal(
               <div
+                ref={lowStockPopoverRef}
                 className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
                 role="dialog"
                 aria-label="Thông báo"
@@ -5435,7 +5444,28 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                             <button
                               type="button"
                               className="app-header-supabase-notif-btn"
-                              onClick={() => openSupabaseNotification(n)}
+                              onClick={() => handleNotificationClick(n, 'supabase')}
+                            >
+                              {n.message}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  {supabasePriceChange.length > 0 ? (
+                    <>
+                      <div className="app-header-notify-section-h">Giá vốn / giá thay đổi</div>
+                      <ul className="app-header-cost-notif-list">
+                        {supabasePriceChange.map((n) => (
+                          <li
+                            key={n.id}
+                            className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
+                          >
+                            <button
+                              type="button"
+                              className="app-header-supabase-notif-btn"
+                              onClick={() => handleNotificationClick(n, 'supabase')}
                             >
                               {n.message}
                             </button>
@@ -5446,14 +5476,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   ) : null}
                   {costNotifyCount > 0 ? (
                     <>
-                      <div className="app-header-notify-section-h">Giá vốn thay đổi</div>
+                      <div className="app-header-notify-section-h">Giá vốn thay đổi (cục bộ)</div>
                       <ul className="app-header-cost-notif-list">
                         {appCostChangeNotifications.map((n) => (
                           <li key={n.id} className="app-header-cost-notif-item">
                             <button
                               type="button"
                               className="app-header-cost-notif-btn"
-                              onClick={() => openHangHoaFromCostNotification(n)}
+                              onClick={() => handleNotificationClick(n, 'local')}
                             >
                               {n.message}
                             </button>
@@ -6205,67 +6235,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       {lowStockDetailModal &&
         typeof document !== 'undefined' &&
         createPortal(
-          <div
-            className="app-low-stock-detail-backdrop"
-            role="presentation"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setLowStockDetailModal(null)
-            }}
-          >
-            <div
-              className="app-low-stock-detail-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="app-low-stock-detail-title"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <header className="app-low-stock-detail-head">
-                <h2 id="app-low-stock-detail-title" className="app-low-stock-detail-title">
-                  📋 Danh sách sản phẩm cần nhập hàng
-                </h2>
-                <button
-                  type="button"
-                  className="app-low-stock-detail-close"
-                  aria-label="Đóng"
-                  onClick={() => setLowStockDetailModal(null)}
-                >
-                  ×
-                </button>
-              </header>
-              <div className="app-low-stock-detail-body">
-                {lowStockDetailModal.items.length === 0 ? (
-                  <p className="app-low-stock-detail-empty">Không có sản phẩm tồn thấp trong danh mục hiện tại.</p>
-                ) : (
-                  <ul className="app-low-stock-detail-list">
-                    {lowStockDetailModal.items.map((it) => (
-                      <li key={`${it.code}-${it.variant?.id ?? ''}`} className="app-low-stock-detail-item">
-                        <span className="app-low-stock-detail-code">[{it.code}]</span>{' '}
-                        <span className="app-low-stock-detail-name">{it.name}</span>
-                        <span className="app-low-stock-detail-stock">Còn: {it.stockLabel}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              <footer className="app-low-stock-detail-foot">
-                <button
-                  type="button"
-                  className="app-low-stock-detail-btn app-low-stock-detail-btn--ghost"
-                  onClick={() => setLowStockDetailModal(null)}
-                >
-                  Đóng
-                </button>
-                <button
-                  type="button"
-                  className="app-low-stock-detail-btn app-low-stock-detail-btn--primary"
-                  disabled={!lowStockDetailModal.items.length}
-                  onClick={startInboundFromLowStockModal}
-                >
-                  Tạo đơn nhập hàng
-                </button>
-              </footer>
-            </div>
-          </div>,
+          <LowStockReportModal
+            open
+            message={lowStockDetailModal.message}
+            items={lowStockDetailModal.items}
+            onClose={() => setLowStockDetailModal(null)}
+            onGoInbound={startInboundFromLowStockModal}
+          />,
           document.body
         )}
 
