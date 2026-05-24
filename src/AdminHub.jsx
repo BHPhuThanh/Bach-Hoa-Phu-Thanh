@@ -1621,24 +1621,16 @@ export default function AdminHub({
   const [goodsDatePreset, setGoodsDatePreset] = useState('')
   const [goodsDateFromStr, setGoodsDateFromStr] = useState('')
   const [goodsDateToStr, setGoodsDateToStr] = useState('')
-  const goodsDraftSeedKeyRef = useRef('')
-  const goodsDraftSeedVariantIdRef = useRef('')
   const [goodsCreateOpen, setGoodsCreateOpen] = useState(false)
   const goodsCreateWrapRef = useRef(null)
   const [goodsSelected, setGoodsSelected] = useState(() => ({}))
-  const [goodsExpandedId, setGoodsExpandedId] = useState(null)
-  /** Modal sửa nhanh SP từ màn Nhập hàng (không rời tab). */
+  /** Modal sửa nhanh SP — dùng chung Tab Hàng hóa & Nhập hàng. */
   const [inboundQuickEditExpandId, setInboundQuickEditExpandId] = useState(null)
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
-  /** Tab phụ trong modal sửa nhanh SP (tab Nhập hàng). */
   const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
-  const [goodsDetailSelectedVid, setGoodsDetailSelectedVid] = useState(null)
-  const [goodsDetailDraft, setGoodsDetailDraft] = useState(null)
-  /** Tab phụ trong panel chi tiết hàng: Mô tả (form) / Lịch sử kho (thẻ kho). */
-  const [goodsDetailShelfTab, setGoodsDetailShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const [goodsSfInventoryRows, setGoodsSfInventoryRows] = useState([])
   const [goodsSfInventoryLoading, setGoodsSfInventoryLoading] = useState(false)
   const [goodsSfInventoryFetchErr, setGoodsSfInventoryFetchErr] = useState(false)
@@ -1690,17 +1682,11 @@ export default function AdminHub({
     setGoodsInvLedgerDocDebounced('')
     setGoodsInvLedgerDateFrom(inventoryDateDefaults.fromYmd)
     setGoodsInvLedgerDateTo(inventoryDateDefaults.toYmd)
-  }, [goodsExpandedId, goodsDetailSelectedVid, inventoryDateDefaults])
+  }, [inboundQuickEditExpandId, inboundQuickEditSelectedVid, inventoryDateDefaults])
 
   useEffect(() => {
     if (activeTab !== TAB_GOODS) {
       setGoodsSelected({})
-      setGoodsExpandedId(null)
-      setGoodsDetailSelectedVid(null)
-      setGoodsDetailDraft(null)
-      goodsDraftSeedKeyRef.current = ''
-      goodsDraftSeedVariantIdRef.current = ''
-      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
       setGoodsNewModalOpen(false)
       setComboModal(null)
       setHangHoaDeepLinkListScope('all')
@@ -1711,23 +1697,6 @@ export default function AdminHub({
       setGoodsDateToStr('')
     }
   }, [activeTab])
-
-  useEffect(() => {
-    if (!goodsExpandedId) return
-    const ctx = findVariantContext(catalogList, goodsExpandedId)
-    if (ctx?.product && isComboCatalogProduct(ctx.product)) {
-      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_COMBO)
-      return
-    }
-    setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
-  }, [goodsExpandedId, catalogList])
-
-  useEffect(() => {
-    if (!goodsExpandedId) return
-    const id = goodsExpandedId
-    const t = window.setTimeout(() => scrollGoodsRowIntoView(id), 64)
-    return () => window.clearTimeout(t)
-  }, [goodsExpandedId])
 
   useEffect(() => {
     if (!goodsCreateOpen) return
@@ -1764,52 +1733,6 @@ export default function AdminHub({
     return applyGoodsListSort(list, goodsListSort)
   }, [goodsRowsAll, goodsSearchFilter, goodsBrandKey, goodsCreatedAtRange, goodsListSort])
 
-  const goodsDetailCtx = useMemo(() => {
-    if (!goodsExpandedId) return null
-    return findVariantContext(catalogList, goodsExpandedId)
-  }, [catalogList, goodsExpandedId])
-
-  const goodsDetailVariant = useMemo(() => {
-    if (!goodsDetailCtx || !goodsDetailSelectedVid) return null
-    return goodsDetailCtx.variants.find((x) => x.id === goodsDetailSelectedVid) ?? null
-  }, [goodsDetailCtx, goodsDetailSelectedVid])
-
-  useEffect(() => {
-    if (!goodsDetailCtx?.variants?.length || !goodsDetailSelectedVid) return
-    const ok = goodsDetailCtx.variants.some((x) => x.id === goodsDetailSelectedVid)
-    if (!ok) setGoodsDetailSelectedVid(goodsDetailCtx.variants[0].id)
-  }, [goodsDetailCtx, goodsDetailSelectedVid])
-
-  const closeGoodsDetail = useCallback(() => {
-    setGoodsExpandedId(null)
-    setGoodsDetailSelectedVid(null)
-    setGoodsDetailDraft(null)
-    goodsDraftSeedKeyRef.current = ''
-    goodsDraftSeedVariantIdRef.current = ''
-  }, [])
-
-  const toggleGoodsRowExpand = useCallback(
-    (rowVariantId) => {
-      setGoodsExpandedId((cur) => {
-        if (cur === rowVariantId) {
-          setGoodsDetailSelectedVid(null)
-          setGoodsDetailDraft(null)
-          goodsDraftSeedKeyRef.current = ''
-          goodsDraftSeedVariantIdRef.current = ''
-          return null
-        }
-        const ctx = findVariantContext(catalogList, rowVariantId)
-        const baseVid = ctx?.variants?.[0]?.id ?? rowVariantId
-        const vOpen = ctx?.variants.find((x) => x.id === baseVid)
-        if (vOpen) setGoodsDetailDraft(buildGoodsDetailDraft(vOpen))
-        else setGoodsDetailDraft(null)
-        setGoodsDetailSelectedVid(baseVid)
-        return rowVariantId
-      })
-    },
-    [catalogList]
-  )
-
   const closeInboundProductQuickEdit = useCallback(() => {
     setInboundQuickEditExpandId(null)
     setInboundQuickEditSelectedVid(null)
@@ -1843,6 +1766,43 @@ export default function AdminHub({
     [catalogList]
   )
 
+  const openGoodsProductQuickEdit = useCallback(
+    (rowVariantId) => {
+      const id = String(rowVariantId ?? '').trim()
+      if (!id) return
+      scrollGoodsRowIntoView(id)
+      openInboundProductQuickEdit(id)
+    },
+    [openInboundProductQuickEdit]
+  )
+
+  useEffect(() => {
+    const quickEditHostTab =
+      activeTab === TAB_GOODS ||
+      activeTab === TAB_INBOUND_DRAFT ||
+      isInboundDetailTabId(activeTab)
+    if (!quickEditHostTab && inboundQuickEditExpandId) {
+      closeInboundProductQuickEdit()
+    }
+  }, [activeTab, inboundQuickEditExpandId, closeInboundProductQuickEdit])
+
+  useEffect(() => {
+    if (!inboundQuickEditExpandId) return
+    const ctx = findVariantContext(catalogList, inboundQuickEditExpandId)
+    if (ctx?.product && isComboCatalogProduct(ctx.product)) {
+      setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_COMBO)
+      return
+    }
+    setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+  }, [inboundQuickEditExpandId, catalogList])
+
+  useEffect(() => {
+    if (!inboundQuickEditExpandId || activeTab !== TAB_GOODS) return
+    const id = inboundQuickEditExpandId
+    const t = window.setTimeout(() => scrollGoodsRowIntoView(id), 64)
+    return () => window.clearTimeout(t)
+  }, [inboundQuickEditExpandId, activeTab])
+
   const inboundQuickEditCtx = useMemo(() => {
     if (!inboundQuickEditExpandId) return null
     return findVariantContext(catalogList, inboundQuickEditExpandId)
@@ -1853,40 +1813,11 @@ export default function AdminHub({
     return inboundQuickEditCtx.variants.find((x) => x.id === inboundQuickEditSelectedVid) ?? null
   }, [inboundQuickEditCtx, inboundQuickEditSelectedVid])
 
-  const goodsDetailVariantFp = useMemo(() => {
-    const v = goodsDetailVariant
-    if (!v) return ''
-    return [
-      v.id,
-      v.code,
-      v.barcode,
-      v.name,
-      v.price,
-      v.cost,
-      v.stockQty,
-      v.stockNormMin,
-      v.stockNormMax,
-      v.brand,
-      v.weightRaw,
-    ].join('\u001f')
-  }, [goodsDetailVariant])
-
   useEffect(() => {
-    if (!goodsExpandedId) {
-      goodsDraftSeedKeyRef.current = ''
-      goodsDraftSeedVariantIdRef.current = ''
-      setGoodsDetailDraft(null)
-      return
-    }
-    const nextVid = String(goodsDetailSelectedVid ?? '')
-    if (!nextVid || !goodsDetailVariant || !goodsDetailVariantFp) return
-    const key = `${goodsExpandedId}\u0000${goodsDetailVariantFp}`
-    const seededSameVariant = goodsDraftSeedVariantIdRef.current === nextVid
-    if (seededSameVariant && goodsDraftSeedKeyRef.current === key) return
-    goodsDraftSeedKeyRef.current = key
-    goodsDraftSeedVariantIdRef.current = nextVid
-    setGoodsDetailDraft(buildGoodsDetailDraft(goodsDetailVariant))
-  }, [goodsExpandedId, goodsDetailSelectedVid, goodsDetailVariantFp, goodsDetailVariant, buildGoodsDetailDraft])
+    if (!inboundQuickEditCtx?.variants?.length || !inboundQuickEditSelectedVid) return
+    const ok = inboundQuickEditCtx.variants.some((x) => x.id === inboundQuickEditSelectedVid)
+    if (!ok) setInboundQuickEditSelectedVid(inboundQuickEditCtx.variants[0].id)
+  }, [inboundQuickEditCtx, inboundQuickEditSelectedVid])
 
   useEffect(() => {
     if (!inboundQuickEditExpandId) {
@@ -1913,16 +1844,16 @@ export default function AdminHub({
   }, [inboundQuickEditExpandId, inboundQuickEditSelectedVid, inboundQuickEditVariant, buildGoodsDetailDraft])
 
   useEffect(() => {
-    if (!goodsExpandedId) return
+    if (!inboundQuickEditExpandId) return
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        closeGoodsDetail()
+        closeInboundProductQuickEdit()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [goodsExpandedId, closeGoodsDetail])
+  }, [inboundQuickEditExpandId, closeInboundProductQuickEdit])
 
   const triggerGoodsSaveSuccessToast = useCallback(() => {
     setGoodsSaveToastGen((g) => g + 1)
@@ -2106,19 +2037,6 @@ export default function AdminHub({
     setUnitModal(null)
   }, [catalogList, unitModal?.anchorVariantId])
 
-  const openGoodsUnitModal = useCallback(() => {
-    const anchor = goodsDetailSelectedVid || goodsExpandedId
-    if (!anchor) return
-    const ctx = findVariantContext(catalogList, String(anchor))
-    if (!ctx?.variants?.length) return
-    setUnitModal({
-      anchorVariantId: String(anchor),
-      lines: createUnitModalLinesFromVariants(ctx.variants),
-      source: 'goods',
-      deletedVariantIds: [],
-    })
-  }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
-
   const openInboundGoodsUnitModal = useCallback(() => {
     const anchor = inboundQuickEditSelectedVid || inboundQuickEditExpandId
     if (!anchor) return
@@ -2204,18 +2122,14 @@ export default function AdminHub({
     ]
   )
 
-  const saveGoodsDetail = useCallback(() => {
-    saveProductDetailFromDraft(goodsDetailVariant, goodsDetailDraft)
-  }, [goodsDetailVariant, goodsDetailDraft, saveProductDetailFromDraft])
-
   const saveInboundQuickEditDetail = useCallback(() => {
     saveProductDetailFromDraft(inboundQuickEditVariant, inboundQuickEditDraft)
   }, [inboundQuickEditVariant, inboundQuickEditDraft, saveProductDetailFromDraft])
 
   const copyGoodsDetail = useCallback(() => {
-    const v = goodsDetailVariant
+    const v = inboundQuickEditVariant
     if (!v) return
-    const d = goodsDetailDraft
+    const d = inboundQuickEditDraft
     const name = d ? String(d.name ?? '').trim() : String(v.name ?? '').trim()
     const code = d ? String(d.code ?? '') : String(v.code ?? '')
     const barcode = d ? String(d.barcode ?? '') : String(v.barcode ?? '')
@@ -2247,16 +2161,16 @@ export default function AdminHub({
       `Trọng lượng\t${weightRaw}`,
     ].join('\n')
     navigator.clipboard.writeText(t).catch(() => {})
-  }, [goodsDetailVariant, goodsDetailDraft])
+  }, [inboundQuickEditVariant, inboundQuickEditDraft])
 
   const discardGoodsDetailDraft = useCallback(() => {
-    const v = goodsDetailVariant
+    const v = inboundQuickEditVariant
     if (!v) return
-    setGoodsDetailDraft(buildGoodsDetailDraft(v))
-  }, [goodsDetailVariant])
+    setInboundQuickEditDraft(buildGoodsDetailDraft(v))
+  }, [inboundQuickEditVariant, buildGoodsDetailDraft])
 
   const deleteGoodsDetailVariant = useCallback(() => {
-    const v = goodsDetailVariant
+    const v = inboundQuickEditVariant
     if (!v) return
     if (!window.confirm(`Xóa mặt hàng "${v.name || v.code}" khỏi danh sách?`)) return
     if (onRemoveCatalogVariants) {
@@ -2272,13 +2186,13 @@ export default function AdminHub({
       const nextProducts = buildDisplayCatalog(remaining)
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
     }
-    closeGoodsDetail()
+    closeInboundProductQuickEdit()
   }, [
-    goodsDetailVariant,
+    inboundQuickEditVariant,
     onRemoveCatalogVariants,
     standaloneCatalog,
     persistStandaloneProducts,
-    closeGoodsDetail,
+    closeInboundProductQuickEdit,
   ])
 
   const soloActiveVariantId = useMemo(() => parseSoloProductTabId(activeTab), [activeTab])
@@ -2426,9 +2340,7 @@ export default function AdminHub({
       syncHubUrlToMainTab(TAB_GOODS)
       setHangHoaDeepLinkVid(vid)
       setHangHoaDeepLinkListScope('single')
-      setGoodsExpandedId(vid)
-      setGoodsDetailSelectedVid(vid)
-      setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+      openInboundProductQuickEdit(vid)
       setGoodsQ('')
       setGoodsBrandKey('')
       setGoodsBrandOpen(false)
@@ -2484,9 +2396,7 @@ export default function AdminHub({
         startTransition(() => {
           setHangHoaDeepLinkListScope('all')
           setHangHoaDeepLinkVid(null)
-          setGoodsExpandedId(matchedVid)
-          setGoodsDetailSelectedVid(matchedVid)
-          setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+          openInboundProductQuickEdit(matchedVid)
         })
       }
     } catch (error) {
@@ -2738,17 +2648,12 @@ export default function AdminHub({
     const template = sortVariantsSmallestUnitFirst(ctx.variants)[0]
     const sortedLines = sortUnitModalLinesByConversion(unitModal.lines)
     const nameTrim =
-      unitModal.source === 'goods'
-        ? String(goodsDetailDraft?.name ?? goodsDetailVariant?.name ?? '')
+      unitModal.source === 'inbound'
+        ? String(inboundQuickEditDraft?.name ?? inboundQuickEditVariant?.name ?? '')
             .replace(/\u00A0/g, ' ')
             .replace(/\s+/g, ' ')
             .trim()
-        : unitModal.source === 'inbound'
-          ? String(inboundQuickEditDraft?.name ?? inboundQuickEditVariant?.name ?? '')
-              .replace(/\u00A0/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim()
-          : String(soloGoodsDraft?.name ?? soloGoodsVariant?.name ?? '')
+        : String(soloGoodsDraft?.name ?? soloGoodsVariant?.name ?? '')
               .replace(/\u00A0/g, ' ')
               .replace(/\s+/g, ' ')
               .trim()
@@ -2806,10 +2711,6 @@ export default function AdminHub({
     setUnitModal(null)
     triggerGoodsSaveSuccessToast()
 
-    if (mainId && src === 'goods') {
-      setGoodsDetailSelectedVid(mainId)
-      goodsDraftSeedKeyRef.current = ''
-    }
     if (mainId && src === 'inbound') {
       inboundQuickEditPreserveRef.current = {
         name: inboundQuickEditDraft?.name,
@@ -2833,8 +2734,6 @@ export default function AdminHub({
   }, [
     unitModal,
     catalogList,
-    goodsDetailDraft,
-    goodsDetailVariant,
     inboundQuickEditDraft,
     inboundQuickEditVariant,
     soloGoodsDraft,
@@ -3060,7 +2959,7 @@ export default function AdminHub({
       const row = goodsRowsAll.find((r) => r.id === id)
       if (!row) return
       if (!window.confirm(`Xóa mặt hàng "${row.name || row.code}" khỏi danh sách?`)) return
-      if (goodsExpandedId === id) closeGoodsDetail()
+      if (inboundQuickEditExpandId === id) closeInboundProductQuickEdit()
       if (onRemoveCatalogVariants) {
         onRemoveCatalogVariants([id])
       } else {
@@ -3084,8 +2983,8 @@ export default function AdminHub({
     },
     [
       goodsRowsAll,
-      goodsExpandedId,
-      closeGoodsDetail,
+      inboundQuickEditExpandId,
+      closeInboundProductQuickEdit,
       onRemoveCatalogVariants,
       standaloneCatalog,
       persistStandaloneProducts,
@@ -4948,39 +4847,13 @@ export default function AdminHub({
     returnDayLedger,
   ])
 
-  const goodsDetailStockLedgerRows = useMemo(() => {
-    if (!goodsExpandedId || !goodsDetailVariant) return []
-    if (!Array.isArray(returnDayLedger)) return []
-    try {
-      return buildVariantStockLedgerRows({
-        variantId: goodsDetailVariant.id,
-        catalogList,
-        currentStockQty: goodsDetailVariant.stockQty,
-        orders,
-        inboundOrders,
-        returnDayLedger,
-      })
-    } catch (e) {
-      console.warn('[AdminHub goodsDetailStockLedgerRows]', e)
-      return []
-    }
-  }, [
-    goodsExpandedId,
-    goodsDetailVariant,
-    catalogList,
-    orders,
-    inboundOrders,
-    returnDayLedger,
-  ])
-
   useEffect(() => {
-    const ma = String(goodsDetailVariant?.code ?? '').trim()
+    const ma = String(inboundQuickEditVariant?.code ?? '').trim()
     const want =
-      activeTab === TAB_GOODS &&
-      Boolean(goodsExpandedId) &&
+      Boolean(inboundQuickEditExpandId) &&
       Boolean(ma) &&
-      (goodsDetailShelfTab === GOODS_DETAIL_VIEW_TONKHO ||
-        goodsDetailShelfTab === GOODS_DETAIL_VIEW_LICHSU)
+      (inboundQuickEditShelfTab === GOODS_DETAIL_VIEW_TONKHO ||
+        inboundQuickEditShelfTab === GOODS_DETAIL_VIEW_LICHSU)
     if (!want || !isSupabaseConfigured()) {
       setGoodsSfInventoryRows([])
       setGoodsSfInventoryLoading(false)
@@ -5009,10 +4882,9 @@ export default function AdminHub({
       cancelled = true
     }
   }, [
-    activeTab,
-    goodsExpandedId,
-    goodsDetailVariant?.code,
-    goodsDetailShelfTab,
+    inboundQuickEditExpandId,
+    inboundQuickEditVariant?.code,
+    inboundQuickEditShelfTab,
     inventoryLogRefreshTick,
     goodsInvLedgerDateFrom,
     goodsInvLedgerDateTo,
@@ -5093,80 +4965,6 @@ export default function AdminHub({
     return Array.isArray(r) ? r.slice(0, 8) : []
   }, [soloMergedInventoryLedgerRows.rows])
 
-  const goodsExpandedBelowSlot = useMemo(() => {
-    if (!goodsExpandedId || !goodsDetailCtx || !goodsDetailVariant || !goodsDetailDraft) return null
-    return (
-      <AdminHubGoodsExpandedBelow
-        GOODS_DETAIL_VIEW_TONKHO={GOODS_DETAIL_VIEW_TONKHO}
-        GOODS_DETAIL_VIEW_LICHSU={GOODS_DETAIL_VIEW_LICHSU}
-        GOODS_DETAIL_VIEW_COMBO={GOODS_DETAIL_VIEW_COMBO}
-        goodsDetailShelfTab={goodsDetailShelfTab}
-        setGoodsDetailShelfTab={setGoodsDetailShelfTab}
-        discardGoodsDetailDraft={discardGoodsDetailDraft}
-        saveGoodsDetail={saveGoodsDetail}
-        v={goodsDetailVariant}
-        d={goodsDetailDraft}
-        goodsDetailCtx={goodsDetailCtx}
-        goodsDetailSelectedVid={goodsDetailSelectedVid}
-        setGoodsDetailSelectedVid={setGoodsDetailSelectedVid}
-        setGoodsDetailDraft={setGoodsDetailDraft}
-        buildGoodsDetailDraft={buildGoodsDetailDraft}
-        copyGoodsDetail={copyGoodsDetail}
-        deleteGoodsDetailVariant={deleteGoodsDetailVariant}
-        formatMoneyDraftVi={formatMoneyDraftVi}
-        goodsStockLedgerMerged={goodsMergedInventoryLedgerRows}
-        goodsInventoryPreviewRows={goodsInventoryPreviewRows}
-        goodsInvLedgerDateFrom={goodsInvLedgerDateFrom}
-        goodsInvLedgerDateTo={goodsInvLedgerDateTo}
-        goodsInvLedgerDocumentSearch={goodsInvLedgerDocSearch}
-        onGoodsInvLedgerDateFromChange={setGoodsInvLedgerDateFrom}
-        onGoodsInvLedgerDateToChange={setGoodsInvLedgerDateTo}
-        onGoodsInvLedgerDocumentSearchChange={setGoodsInvLedgerDocSearch}
-        onInventoryDocumentActivate={handleInventoryLedgerDocActivate}
-        getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
-        openGoodsUnitModal={openGoodsUnitModal}
-        catalogList={catalogList}
-        isComboDetail={!!goodsDetailCtx?.product && isComboCatalogProduct(goodsDetailCtx.product)}
-        comboDetailProduct={goodsDetailCtx?.product ?? null}
-        onEditComboProduct={() => {
-          if (goodsDetailCtx?.product && isComboCatalogProduct(goodsDetailCtx.product)) {
-            setComboModal({ mode: 'edit', product: goodsDetailCtx.product })
-          }
-        }}
-        goodsBrandAutocompleteOptions={inboundNccAutocompleteOptions}
-        onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
-        onCloseGoodsDetail={closeGoodsDetail}
-      />
-    )
-  }, [
-    goodsExpandedId,
-    goodsDetailCtx,
-    goodsDetailVariant,
-    goodsDetailDraft,
-    goodsDetailShelfTab,
-    goodsDetailSelectedVid,
-    goodsMergedInventoryLedgerRows,
-    goodsInventoryPreviewRows,
-    goodsInvLedgerDateFrom,
-    goodsInvLedgerDateTo,
-    goodsInvLedgerDocSearch,
-    handleInventoryLedgerDocActivate,
-    discardGoodsDetailDraft,
-    saveGoodsDetail,
-    setGoodsDetailShelfTab,
-    setGoodsDetailSelectedVid,
-    setGoodsDetailDraft,
-    buildGoodsDetailDraft,
-    copyGoodsDetail,
-    deleteGoodsDetailVariant,
-    openGoodsUnitModal,
-    catalogList,
-    inboundNccAutocompleteOptions,
-    revenueReadOnly,
-    openGoodsBrandSupplierModal,
-    closeGoodsDetail,
-  ])
-
   const inboundQuickEditSlot = useMemo(() => {
     if (!inboundQuickEditExpandId || !inboundQuickEditCtx || !inboundQuickEditVariant || !inboundQuickEditDraft) {
       return null
@@ -5244,6 +5042,17 @@ export default function AdminHub({
     openGoodsBrandSupplierModal,
     closeInboundProductQuickEdit,
   ])
+
+  const productQuickEditModalOpen = Boolean(inboundQuickEditExpandId)
+
+  useEffect(() => {
+    if (!productQuickEditModalOpen) return undefined
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prevOverflow || ''
+    }
+  }, [productQuickEditModalOpen])
 
   const openPosReturnModal = useCallback(
     (order) => {
@@ -6677,12 +6486,11 @@ export default function AdminHub({
                           height={h}
                           width={w}
                           rows={goodsRowsFiltered}
-                          goodsExpandedId={goodsExpandedId}
+                          productQuickEditExpandId={inboundQuickEditExpandId}
                           goodsSelected={goodsSelected}
-                          toggleGoodsRowExpand={toggleGoodsRowExpand}
+                          onOpenProductQuickEdit={openGoodsProductQuickEdit}
                           toggleGoodsSelect={toggleGoodsSelect}
                           onGoodsMobileDelete={handleGoodsMobileCardDelete}
-                          expandedSlot={goodsExpandedBelowSlot}
                           listResetKey={`${goodsDeferred}|${goodsBrandKey}|${goodsDatePreset}|${goodsDateFromStr}|${goodsDateToStr}|${goodsListSort}|${goodsRowsFiltered.length}`}
                         />
                       )

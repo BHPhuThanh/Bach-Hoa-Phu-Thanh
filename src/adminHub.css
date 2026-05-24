@@ -1318,22 +1318,6 @@
     overflow: visible;
   }
 
-  /* Chi tiết SP mobile: một lớp cuộn (fixed inset), không dùng 100vh */
-  .ah-goods-vdetail-wrap {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    box-sizing: border-box;
-  }
-
-  .ah-goods-vdetail-wrap .ah-goods-detail-after-virt {
-    max-height: none;
-    overflow: visible;
-    padding-bottom: 4rem;
-  }
-
   .ah-goods-toolbar:not(.ah-goods-toolbar--v2) {
     flex-direction: column;
     align-items: stretch;
@@ -8886,30 +8870,33 @@ li.ah-inbound-suggest-empty {
 .ah-inbound-quick-edit-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 93400;
-  background: rgba(0, 0, 0, 0.58);
+  z-index: 100080;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.75rem;
+  padding: 0.5rem;
   box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }
 
-@media (max-width: 768px) {
+@media (min-width: 640px) {
   .ah-inbound-quick-edit-backdrop {
-    align-items: flex-end;
+    padding: 1rem;
   }
 }
 
 .ah-inbound-quick-edit-panel {
-  width: min(100%, 52rem);
-  max-height: min(92vh, 720px);
+  width: 100%;
+  max-width: 56rem;
+  max-height: 95vh;
   display: flex;
   flex-direction: column;
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: #11151a;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
 
@@ -8944,7 +8931,9 @@ li.ah-inbound-suggest-empty {
 .ah-inbound-quick-edit-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -9047,18 +9036,11 @@ li.ah-inbound-suggest-empty {
 }
 
 .ah-unit-modal-overlay--stack {
-  z-index: 93550;
+  z-index: 100090;
 }
 
-@media (min-width: 769px) {
-  .ah-inbound-quick-edit-panel {
-    width: min(100%, 58rem);
-    max-height: min(88vh, 680px);
-  }
-
-  .ah-inbound-quick-edit-body .ah-goods-detail-card--v2-modal {
-    padding-bottom: 0;
-  }
+.ah-inbound-quick-edit-body .ah-goods-detail-card--v2-modal {
+  padding-bottom: 0;
 }
 
 .ah-inbound-line-qty-price-mobile {
