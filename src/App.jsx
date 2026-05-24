@@ -4474,6 +4474,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const onHeaderSearchKeyDown = useCallback(
     (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        hardDismissHeaderSearch()
+        return
+      }
       if (e.key === 'ArrowDown') {
         if (!headerSuggestOpen || posHeaderSuggestTotalRows === 0) return
         e.preventDefault()
@@ -4535,6 +4541,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setHeaderSearch,
       posHeaderSuggestTotalRows,
       showPosQuickAddProductRow,
+      hardDismissHeaderSearch,
     ]
   )
 
@@ -5286,10 +5293,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         e.preventDefault()
         e.stopPropagation()
         if (cart.length === 0) return
-        const id =
-          selectedCartLineId != null && cart.some((l) => l.lineId === selectedCartLineId)
-            ? selectedCartLineId
-            : cart[0].lineId
+        const lastLine = cart[cart.length - 1]
+        const id = lastLine.lineId
         setSelectedCartLineId(id)
         queueMicrotask(() => {
           const el = cartQtyInputRefs.current.get(id)

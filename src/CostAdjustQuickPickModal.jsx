@@ -49,7 +49,15 @@ const QuickPickVirtualRow = memo(function QuickPickVirtualRow({ index, style, ro
 /**
  * @param {{ open: boolean, products: Array, selectedIds: Set<string>, onToggleId: (id: string|number) => void, onConfirm: (pickedRows: Array<{ _product: object, _variant: object }>) => void, onCancel: () => void }} props
  */
-export default function CostAdjustQuickPickModal({ open, products, selectedIds, onToggleId, onConfirm, onCancel }) {
+export default function CostAdjustQuickPickModal({
+  open,
+  products,
+  preferParentCatalog = false,
+  selectedIds,
+  onToggleId,
+  onConfirm,
+  onCancel,
+}) {
   const modalSearchRef = useRef(null)
   const listWrapRef = useRef(null)
   const [modalSearchQ, setModalSearchQ] = useState('')
@@ -102,6 +110,12 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
       setCatalogLoading(false)
       return
     }
+    if (preferParentCatalog && Array.isArray(products) && products.length > 0) {
+      setCatalogSnapshot(products)
+      setCatalogLoading(false)
+      const t = window.setTimeout(() => modalSearchRef.current?.focus(), 80)
+      return () => window.clearTimeout(t)
+    }
     setCatalogLoading(true)
     void fetchProducts()
       .then((snap) => {
@@ -116,7 +130,7 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
 
     const t = window.setTimeout(() => modalSearchRef.current?.focus(), 80)
     return () => window.clearTimeout(t)
-  }, [open])
+  }, [open, preferParentCatalog, products])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -200,7 +214,9 @@ export default function CostAdjustQuickPickModal({ open, products, selectedIds, 
                 if (e.key === 'Escape') {
                   e.preventDefault()
                   e.stopPropagation()
-                  e.currentTarget.blur()
+                  setModalSearchQ('')
+                  setModalSearchDebounced('')
+                  modalSearchDebouncedRef.current?.cancel?.()
                 }
               }}
               placeholder="Tìm theo tên, mã SKU, hoặc quét mã Barcode…"

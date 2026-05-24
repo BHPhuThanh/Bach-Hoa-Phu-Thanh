@@ -26,6 +26,7 @@ import {
   applyInboundLineUnitChange,
   buildInboundDvtSelectOptions,
   findVariantContext,
+  resolveInboundCatalogProductVariant,
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
@@ -470,12 +471,24 @@ function scrollElementIntoViewCenter(el) {
   el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
 }
 
-function scrollGoodsRowIntoView(variantId) {
+const GOODS_SCROLL_BEFORE_MODAL_MS = 320
+
+function scrollGoodsRowIntoView(variantId, listApi, onDone) {
   const id = String(variantId ?? '').trim()
-  if (!id || typeof document === 'undefined') return
-  if (typeof window !== 'undefined' && !window.matchMedia(DESKTOP_LAYOUT_MQ).matches) return
+  if (!id || typeof document === 'undefined') {
+    onDone?.()
+    return
+  }
+  if (typeof window !== 'undefined' && !window.matchMedia(DESKTOP_LAYOUT_MQ).matches) {
+    onDone?.()
+    return
+  }
+  listApi?.scrollVariantIntoViewCenter?.(id)
   const el = document.querySelector(`[data-goods-row-id="${CSS.escape(id)}"]`)
   scrollElementIntoViewCenter(el)
+  if (onDone) {
+    window.setTimeout(onDone, GOODS_SCROLL_BEFORE_MODAL_MS)
+  }
 }
 
 function scrollInboundLineIntoView(lineId) {
@@ -1536,6 +1549,7 @@ export default function AdminHub({
   const [hangHoaDeepLinkListScope, setHangHoaDeepLinkListScope] = useState('all')
   const [hangHoaDeepLinkVid, setHangHoaDeepLinkVid] = useState(null)
   const [goodsQ, setGoodsQ] = useState('')
+  const goodsVirtualListApiRef = useRef(null)
   const [goodsSearchFilter, setGoodsSearchFilter] = useState('')
   const goodsSearchDebRef = useRef(null)
   if (goodsSearchDebRef.current == null) {
@@ -1770,11 +1784,22 @@ export default function AdminHub({
     (rowVariantId) => {
       const id = String(rowVariantId ?? '').trim()
       if (!id) return
-      scrollGoodsRowIntoView(id)
-      openInboundProductQuickEdit(id)
+      const openModal = () => openInboundProductQuickEdit(id)
+      const isDesktop =
+        typeof window !== 'undefined' && window.matchMedia(DESKTOP_LAYOUT_MQ).matches
+      if (isDesktop) {
+        scrollGoodsRowIntoView(id, goodsVirtualListApiRef.current, openModal)
+      } else {
+        openModal()
+      }
     },
     [openInboundProductQuickEdit]
   )
+
+  const dismissInboundDraftProductSearch = useCallback(() => {
+    setInboundFormProductQ('')
+    setInboundProductSuggestIdx(0)
+  }, [])
 
   useEffect(() => {
     const quickEditHostTab =
@@ -1795,13 +1820,6 @@ export default function AdminHub({
     }
     setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
   }, [inboundQuickEditExpandId, catalogList])
-
-  useEffect(() => {
-    if (!inboundQuickEditExpandId || activeTab !== TAB_GOODS) return
-    const id = inboundQuickEditExpandId
-    const t = window.setTimeout(() => scrollGoodsRowIntoView(id), 64)
-    return () => window.clearTimeout(t)
-  }, [inboundQuickEditExpandId, activeTab])
 
   const inboundQuickEditCtx = useMemo(() => {
     if (!inboundQuickEditExpandId) return null
@@ -3589,15 +3607,21 @@ export default function AdminHub({
 
   const confirmInboundQuickPick = useCallback((pickedRows) => {
     const rows = Array.isArray(pickedRows) ? pickedRows : []
+    const catalog = catalogForInboundRef.current
     setInboundFormLines((cur) => {
       const have = new Set(cur.map((l) => String(l.variantId)))
       const toAdd = []
       let brandHint = ''
       for (const r of rows) {
-        const vid = String(r?._variant?.id ?? '')
+        const { product, variant } = resolveInboundCatalogProductVariant(
+          catalog,
+          r._product,
+          r._variant
+        )
+        const vid = String(variant?.id ?? '').trim()
         if (!vid || have.has(vid)) continue
         have.add(vid)
-        const line = createInboundFormLineFromProductVariant(r._product, r._variant)
+        const line = createInboundFormLineFromProductVariant(product, variant)
         if (!brandHint) brandHint = String(line.thuong_hieu || '').trim()
         toAdd.push(line)
       }
@@ -6173,7 +6197,7 @@ export default function AdminHub({
             <div className="ah-goods-toolbar ah-goods-toolbar--v2 ah-goods-catalog-toolbar">
               <div className="ah-goods-toolbar__row1 ah-goods-toolbar__row1--with-brand">
                 <div className="ah-goods-toolbar__row1-search ah-goods-toolbar__row1-search--with-loc">
-                  <div className="ah-goods-search-combo">
+                  <div className="ah-goods-search-combo ah-goods-search-combo--clearable">
                     <input
                       className="ah-goods-search ah-goods-search--with-scan"
                       type="search"
@@ -6184,9 +6208,25 @@ export default function AdminHub({
                         setGoodsQ(v)
                         if (v.trim()) setHangHoaDeepLinkListScope('all')
                       }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Escape') return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setGoodsQ('')
+                      }}
                       autoComplete="off"
                       spellCheck={false}
                     />
+                    {goodsQ.trim() !== '' ? (
+                      <button
+                        type="button"
+                        className="ah-search-clear-btn ah-search-clear-btn--goods"
+                        aria-label="Xóa ô tìm"
+                        onClick={() => setGoodsQ('')}
+                      >
+                        ×
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="ah-goods-search-scan barcode-scan-trigger"
@@ -6483,6 +6523,7 @@ export default function AdminHub({
                       const h = Math.max(280, Math.floor(height ?? 800))
                       return (
                         <AdminHubGoodsVirtualList
+                          ref={goodsVirtualListApiRef}
                           height={h}
                           width={w}
                           rows={goodsRowsFiltered}
@@ -8402,7 +8443,7 @@ export default function AdminHub({
                   </span>
                 </label>
                 <div className="ah-inbound-draft-search-row">
-                  <div className="ah-inbound-line-search-box ah-inbound-draft-line-search">
+                  <div className="ah-inbound-line-search-box ah-inbound-draft-line-search ah-inbound-line-search-box--clearable">
                     <input
                       ref={inboundProductSearchRef}
                       id="ah-inbound-prod-q"
@@ -8419,7 +8460,7 @@ export default function AdminHub({
                         if (e.key === 'Escape') {
                           e.preventDefault()
                           e.stopPropagation()
-                          e.currentTarget.blur()
+                          dismissInboundDraftProductSearch()
                           return
                         }
                         if (e.key === 'ArrowDown') {
@@ -8481,6 +8522,16 @@ export default function AdminHub({
                       }}
                       placeholder="Mã vạch, mã hàng hoặc tên…"
                     />
+                    {inboundFormProductQ.trim() !== '' ? (
+                      <button
+                        type="button"
+                        className="ah-search-clear-btn ah-search-clear-btn--inbound"
+                        aria-label="Xóa ô tìm"
+                        onClick={dismissInboundDraftProductSearch}
+                      >
+                        ×
+                      </button>
+                    ) : null}
                     {inboundProductSuggestPanelOpen && (
                       <ul className="ah-inbound-suggest-list" role="listbox">
                         {inboundDraftProductQuickAdd ? (
@@ -8849,6 +8900,7 @@ export default function AdminHub({
       <CostAdjustQuickPickModal
         open={inboundQuickPickOpen && activeTab === TAB_INBOUND_DRAFT}
         products={catalogListForInbound}
+        preferParentCatalog
         selectedIds={inboundQuickPickSelected}
         onToggleId={toggleInboundQuickPickSel}
         onConfirm={confirmInboundQuickPick}

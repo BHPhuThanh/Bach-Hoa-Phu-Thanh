@@ -15,9 +15,11 @@ function sortVariantsSmallestUnitFirst(variants) {
 }
 
 export function findVariantContext(products, variantId) {
+  const vid = String(variantId ?? '').trim()
+  if (!vid) return null
   for (const p of products || []) {
     const vars = p.groupVariants || [p]
-    const hit = vars.find((x) => x.id === variantId)
+    const hit = vars.find((x) => String(x.id) === vid)
     if (hit) {
       return { product: p, variants: sortVariantsSmallestUnitFirst(vars), clicked: hit }
     }
@@ -25,10 +27,63 @@ export function findVariantContext(products, variantId) {
   return null
 }
 
+/** Khớp dòng phiếu / snapshot chọn nhanh với danh mục phiếu nhập (id có thể lệch sau đồng bộ). */
+export function findVariantContextForInboundLine(catalogList, line) {
+  const vid = String(line?.variantId ?? '').trim()
+  if (vid) {
+    const byId = findVariantContext(catalogList, vid)
+    if (byId) return byId
+  }
+  const code = String(line?.code ?? line?.ma_hang ?? '').trim().toLowerCase()
+  if (!code) return null
+  const unit = normalizeCatalogUnitLabel(line?.unitLabel)
+  for (const p of catalogList || []) {
+    const vars = Array.isArray(p.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    const matches = vars.filter((v) => String(v?.code ?? '').trim().toLowerCase() === code)
+    if (!matches.length) continue
+    const clicked =
+      unit != null && unit !== ''
+        ? matches.find((v) => normalizeCatalogUnitLabel(v.unitLabel) === unit) || matches[0]
+        : matches[0]
+    return { product: p, variants: sortVariantsSmallestUnitFirst(vars), clicked }
+  }
+  return null
+}
+
+/** Map product/variant từ modal Chọn nhanh sang biến thể trong `catalogListForInbound`. */
+export function resolveInboundCatalogProductVariant(catalogList, product, variant) {
+  const vid = String(variant?.id ?? '').trim()
+  const code = String(variant?.code ?? product?.code ?? '').trim().toLowerCase()
+  const unit = normalizeCatalogUnitLabel(variant?.unitLabel)
+  if (vid) {
+    const ctx = findVariantContext(catalogList, vid)
+    if (ctx) {
+      const hit =
+        unit != null && unit !== ''
+          ? ctx.variants.find((v) => normalizeCatalogUnitLabel(v.unitLabel) === unit) || ctx.clicked
+          : ctx.clicked
+      return { product: ctx.product, variant: hit }
+    }
+  }
+  if (code) {
+    for (const p of catalogList || []) {
+      const vars = Array.isArray(p.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+      const matches = vars.filter((v) => String(v?.code ?? '').trim().toLowerCase() === code)
+      if (!matches.length) continue
+      const hit =
+        unit != null && unit !== ''
+          ? matches.find((v) => normalizeCatalogUnitLabel(v.unitLabel) === unit) || matches[0]
+          : matches[0]
+      return { product: p, variant: hit }
+    }
+  }
+  return { product, variant: variant || product }
+}
+
 /** Chỉ các ĐƠN VỊ TÍNH thực sự có trong danh mục (KiotViet) cho mặt hàng của dòng — không gợi ý Gói/Hộp giả. */
 export function buildInboundDvtSelectOptions(catalogList, line) {
   const cur = normalizeCatalogUnitLabel(line.unitLabel)
-  const ctx = findVariantContext(catalogList, line.variantId)
+  const ctx = findVariantContextForInboundLine(catalogList, line)
   if (!ctx?.variants?.length) {
     return cur ? [cur] : []
   }
@@ -54,7 +109,7 @@ export function applyInboundLineUnitChange(catalogList, line, newLabelRaw) {
   const cur = normalizeCatalogUnitLabel(line.unitLabel)
   if (want === cur) return { ok: true, changed: false }
 
-  const ctx = findVariantContext(catalogList, line.variantId)
+  const ctx = findVariantContextForInboundLine(catalogList, line)
   if (!ctx) {
     return {
       ok: true,

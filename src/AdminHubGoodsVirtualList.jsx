@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
-import { List } from 'react-window'
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { List, useListRef } from 'react-window'
 import { GoodsCatalogVirtualDataRow } from './AdminHubGoodsCatalogRows.jsx'
 
 const ROW_H_DESKTOP = 46
@@ -52,19 +52,39 @@ function GoodsVirtualRow(props) {
   )
 }
 
-export const AdminHubGoodsVirtualList = memo(function AdminHubGoodsVirtualList({
-  height,
-  width,
-  rows,
-  productQuickEditExpandId,
-  goodsSelected,
-  onOpenProductQuickEdit,
-  toggleGoodsSelect,
-  onGoodsMobileDelete,
-  listResetKey,
-}) {
+export const AdminHubGoodsVirtualList = memo(
+  forwardRef(function AdminHubGoodsVirtualList(
+    {
+      height,
+      width,
+      rows,
+      productQuickEditExpandId,
+      goodsSelected,
+      onOpenProductQuickEdit,
+      toggleGoodsSelect,
+      onGoodsMobileDelete,
+      listResetKey,
+    },
+    ref
+  ) {
   const isMobileGoods = useGoodsCatalogMobileLayout()
   const rowHeight = isMobileGoods ? ROW_H_MOBILE : ROW_H_DESKTOP
+  const listRef = useListRef()
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollVariantIntoViewCenter(variantId) {
+        const id = String(variantId ?? '').trim()
+        if (!id || !rows?.length) return false
+        const idx = rows.findIndex((r) => String(r.id) === id)
+        if (idx < 0) return false
+        listRef.current?.scrollToRow?.({ index: idx, align: 'center', behavior: 'smooth' })
+        return true
+      },
+    }),
+    [rows, listRef]
+  )
 
   const rowProps = useMemo(
     () => ({
@@ -91,6 +111,7 @@ export const AdminHubGoodsVirtualList = memo(function AdminHubGoodsVirtualList({
 
   return (
     <List
+      listRef={listRef}
       key={`${listResetKey}|mq:${isMobileGoods ? 'm' : 'd'}`}
       rowCount={rows.length}
       rowHeight={getRowHeight}
@@ -100,4 +121,5 @@ export const AdminHubGoodsVirtualList = memo(function AdminHubGoodsVirtualList({
       style={{ height, width }}
     />
   )
-})
+  })
+)
