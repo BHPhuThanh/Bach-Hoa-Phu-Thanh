@@ -45,7 +45,7 @@ function GoodsVirtualRow(props) {
   if (!row) return null
   const open = goodsExpandedId === row.id
   return (
-    <div className="ah-goods-vitem" style={style} {...ariaAttributes}>
+    <div className="ah-goods-vitem" style={style} data-goods-row-id={row.id} {...ariaAttributes}>
       <GoodsCatalogVirtualDataRow
         row={row}
         selected={!!goodsSelected[row.id]}

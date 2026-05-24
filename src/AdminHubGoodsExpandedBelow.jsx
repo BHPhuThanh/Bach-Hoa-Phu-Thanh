@@ -173,93 +173,85 @@ export function AdminHubGoodsExpandedBelow(props) {
                                         </div>
                                       </div>
                                       <div className="ah-goods-card-name-block">
-                                        <div className="ah-goods-card-top-split">
-                                          <div
-                                            className="ah-goods-card-photo"
-                                            aria-label="Ảnh sản phẩm (placeholder)"
-                                          />
-                                          <div className="ah-goods-card-title-row">
-                                            <div className="ah-goods-card-title-field">
-                                              <label
-                                                className="ah-goods-card-lbl ah-goods-card-lbl--title"
-                                                htmlFor={`gd-name-${v.id}`}
-                                              >
-                                                Tên sản phẩm
-                                              </label>
-                                              <input
-                                                id={`gd-name-${v.id}`}
-                                                className="ah-goods-card-input ah-goods-card-title-input"
-                                                value={d?.name ?? ''}
-                                                onChange={(e) =>
-                                                  setGoodsDetailDraft((x) => {
-                                                    const base = x ?? buildGoodsDetailDraft(v)
-                                                    return base ? { ...base, name: e.target.value } : null
-                                                  })
-                                                }
-                                                autoComplete="off"
-                                                spellCheck={false}
-                                                aria-label="Tên sản phẩm"
-                                              />
-                                            </div>
-                                            <div
-                                              className="ah-goods-card-tools"
-                                              role="toolbar"
-                                              aria-label="Thao tác"
+                                        <div
+                                          className="ah-goods-card-name-toolbar"
+                                          role="toolbar"
+                                          aria-label="Thao tác"
+                                        >
+                                          <button
+                                            type="button"
+                                            className="ah-goods-detail-icon-btn"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              copyGoodsDetail()
+                                            }}
+                                            title="Sao chép"
+                                            aria-label="Sao chép"
+                                          >
+                                            <svg
+                                              width="20"
+                                              height="20"
+                                              viewBox="0 0 24 24"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="1.75"
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              aria-hidden
                                             >
-                                              <button
-                                                type="button"
-                                                className="ah-goods-detail-icon-btn"
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  copyGoodsDetail()
-                                                }}
-                                                title="Sao chép"
-                                                aria-label="Sao chép"
-                                              >
-                                                <svg
-                                                  width="20"
-                                                  height="20"
-                                                  viewBox="0 0 24 24"
-                                                  fill="none"
-                                                  stroke="currentColor"
-                                                  strokeWidth="1.75"
-                                                  strokeLinecap="round"
-                                                  strokeLinejoin="round"
-                                                  aria-hidden
-                                                >
-                                                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                                </svg>
-                                              </button>
-                                              <button
-                                                type="button"
-                                                className="ah-goods-detail-icon-btn ah-goods-detail-icon-btn--danger"
-                                                onClick={(e) => {
-                                                  e.stopPropagation()
-                                                  deleteGoodsDetailVariant()
-                                                }}
-                                                title="Xóa"
-                                                aria-label="Xóa"
-                                              >
-                                                <svg
-                                                  width="20"
-                                                  height="20"
-                                                  viewBox="0 0 24 24"
-                                                  fill="none"
-                                                  stroke="currentColor"
-                                                  strokeWidth="1.75"
-                                                  strokeLinecap="round"
-                                                  strokeLinejoin="round"
-                                                  aria-hidden
-                                                >
-                                                  <path d="M3 6h18" />
-                                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                                                  <path d="M10 11v6M14 11v6" />
-                                                </svg>
-                                              </button>
-                                            </div>
-                                          </div>
+                                              <rect x="9" y="9" width="13" height="13" rx="2" />
+                                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="ah-goods-detail-icon-btn ah-goods-detail-icon-btn--danger"
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              deleteGoodsDetailVariant()
+                                            }}
+                                            title="Xóa"
+                                            aria-label="Xóa"
+                                          >
+                                            <svg
+                                              width="20"
+                                              height="20"
+                                              viewBox="0 0 24 24"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="1.75"
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              aria-hidden
+                                            >
+                                              <path d="M3 6h18" />
+                                              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                              <path d="M10 11v6M14 11v6" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                        <div className="ah-goods-card-title-field ah-goods-card-title-field--full">
+                                          <label
+                                            className="ah-goods-card-lbl ah-goods-card-lbl--title"
+                                            htmlFor={`gd-name-${v.id}`}
+                                          >
+                                            Tên sản phẩm
+                                          </label>
+                                          <input
+                                            id={`gd-name-${v.id}`}
+                                            className="ah-goods-card-input ah-goods-card-title-input ah-goods-card-input--full"
+                                            value={d?.name ?? ''}
+                                            onChange={(e) =>
+                                              setGoodsDetailDraft((x) => {
+                                                const base = x ?? buildGoodsDetailDraft(v)
+                                                return base ? { ...base, name: e.target.value } : null
+                                              })
+                                            }
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            aria-label="Tên sản phẩm"
+                                          />
                                         </div>
                                       </div>
                                     </div>

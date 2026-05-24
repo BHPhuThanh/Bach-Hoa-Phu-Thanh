@@ -1331,7 +1331,7 @@
   .ah-goods-vdetail-wrap .ah-goods-detail-after-virt {
     max-height: none;
     overflow: visible;
-    padding-bottom: 150px;
+    padding-bottom: 4rem;
   }
 
   .ah-goods-toolbar:not(.ah-goods-toolbar--v2) {
@@ -2399,7 +2399,8 @@
   border-radius: 10px;
   border: 1px solid rgba(11, 132, 255, 0.58);
   background: linear-gradient(165deg, #1c2433 0%, #151b26 55%, #121820 100%);
-  padding: 0.85rem 1rem 0.55rem;
+  padding: 0.85rem 1rem 0.35rem;
+  height: auto;
   box-shadow:
     0 0 0 1px rgba(11, 132, 255, 0.08),
     0 4px 14px rgba(0, 0, 0, 0.25);
@@ -2413,22 +2414,10 @@
   align-items: start;
 }
 
-/* Chi tiết hàng (dòng mở rộng): ảnh + tên, sau đó thanh tab dưới tên */
+/* Chi tiết hàng: tên full-width (không placeholder ảnh) */
 .ah-goods-card-top-split {
-  display: grid;
-  grid-template-columns: 5.35rem minmax(0, 1fr);
-  gap: 0.45rem 1rem;
-  align-items: start;
-}
-
-.ah-goods-card-top-split .ah-goods-card-photo {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.ah-goods-card-top-split .ah-goods-card-title-row {
-  grid-column: 2;
-  grid-row: 1;
+  display: block;
+  width: 100%;
 }
 
 .ah-goods-detail-sticky-header {
@@ -2530,9 +2519,29 @@
 }
 
 .ah-goods-card-name-block {
+  position: relative;
   padding: 0.55rem 0.65rem 0.5rem;
   background: #0f172a;
   border-top: 1px solid rgba(51, 65, 85, 0.55);
+}
+
+.ah-goods-card-name-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.32rem;
+  margin: 0 0 0.4rem;
+}
+
+.ah-goods-card-title-field--full {
+  width: 100%;
+  max-width: none;
+}
+
+.ah-goods-card-input--full {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
 }
 
 @media (max-width: 768px) {
@@ -2606,16 +2615,20 @@
 
 .ah-goods-card-unit-row--below-tabs,
 .ah-goods-card-body--below-tabs {
-  margin-left: calc(5.35rem + 1rem);
+  margin-left: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .ah-goods-unit-smart-summary {
-  margin: 0 0 0.65rem calc(5.35rem + 1rem);
+  margin: 0 0 0.65rem;
   padding: 0.55rem 0.65rem 0.6rem;
   border-radius: 8px;
   border: 1px solid rgba(56, 189, 248, 0.28);
   background: rgba(15, 23, 42, 0.55);
-  max-width: 42rem;
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .ah-goods-unit-smart-summary--solo {
@@ -2744,15 +2757,7 @@
 }
 
 .ah-goods-card-photo {
-  grid-column: 1;
-  grid-row: 1 / span 3;
-  width: 5.35rem;
-  height: 5.35rem;
-  border-radius: 8px;
-  border: 1px dashed rgba(148, 163, 184, 0.42);
-  background: rgba(0, 0, 0, 0.22);
-  box-sizing: border-box;
-  flex-shrink: 0;
+  display: none;
 }
 
 .ah-goods-card-title-row {
@@ -8884,15 +8889,15 @@ li.ah-inbound-suggest-empty {
   z-index: 93400;
   background: rgba(0, 0, 0, 0.58);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   padding: 0.75rem;
   box-sizing: border-box;
 }
 
-@media (min-width: 769px) {
+@media (max-width: 768px) {
   .ah-inbound-quick-edit-backdrop {
-    align-items: center;
+    align-items: flex-end;
   }
 }
 
@@ -8947,69 +8952,52 @@ li.ah-inbound-suggest-empty {
   max-height: none;
 }
 
-/* Phú Thành 2.0 — Compact grid chi tiết sản phẩm */
+/* Phú Thành 2.0 — lưới trường chi tiết SP: full width, cột co giãn theo màn hình */
 .ah-goods-v2-body-grid {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: 0.55rem 0.85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  width: 100%;
   align-items: start;
+  box-sizing: border-box;
 }
 
 .ah-goods-v2-body-grid .ah-goods-card-row {
   display: contents;
 }
 
+.ah-goods-v2-body-grid .ah-goods-card-field {
+  min-width: 0;
+}
+
+.ah-goods-v2-body-grid .ah-goods-card-input,
+.ah-goods-v2-body-grid .ah-goods-detail-brand-wrap {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
 .ah-goods-v2-body-grid .ah-goods-unit-modal-open-wrap {
-  grid-column: 1;
+  grid-column: 1 / -1;
   margin-top: 0.15rem;
 }
 
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-code']) {
-  grid-column: 1;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-barcode']) {
-  grid-column: 1;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-brand']) {
-  grid-column: 1;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-weight']) {
-  grid-column: 1;
+@media (min-width: 768px) {
+  .ah-goods-v2-body-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-price']) {
-  grid-column: 2;
-  grid-row: 1;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-cost']) {
-  grid-column: 2;
-  grid-row: 2;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-wholesale']) {
-  grid-column: 2;
-  grid-row: 3;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-stock']) {
-  grid-column: 2;
-  grid-row: 4;
-}
-.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-norm']) {
-  grid-column: 2;
-  grid-row: 5;
+@media (min-width: 1024px) {
+  .ah-goods-v2-body-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 
 .ah-goods-detail-card--v2-modal {
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-
-.ah-goods-detail-card--v2-modal .ah-goods-card-photo {
-  display: none;
-}
-
-.ah-goods-detail-card--v2-modal .ah-goods-card-top-split {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .ah-goods-detail-card--v2-modal .ah-goods-card-name-block {
@@ -9028,8 +9016,9 @@ li.ah-inbound-suggest-empty {
   align-items: center;
   justify-content: flex-end;
   gap: 0.55rem;
-  margin-top: 0.65rem;
-  padding: 0.65rem 0.75rem;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.65rem 0.65rem;
+  height: auto;
   border-top: 1px solid rgba(71, 85, 105, 0.55);
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, #0f172a 100%);
   box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.35);
@@ -9061,47 +9050,6 @@ li.ah-inbound-suggest-empty {
   z-index: 93550;
 }
 
-@media (max-width: 768px) {
-  .ah-goods-v2-body-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-price']) {
-    order: -50;
-    grid-column: 1;
-    grid-row: auto;
-  }
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-cost']) {
-    order: -49;
-    grid-column: 1;
-    grid-row: auto;
-  }
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-stock']) {
-    order: -48;
-    grid-column: 1;
-    grid-row: auto;
-  }
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-norm']) {
-    order: -47;
-    grid-column: 1;
-    grid-row: auto;
-  }
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-wholesale']) {
-    order: -46;
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-code']),
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-barcode']),
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-brand']),
-  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-weight']),
-  .ah-goods-v2-body-grid .ah-goods-unit-modal-open-wrap {
-    grid-column: 1;
-    order: 0;
-  }
-}
-
 @media (min-width: 769px) {
   .ah-inbound-quick-edit-panel {
     width: min(100%, 58rem);
@@ -9110,5 +9058,82 @@ li.ah-inbound-suggest-empty {
 
   .ah-inbound-quick-edit-body .ah-goods-detail-card--v2-modal {
     padding-bottom: 0;
+  }
+}
+
+.ah-inbound-line-qty-price-mobile {
+  display: none;
+}
+
+.ah-inbound-line-qty-desktop {
+  display: inline;
+  width: 100%;
+}
+
+/* Chi tiết phiếu nhập — card từng dòng SP trên mobile */
+@media (max-width: 767px) {
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card .ah-inbound-detail-line-stt,
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card .ah-inbound-ln-stt {
+    display: none !important;
+  }
+
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card .ah-inbound-detail-line-name::before {
+    display: none;
+  }
+
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card .ah-inbound-detail-line-name,
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card .ah-inbound-product-name-btn {
+    font-size: 1rem;
+    font-weight: 800;
+    color: #f1f5f9;
+  }
+
+  .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-price-mobile {
+    display: block;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-desktop {
+    display: none;
+  }
+
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card td.ah-inbound-detail-line-price {
+    display: none !important;
+  }
+
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card td.ah-inbound-detail-line-sum {
+    margin-top: 0.25rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid #334155;
+    font-size: 1rem;
+    font-weight: 800;
+    color: #7dd3fc;
+  }
+
+  .ah-inbound-detail-lines-wrap tr.ah-inbound-detail-line-card td.ah-inbound-detail-line-sum::before {
+    color: #94a3b8;
+  }
+
+  .ah-inbound-detail-page--editing .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-price-mobile {
+    display: none;
+  }
+
+  .ah-inbound-detail-page--editing .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-desktop {
+    display: block;
+    width: 100%;
+  }
+
+  .ah-inbound-detail-page--editing
+    .ah-inbound-detail-lines-wrap
+    tr.ah-inbound-detail-line-card
+    td.ah-inbound-detail-line-price {
+    display: flex !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-price-mobile {
+    display: none;
   }
 }

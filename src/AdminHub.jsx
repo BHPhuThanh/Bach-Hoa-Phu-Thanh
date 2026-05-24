@@ -463,6 +463,29 @@ const GOODS_DETAIL_VIEW_TONKHO = 'tonkho'
 const GOODS_DETAIL_VIEW_LICHSU = 'lichsu'
 const GOODS_DETAIL_VIEW_COMBO = 'combo_tp'
 
+const DESKTOP_LAYOUT_MQ = '(min-width: 769px)'
+
+function scrollElementIntoViewCenter(el) {
+  if (!el || typeof el.scrollIntoView !== 'function') return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+}
+
+function scrollGoodsRowIntoView(variantId) {
+  const id = String(variantId ?? '').trim()
+  if (!id || typeof document === 'undefined') return
+  if (typeof window !== 'undefined' && !window.matchMedia(DESKTOP_LAYOUT_MQ).matches) return
+  const el = document.querySelector(`[data-goods-row-id="${CSS.escape(id)}"]`)
+  scrollElementIntoViewCenter(el)
+}
+
+function scrollInboundLineIntoView(lineId) {
+  const id = String(lineId ?? '').trim()
+  if (!id || typeof document === 'undefined') return
+  if (typeof window !== 'undefined' && !window.matchMedia(DESKTOP_LAYOUT_MQ).matches) return
+  const el = document.querySelector(`[data-inbound-line-id="${CSS.escape(id)}"]`)
+  scrollElementIntoViewCenter(el)
+}
+
 /** Tab chi tiết phiếu nhập: `inbound_detail:<encodeURIComponent(orderId)>`. */
 const INBOUND_DETAIL_TAB_PREFIX = 'inbound_detail:'
 const MAX_OPEN_INBOUND_DETAIL_TABS = 10
@@ -1700,6 +1723,13 @@ export default function AdminHub({
   }, [goodsExpandedId, catalogList])
 
   useEffect(() => {
+    if (!goodsExpandedId) return
+    const id = goodsExpandedId
+    const t = window.setTimeout(() => scrollGoodsRowIntoView(id), 64)
+    return () => window.clearTimeout(t)
+  }, [goodsExpandedId])
+
+  useEffect(() => {
     if (!goodsCreateOpen) return
     const onDoc = (e) => {
       if (goodsCreateWrapRef.current?.contains(e.target)) return
@@ -1790,6 +1820,7 @@ export default function AdminHub({
   const openInboundProductQuickEdit = useCallback(
     (variantIdOrLine, catalogHint) => {
       const ln = variantIdOrLine && typeof variantIdOrLine === 'object' ? variantIdOrLine : null
+      if (ln?.lineId) scrollInboundLineIntoView(ln.lineId)
       const rawVid = ln
         ? resolveVariantIdForInboundLine(ln, catalogHint || catalogList)
         : String(variantIdOrLine || '').trim()
@@ -7927,7 +7958,10 @@ export default function AdminHub({
           ))}
 
         {isInboundDetailTabId(activeTab) && (
-            <section className="ah-inbound-detail-page" aria-labelledby="ah-inbound-detail-title">
+            <section
+              className={`ah-inbound-detail-page${inboundDetailIsEditing ? ' ah-inbound-detail-page--editing' : ''}`}
+              aria-labelledby="ah-inbound-detail-title"
+            >
               {!inboundDetailTabOid ? (
                 <div className="ah-inbound-detail-missing">
                   <p className="admin-hub-muted">Tab không hợp lệ.</p>
@@ -8001,8 +8035,8 @@ export default function AdminHub({
                       </button>
                     </div>
                   )}
-                  <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap">
-                    <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table">
+                  <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-inbound-detail-table-wrap ah-responsive-table-wrap ah-inbound-detail-lines-wrap">
+                    <table className="admin-hub-table ah-inbound-table ah-inbound-detail-lines-table ah-responsive-table">
                       <colgroup>
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--stt" />
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--code" />
@@ -8025,7 +8059,7 @@ export default function AdminHub({
                       </thead>
                       <tbody>
                         {(inboundDetailDraftLines ?? inboundDetailOrderRow.lines).length === 0 ? (
-                          <tr>
+                          <tr className="ah-responsive-table-empty">
                             <td colSpan={7} className="admin-hub-muted">
                               Chưa có dòng hàng.
                             </td>
@@ -8035,12 +8069,19 @@ export default function AdminHub({
                             const ln = normalizeInboundLine(rawLn)
                             const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
                             const inboundDvtLocked = inboundDvtOptions.length <= 1
+                            const lineTotal = inboundLineTotal(ln)
                             return (
-                              <tr key={ln.lineId}>
-                                <td className="ah-inbound-ln-stt">{idx + 1}</td>
-                                <td>{renderInboundLineCodeLink(ln)}</td>
-                                <td>{renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}</td>
-                                <td className="ah-inbound-ln-dvt-cell">
+                              <tr
+                                key={ln.lineId}
+                                className="ah-responsive-table-card-row ah-inbound-detail-line-card"
+                                data-inbound-line-id={ln.lineId}
+                              >
+                                <td className="ah-inbound-ln-stt ah-inbound-detail-line-stt">{idx + 1}</td>
+                                <td data-label="Mã hàng">{renderInboundLineCodeLink(ln)}</td>
+                                <td className="ah-inbound-detail-line-name" data-label="Tên hàng">
+                                  {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                </td>
+                                <td className="ah-inbound-ln-dvt-cell" data-label="ĐVT">
                                   {inboundDetailIsEditing ? (
                                     <select
                                       className={`ah-inbound-dvt-select${
@@ -8063,7 +8104,12 @@ export default function AdminHub({
                                     normalizeCatalogUnitLabel(ln.unitLabel) || '—'
                                   )}
                                 </td>
-                                <td className="ah-num">
+                                <td className="ah-num ah-inbound-detail-line-qty" data-label="Số lượng">
+                                  <span className="ah-inbound-line-qty-price-mobile">
+                                    {ln.qty.toLocaleString('vi-VN')} ×{' '}
+                                    {ln.unitPrice.toLocaleString('vi-VN')} đ
+                                  </span>
+                                  <span className="ah-inbound-line-qty-desktop">
                                   {inboundDetailIsEditing ? (
                                     <input
                                       className="ah-inbound-cell-input ah-inbound-cell-input--qty ah-inbound-cell-input--soft"
@@ -8084,8 +8130,10 @@ export default function AdminHub({
                                   ) : (
                                     ln.qty.toLocaleString('vi-VN')
                                   )}
+                                  </span>
                                 </td>
-                                <td className="ah-num">
+                                <td className="ah-num ah-inbound-detail-line-price" data-label="Đơn giá">
+                                  <span className="ah-inbound-line-qty-desktop">
                                   {inboundDetailIsEditing ? (
                                     <input
                                       className="ah-inbound-cell-input ah-inbound-cell-input--soft"
@@ -8103,9 +8151,10 @@ export default function AdminHub({
                                   ) : (
                                     `${ln.unitPrice.toLocaleString('vi-VN')} đ`
                                   )}
+                                  </span>
                                 </td>
-                                <td className="ah-num">
-                                  {inboundLineTotal(ln).toLocaleString('vi-VN')} đ
+                                <td className="ah-num ah-inbound-detail-line-sum" data-label="Thành tiền">
+                                  {lineTotal.toLocaleString('vi-VN')} đ
                                 </td>
                               </tr>
                             )
