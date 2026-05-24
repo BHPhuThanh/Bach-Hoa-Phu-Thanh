@@ -51,7 +51,7 @@ export function AdminHubGoodsExpandedBelow(props) {
   return (
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
                                 <div className="ah-goods-detail-panel ah-goods-detail-panel--card">
-                                  <div className="ah-goods-detail-card">
+                                  <div className={`ah-goods-detail-card${onCloseGoodsDetail ? ' ah-goods-detail-card--v2-modal' : ''}`}>
             <div className="ah-goods-detail-sticky-header">
                                     {onCloseGoodsDetail ? (
                                       <div className="ah-goods-detail-mobile-cap">
@@ -345,7 +345,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                         </select>
                                       </div>
                                       {d ? (
-                                        <div className="ah-goods-card-body ah-goods-card-body--below-tabs">
+                                        <div className="ah-goods-card-body ah-goods-card-body--below-tabs ah-goods-v2-body-grid">
                                           <div className="ah-goods-card-row">
                                             <div className="ah-goods-card-field">
                                               <label className="ah-goods-card-lbl" htmlFor={`gd-code-${v.id}`}>
@@ -588,7 +588,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                               + Thêm đơn vị tính
                                             </button>
                                           </div>
-                                          {goodsInventoryPreviewRows?.length ? (
+                                          {goodsInventoryPreviewRows?.length && !onCloseGoodsDetail ? (
                                             <div
                                               className="ah-goods-inventory-movement-preview"
                                               onClick={(e) => e.stopPropagation()}
@@ -874,9 +874,35 @@ export function AdminHubGoodsExpandedBelow(props) {
                                         </div>
                                       </div>
                                     ) : null}
+                                    {onCloseGoodsDetail ? (
+                                      <footer className="ah-goods-v2-sticky-foot" role="toolbar" aria-label="Lưu và thoát">
+                                        <button
+                                          type="button"
+                                          className="ah-goods-v2-foot-btn ah-goods-v2-foot-btn--ghost"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onCloseGoodsDetail()
+                                          }}
+                                        >
+                                          Thoát
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="ah-goods-v2-foot-btn ah-goods-v2-foot-btn--save"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            void saveGoodsDetail()
+                                          }}
+                                        >
+                                          Lưu
+                                        </button>
+                                      </footer>
+                                    ) : null}
+                                    {!onCloseGoodsDetail ? (
                                     <p className="ah-goods-detail-hint ah-goods-detail-hint--card">
                                       Nhấn Esc để đóng chi tiết.
                                     </p>
+                                    ) : null}
                                   </div>
                                 </div>
     </div>

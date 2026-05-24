@@ -2,7 +2,6 @@
  * Thông báo Supabase (`public.notifications`).
  */
 
-import { flattenDisplayCatalogToVariants } from './catalogRepository.js'
 import { formatRoundedStockQtyVi } from './displayStockQty.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
@@ -11,7 +10,74 @@ export const NOTIFICATIONS_BUMP_EVENT = 'csv-preview:notifications-supabase-bump
 
 export const NOTIFICATION_KIND_LOW_STOCK = 'low_stock'
 
+/** @deprecated Legacy header — dùng formatLowStockDigestHeader() cho thông báo mới. */
 export const LOW_STOCK_DIGEST_HEADER = '📋 DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY:'
+
+/**
+ * Tiêu đề digest theo ngày: [Ngày dd/mm/yyyy] - Danh sách sản phẩm sắp hết hàng
+ * @param {Date} [date]
+ */
+export function formatLowStockDigestHeader(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date)
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `[Ngày ${dd}/${mm}/${yyyy}] - Danh sách sản phẩm sắp hết hàng`
+}
+
+/** Nhận diện message digest tồn thấp (header mới hoặc legacy). */
+export function isLowStockDigestMessage(message) {
+  const msg = String(message ?? '')
+  return (
+    msg.includes('Danh sách sản phẩm sắp hết hàng') ||
+    msg.includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')
+  )
+}
+
+/**
+ * @param {number} ms
+ * @returns {string}
+ */
+export function formatNotificationDayLabel(ms) {
+  const d = new Date(ms)
+  if (!Number.isFinite(d.getTime())) return 'Khác'
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const day = new Date(d)
+  day.setHours(0, 0, 0, 0)
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  if (day.getTime() === today.getTime()) return 'Hôm nay'
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (day.getTime() === yesterday.getTime()) return 'Hôm qua'
+  return `[Ngày ${dd}/${mm}/${yyyy}]`
+}
+
+/**
+ * Gom thông báo theo ngày (mới nhất trước).
+ * @param {AppNotificationRow[]} rows
+ * @returns {Array<{ label: string, dayKey: string, items: AppNotificationRow[] }>}
+ */
+export function groupNotificationsByDay(rows) {
+  if (!Array.isArray(rows) || !rows.length) return []
+  const sorted = [...rows].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
+  /** @type {Array<{ label: string, dayKey: string, items: AppNotificationRow[] }>} */
+  const groups = []
+  for (const n of sorted) {
+    const d = new Date(n.createdAtMs || Date.now())
+    const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    const label = formatNotificationDayLabel(n.createdAtMs)
+    const last = groups[groups.length - 1]
+    if (last && last.dayKey === dayKey) {
+      last.items.push(n)
+    } else {
+      groups.push({ label, dayKey, items: [n] })
+    }
+  }
+  return groups
+}
 
 function bump() {
   try {
@@ -182,7 +248,9 @@ export async function fetchTodayLowStockDigestNotification(userId) {
       .order('created_at', { ascending: true })
       .limit(1)
     if (withDigestHeader) {
-      q = q.ilike('message', '%DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY%')
+      q = q.or(
+        'message.ilike.%Danh sách sản phẩm sắp hết hàng%,message.ilike.%DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY%'
+      )
     }
     if (uid) {
       q = q.or(`user_id.eq.${uid},user_id.is.null`)
@@ -201,6 +269,70 @@ export async function fetchTodayLowStockDigestNotification(userId) {
   }
 
   return null
+}
+
+/**
+ * Dựng nội dung digest đầy đủ từ danh sách sản phẩm tồn thấp.
+ * @param {Array<{ code: string, name: string, stockLabel?: string, variant?: object }>} items
+ * @param {Date} [date]
+ */
+export function buildLowStockDigestMessageFromItems(items, date = new Date()) {
+  if (!Array.isArray(items) || !items.length) return ''
+  const header = formatLowStockDigestHeader(date)
+  const lines = items.map((it) => {
+    const stock =
+      it.variant != null
+        ? variantStockQty(it.variant)
+        : Number(String(it.stockLabel ?? '').replace(/[^\d.,-]/g, '').replace(',', '.'))
+    const stockN = Number.isFinite(stock) ? stock : 0
+    return formatLowStockDigestLine(it.code, it.name, stockN)
+  })
+  return `${header}\n${lines.join('\n')}`
+}
+
+/**
+ * Đồng bộ digest hôm nay — lũy kế toàn bộ SP còn tồn thấp trong catalog.
+ * @param {object[]} catalog
+ * @param {string} [userId]
+ * @returns {Promise<AppNotificationRow[]>}
+ */
+export async function syncTodayLowStockDigest(catalog, userId) {
+  if (!isSupabaseConfigured() || !catalog?.length) return []
+
+  const items = collectLowStockProductsFromCatalog(catalog)
+  if (!items.length) return []
+
+  const message = buildLowStockDigestMessageFromItems(items)
+  if (!message) return []
+
+  let digest = await fetchTodayLowStockDigestNotification(userId)
+  if (digest) {
+    if (String(digest.message ?? '').trim() === message.trim()) return [digest]
+    const updated = await updateLowStockDigestNotification(digest.id, message)
+    return updated ? [updated] : []
+  }
+
+  const inserted = await insertLowStockDigestNotification({ message, userId })
+  return inserted ? [inserted] : []
+}
+
+/**
+ * Xóa thông báo cũ hơn 7 ngày (RPC Supabase).
+ * @param {string} [userId] — giữ tham số cho tương lai; RPC hiện xóa toàn bộ theo tuổi.
+ */
+export async function cleanOldNotificationsInSupabase(userId) {
+  void userId
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const client = getSupabaseClient()
+  if (!client) return { ok: true, skipped: true }
+
+  const { data, error } = await client.rpc('clean_old_notifications')
+  if (error) {
+    console.warn('[notifications] cleanOld', error)
+    return { ok: false, error }
+  }
+  bump()
+  return { ok: true, deleted: data }
 }
 
 /**
@@ -338,69 +470,8 @@ export async function evaluateLowStockNotificationsAfterSale({
   touchedVariantIds,
   userId,
 }) {
-  if (!isSupabaseConfigured() || !catalog?.length) return []
-
-  const byId = new Map(
-    flattenDisplayCatalogToVariants(catalog).map((v) => [String(v.id), v])
-  )
-
-  /** @type {Array<{ code: string, name: string, stock: number, variantId: string }>} */
-  const candidates = []
-  const seenCode = new Set()
-
-  for (const rawVid of touchedVariantIds) {
-    const vid = String(rawVid ?? '').trim()
-    if (!vid) continue
-
-    const v = byId.get(vid)
-    if (!v) continue
-
-    const min = variantStockNormMin(v)
-    if (min == null) continue
-
-    const stock = variantStockQty(v)
-    if (stock > min) continue
-
-    const code = String(v.code ?? '').trim()
-    const codeKey = code.toLowerCase() || vid
-    if (seenCode.has(codeKey)) continue
-    seenCode.add(codeKey)
-
-    const name = String(v.name ?? v.nameRaw ?? v.code ?? '').trim() || '—'
-    candidates.push({ code, name, stock, variantId: vid })
-  }
-
-  if (!candidates.length) return []
-
-  let digest = await fetchTodayLowStockDigestNotification(userId)
-  let message = String(digest?.message ?? '').trim()
-  if (digest && message && !message.includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')) {
-    message = `${LOW_STOCK_DIGEST_HEADER}\n${message}`
-  }
-  let changed = false
-
-  for (const item of candidates) {
-    if (messageContainsProductLine(message, item.code, item.name)) continue
-    const line = formatLowStockDigestLine(item.code, item.name, item.stock)
-    if (!message) {
-      message = `${LOW_STOCK_DIGEST_HEADER}\n${line}`
-    } else {
-      message = `${message}\n${line}`
-    }
-    changed = true
-  }
-
-  if (!changed) {
-    return digest ? [digest] : []
-  }
-
-  if (digest) {
-    const updated = await updateLowStockDigestNotification(digest.id, message)
-    return updated ? [updated] : []
-  }
-
-  const inserted = await insertLowStockDigestNotification({ message, userId })
-  return inserted ? [inserted] : []
+  void touchedVariantIds
+  return syncTodayLowStockDigest(catalog, userId)
 }
 
 /**

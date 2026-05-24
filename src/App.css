@@ -780,6 +780,26 @@
   color: #e2e8f0;
 }
 
+.app-header-notify-message-pre {
+  white-space: pre-line;
+  text-align: left;
+  display: block;
+}
+
+.app-header-notify-day-h {
+  margin: 0.35rem 0 0.2rem;
+  padding: 0 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.app-header-notify-day-group + .app-header-notify-day-group {
+  margin-top: 0.35rem;
+}
+
 .app-header-cost-notif-btn:hover {
   background: rgba(56, 189, 248, 0.08);
   color: #f8fafc;

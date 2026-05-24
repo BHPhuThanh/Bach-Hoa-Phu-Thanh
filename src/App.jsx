@@ -127,13 +127,17 @@ import {
   markAllLocalNotificationsRead,
 } from './appNotificationsStorage.js'
 import {
+  cleanOldNotificationsInSupabase,
   collectLowStockProductsFromCatalog,
   fetchNotificationsFromSupabase,
+  groupNotificationsByDay,
+  isLowStockDigestMessage,
   markAllNotificationsReadInSupabase,
   NOTIFICATIONS_BUMP_EVENT,
   parseLowStockDigestMessage,
   resolveLowStockItemsFromCatalog,
   runLowStockAlertsInBackground,
+  syncTodayLowStockDigest,
 } from './notificationsRepository.js'
 import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
 import {
@@ -2596,8 +2600,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [activeSellerId])
 
   useEffect(() => {
-    void refreshSupabaseNotifications()
-  }, [refreshSupabaseNotifications])
+    void (async () => {
+      await cleanOldNotificationsInSupabase(activeSellerId)
+      await refreshSupabaseNotifications()
+    })()
+  }, [refreshSupabaseNotifications, activeSellerId])
+
+  const lowStockDigestSyncedRef = useRef(false)
+
+  useEffect(() => {
+    if (!products.length || !isSupabaseConfigured() || lowStockDigestSyncedRef.current) return
+    lowStockDigestSyncedRef.current = true
+    void syncTodayLowStockDigest(products, activeSellerId).then((rows) => {
+      if (rows?.length) mergeCreatedLowStockNotifications(rows)
+    })
+  }, [products, activeSellerId, mergeCreatedLowStockNotifications])
 
   useEffect(() => {
     const syncLocal = () => setAppCostChangeNotifications(loadAppNotifications())
@@ -2620,7 +2637,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     for (const n of supabaseNotifications) {
       if (n.is_read) continue
       if (n.kind === 'low_stock') {
-        if (String(n.message ?? '').includes('DANH SÁCH SẢN PHẨM CHẠM ĐÁY TỒN KHO NAY')) {
+        if (isLowStockDigestMessage(n.message)) {
           digestUnread = true
         }
         continue
@@ -5360,6 +5377,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const costNotifyCount = appCostChangeNotifications.length
     const totalNotifyCount = supabaseUnreadCount + costNotifyCount
     const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
+    const supabaseLowStockGroups = groupNotificationsByDay(supabaseLowStock)
     const supabasePriceChange = supabaseNotifications.filter(
       (n) => n.kind === 'price_change' || n.kind === 'cost_change'
     )
@@ -5435,22 +5453,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   {supabaseLowStock.length > 0 ? (
                     <>
                       <div className="app-header-notify-section-h">Hàng sắp hết</div>
-                      <ul className="app-header-cost-notif-list">
-                        {supabaseLowStock.map((n) => (
-                          <li
-                            key={n.id}
-                            className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
-                          >
-                            <button
-                              type="button"
-                              className="app-header-supabase-notif-btn"
-                              onClick={() => handleNotificationClick(n, 'supabase')}
-                            >
-                              {n.message}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
+                      {supabaseLowStockGroups.map((grp) => (
+                        <div key={grp.dayKey} className="app-header-notify-day-group">
+                          <div className="app-header-notify-day-h">{grp.label}</div>
+                          <ul className="app-header-cost-notif-list">
+                            {grp.items.map((n) => (
+                              <li
+                                key={n.id}
+                                className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="app-header-supabase-notif-btn"
+                                  onClick={() => handleNotificationClick(n, 'supabase')}
+                                >
+                                  <span className="app-header-notify-message-pre">{n.message}</span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
                     </>
                   ) : null}
                   {supabasePriceChange.length > 0 ? (

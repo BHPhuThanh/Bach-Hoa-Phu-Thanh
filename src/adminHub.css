@@ -8946,3 +8946,169 @@ li.ah-inbound-suggest-empty {
 .ah-inbound-quick-edit-body .ah-goods-detail-after-virt {
   max-height: none;
 }
+
+/* Phú Thành 2.0 — Compact grid chi tiết sản phẩm */
+.ah-goods-v2-body-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0.55rem 0.85rem;
+  align-items: start;
+}
+
+.ah-goods-v2-body-grid .ah-goods-card-row {
+  display: contents;
+}
+
+.ah-goods-v2-body-grid .ah-goods-unit-modal-open-wrap {
+  grid-column: 1;
+  margin-top: 0.15rem;
+}
+
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-code']) {
+  grid-column: 1;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-barcode']) {
+  grid-column: 1;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-brand']) {
+  grid-column: 1;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-weight']) {
+  grid-column: 1;
+}
+
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-price']) {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-cost']) {
+  grid-column: 2;
+  grid-row: 2;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-wholesale']) {
+  grid-column: 2;
+  grid-row: 3;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-stock']) {
+  grid-column: 2;
+  grid-row: 4;
+}
+.ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-norm']) {
+  grid-column: 2;
+  grid-row: 5;
+}
+
+.ah-goods-detail-card--v2-modal {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ah-goods-detail-card--v2-modal .ah-goods-card-photo {
+  display: none;
+}
+
+.ah-goods-detail-card--v2-modal .ah-goods-card-top-split {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ah-goods-detail-card--v2-modal .ah-goods-card-name-block {
+  padding-bottom: 0.35rem;
+}
+
+.ah-goods-detail-card--v2-modal .ah-goods-inventory-movement-preview {
+  display: none;
+}
+
+.ah-goods-v2-sticky-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border-top: 1px solid rgba(71, 85, 105, 0.55);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, #0f172a 100%);
+  box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.ah-goods-v2-foot-btn {
+  min-height: 2.35rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.85);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ah-goods-v2-foot-btn--ghost {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.ah-goods-v2-foot-btn--save {
+  background: #0ea5e9;
+  border-color: #0284c7;
+  color: #0f172a;
+}
+
+.ah-unit-modal-overlay--stack {
+  z-index: 93550;
+}
+
+@media (max-width: 768px) {
+  .ah-goods-v2-body-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-price']) {
+    order: -50;
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-cost']) {
+    order: -49;
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-stock']) {
+    order: -48;
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-norm']) {
+    order: -47;
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-wholesale']) {
+    order: -46;
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-code']),
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-barcode']),
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-brand']),
+  .ah-goods-v2-body-grid .ah-goods-card-field:has([id^='gd-weight']),
+  .ah-goods-v2-body-grid .ah-goods-unit-modal-open-wrap {
+    grid-column: 1;
+    order: 0;
+  }
+}
+
+@media (min-width: 769px) {
+  .ah-inbound-quick-edit-panel {
+    width: min(100%, 58rem);
+    max-height: min(88vh, 680px);
+  }
+
+  .ah-inbound-quick-edit-body .ah-goods-detail-card--v2-modal {
+    padding-bottom: 0;
+  }
+}

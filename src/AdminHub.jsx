@@ -1608,7 +1608,8 @@ export default function AdminHub({
   const [inboundQuickEditExpandId, setInboundQuickEditExpandId] = useState(null)
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
-  const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
+  const inboundQuickEditPreserveRef = useRef(null)
+  const inboundQuickEditDraftSeedVariantIdRef = useRef('')
   const [goodsDetailSelectedVid, setGoodsDetailSelectedVid] = useState(null)
   const [goodsDetailDraft, setGoodsDetailDraft] = useState(null)
   /** Tab phụ trong panel chi tiết hàng: Mô tả (form) / Lịch sử kho (thẻ kho). */
@@ -1854,6 +1855,30 @@ export default function AdminHub({
   }, [goodsExpandedId, goodsDetailSelectedVid, goodsDetailVariantFp, goodsDetailVariant, buildGoodsDetailDraft])
 
   useEffect(() => {
+    if (!inboundQuickEditExpandId) {
+      inboundQuickEditDraftSeedVariantIdRef.current = ''
+      return
+    }
+    const nextVid = String(inboundQuickEditSelectedVid ?? '')
+    if (!nextVid || !inboundQuickEditVariant) return
+    if (inboundQuickEditDraftSeedVariantIdRef.current === nextVid) return
+    inboundQuickEditDraftSeedVariantIdRef.current = nextVid
+    const preserve = inboundQuickEditPreserveRef.current
+    inboundQuickEditPreserveRef.current = null
+    const seeded = buildGoodsDetailDraft(inboundQuickEditVariant)
+    if (preserve) {
+      setInboundQuickEditDraft({
+        ...seeded,
+        name: preserve.name ?? seeded?.name ?? '',
+        brand: preserve.brand ?? seeded?.brand ?? '',
+        weightRaw: preserve.weightRaw ?? seeded?.weightRaw ?? '',
+      })
+      return
+    }
+    setInboundQuickEditDraft(seeded)
+  }, [inboundQuickEditExpandId, inboundQuickEditSelectedVid, inboundQuickEditVariant, buildGoodsDetailDraft])
+
+  useEffect(() => {
     if (!goodsExpandedId) return
     const onKey = (e) => {
       if (e.key === 'Escape') {
@@ -2060,103 +2085,98 @@ export default function AdminHub({
     })
   }, [catalogList, goodsDetailSelectedVid, goodsExpandedId])
 
-  const saveGoodsDetail = useCallback(() => {
-    if (!goodsDetailVariant || !goodsDetailDraft) return
-    const nameTrim = String(goodsDetailDraft.name ?? '')
-      .replace(/\u00A0/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-    const patch = {
-      name: nameTrim,
-      code: String(goodsDetailDraft.code ?? '').trim(),
-      barcode: normalizeBarcodeValue(goodsDetailDraft.barcode),
-      brand: String(goodsDetailDraft.brand ?? '')
-        .replace(/\s+/g, ' ')
-        .trim(),
-      weightRaw: String(goodsDetailDraft.weightRaw ?? '')
+  const openInboundGoodsUnitModal = useCallback(() => {
+    const anchor = inboundQuickEditSelectedVid || inboundQuickEditExpandId
+    if (!anchor) return
+    const ctx = findVariantContext(catalogList, String(anchor))
+    if (!ctx?.variants?.length) return
+    setUnitModal({
+      anchorVariantId: String(anchor),
+      lines: createUnitModalLinesFromVariants(ctx.variants),
+      source: 'inbound',
+      deletedVariantIds: [],
+    })
+  }, [catalogList, inboundQuickEditSelectedVid, inboundQuickEditExpandId])
+
+  const saveProductDetailFromDraft = useCallback(
+    (variant, draft) => {
+      if (!variant || !draft) return false
+      const nameTrim = String(draft.name ?? '')
         .replace(/\u00A0/g, ' ')
         .replace(/\s+/g, ' ')
-        .trim(),
-      price: parseMoneyDraftVi(goodsDetailDraft.price),
-      wholesalePrice: parseMoneyDraftVi(goodsDetailDraft.wholesalePrice ?? '0'),
-      cost: parseMoneyDraftVi(goodsDetailDraft.cost),
-      stockQty: parseAdminStockNullable(goodsDetailDraft.stockQty),
-      stockNormMin: parseAdminStockNullable(goodsDetailDraft.stockNormMin),
-      stockNormMax:
-        goodsDetailVariant.stockNormMax != null &&
-        Number.isFinite(Number(goodsDetailVariant.stockNormMax))
-          ? Number(goodsDetailVariant.stockNormMax)
-          : null,
-    }
-    recordManualStockAdjustmentVoucher({
-      variantId: goodsDetailVariant.id,
-      productName: nameTrim || String(goodsDetailVariant.name || '').trim(),
-      productCode: patch.code,
-      unitLabel: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
-      beforeQty: goodsDetailVariant.stockQty,
-      afterQty: patch.stockQty,
-    })
-    if (onUpdateCatalogVariant) {
-      // eslint-disable-next-line no-console
-      console.log('[Hàng hóa · Lưu] Payload gửi Supabase (cột bảng products):', {
-        variantId: goodsDetailVariant.id,
-        ma_hang: patch.code,
-        ma_vach: patch.barcode,
-        ten_hang: nameTrim,
-        thuong_hieu: patch.brand,
-        gia_ban: patch.price,
-        gia_von: patch.cost,
-        ton_kho: patch.stockQty,
-        ton_nho_nhat: patch.stockNormMin,
-        ton_lon_nhat: patch.stockNormMax,
-        dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
+        .trim()
+      const patch = {
+        name: nameTrim,
+        code: String(draft.code ?? '').trim(),
+        barcode: normalizeBarcodeValue(draft.barcode),
+        brand: String(draft.brand ?? '')
+          .replace(/\s+/g, ' ')
+          .trim(),
+        weightRaw: String(draft.weightRaw ?? '')
+          .replace(/\u00A0/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+        price: parseMoneyDraftVi(draft.price),
+        wholesalePrice: parseMoneyDraftVi(draft.wholesalePrice ?? '0'),
+        cost: parseMoneyDraftVi(draft.cost),
+        stockQty: parseAdminStockNullable(draft.stockQty),
+        stockNormMin: parseAdminStockNullable(draft.stockNormMin),
+        stockNormMax:
+          variant.stockNormMax != null && Number.isFinite(Number(variant.stockNormMax))
+            ? Number(variant.stockNormMax)
+            : null,
+      }
+      recordManualStockAdjustmentVoucher({
+        variantId: variant.id,
+        productName: nameTrim || String(variant.name || '').trim(),
+        productCode: patch.code,
+        unitLabel: normalizeCatalogUnitLabel(variant.unitLabel),
+        beforeQty: variant.stockQty,
+        afterQty: patch.stockQty,
       })
-      recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
-      onUpdateCatalogVariant(goodsDetailVariant.id, patch)
-      triggerGoodsSaveSuccessToast()
-      return
-    }
-    if (standaloneCatalog?.products) {
-      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
-      const target = flat.find((v) => v.id === goodsDetailVariant.id)
-      if (!target) return
-      const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
-      const nextFlat = flat.map((v) => {
-        if (v.id === goodsDetailVariant.id) return { ...v, ...patch }
-        if (normalizeGroupRoot(v.code, v.linkedMasterCode) === rootBefore) {
-          return { ...v, name: nameTrim }
-        }
-        return v
-      })
-      const nextProducts = buildDisplayCatalog(nextFlat)
-      // eslint-disable-next-line no-console
-      console.log('[Hàng hóa · Lưu] Payload gửi Supabase (cột bảng products):', {
-        variantId: goodsDetailVariant.id,
-        ma_hang: patch.code,
-        ma_vach: patch.barcode,
-        ten_hang: nameTrim,
-        thuong_hieu: patch.brand,
-        gia_ban: patch.price,
-        gia_von: patch.cost,
-        ton_kho: patch.stockQty,
-        ton_nho_nhat: patch.stockNormMin,
-        ton_lon_nhat: patch.stockNormMax,
-        dvt: normalizeCatalogUnitLabel(goodsDetailVariant.unitLabel),
-      })
-      recordCostAdjustOnSave(goodsDetailVariant, patch, nameTrim)
-      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
-      triggerGoodsSaveSuccessToast()
-    }
-  }, [
-    goodsDetailVariant,
-    goodsDetailDraft,
-    onUpdateCatalogVariant,
-    standaloneCatalog,
-    persistStandaloneProducts,
-    triggerGoodsSaveSuccessToast,
-    recordManualStockAdjustmentVoucher,
-    recordCostAdjustOnSave,
-  ])
+      if (onUpdateCatalogVariant) {
+        recordCostAdjustOnSave(variant, patch, nameTrim)
+        onUpdateCatalogVariant(variant.id, patch)
+        triggerGoodsSaveSuccessToast()
+        return true
+      }
+      if (standaloneCatalog?.products) {
+        const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+        const target = flat.find((v) => v.id === variant.id)
+        if (!target) return false
+        const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
+        const nextFlat = flat.map((v) => {
+          if (v.id === variant.id) return { ...v, ...patch }
+          if (normalizeGroupRoot(v.code, v.linkedMasterCode) === rootBefore) {
+            return { ...v, name: nameTrim }
+          }
+          return v
+        })
+        const nextProducts = buildDisplayCatalog(nextFlat)
+        recordCostAdjustOnSave(variant, patch, nameTrim)
+        void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        triggerGoodsSaveSuccessToast()
+        return true
+      }
+      return false
+    },
+    [
+      onUpdateCatalogVariant,
+      standaloneCatalog,
+      persistStandaloneProducts,
+      triggerGoodsSaveSuccessToast,
+      recordManualStockAdjustmentVoucher,
+      recordCostAdjustOnSave,
+    ]
+  )
+
+  const saveGoodsDetail = useCallback(() => {
+    saveProductDetailFromDraft(goodsDetailVariant, goodsDetailDraft)
+  }, [goodsDetailVariant, goodsDetailDraft, saveProductDetailFromDraft])
+
+  const saveInboundQuickEditDetail = useCallback(() => {
+    saveProductDetailFromDraft(inboundQuickEditVariant, inboundQuickEditDraft)
+  }, [inboundQuickEditVariant, inboundQuickEditDraft, saveProductDetailFromDraft])
 
   const copyGoodsDetail = useCallback(() => {
     const v = goodsDetailVariant
@@ -2689,10 +2709,15 @@ export default function AdminHub({
             .replace(/\u00A0/g, ' ')
             .replace(/\s+/g, ' ')
             .trim()
-        : String(soloGoodsDraft?.name ?? soloGoodsVariant?.name ?? '')
-            .replace(/\u00A0/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
+        : unitModal.source === 'inbound'
+          ? String(inboundQuickEditDraft?.name ?? inboundQuickEditVariant?.name ?? '')
+              .replace(/\u00A0/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          : String(soloGoodsDraft?.name ?? soloGoodsVariant?.name ?? '')
+              .replace(/\u00A0/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
     if (!nameTrim) {
       window.alert('Vui lòng nhập tên sản phẩm trước khi lưu đơn vị.')
       return
@@ -2751,6 +2776,16 @@ export default function AdminHub({
       setGoodsDetailSelectedVid(mainId)
       goodsDraftSeedKeyRef.current = ''
     }
+    if (mainId && src === 'inbound') {
+      inboundQuickEditPreserveRef.current = {
+        name: inboundQuickEditDraft?.name,
+        brand: inboundQuickEditDraft?.brand,
+        weightRaw: inboundQuickEditDraft?.weightRaw,
+      }
+      setInboundQuickEditExpandId(mainId)
+      setInboundQuickEditSelectedVid(mainId)
+      inboundQuickEditDraftSeedVariantIdRef.current = ''
+    }
     if (mainId && src === 'solo') {
       if (oldAnchor !== mainId) {
         setOpenProductVariantIds((prev) => prev.map((x) => (x === oldAnchor ? mainId : x)))
@@ -2766,6 +2801,8 @@ export default function AdminHub({
     catalogList,
     goodsDetailDraft,
     goodsDetailVariant,
+    inboundQuickEditDraft,
+    inboundQuickEditVariant,
     soloGoodsDraft,
     soloGoodsVariant,
     replaceCatalogGroupFromModal,
@@ -5107,8 +5144,14 @@ export default function AdminHub({
         GOODS_DETAIL_VIEW_COMBO={GOODS_DETAIL_VIEW_COMBO}
         goodsDetailShelfTab={inboundQuickEditShelfTab}
         setGoodsDetailShelfTab={setInboundQuickEditShelfTab}
-        discardGoodsDetailDraft={() => setInboundQuickEditDraft(null)}
-        saveGoodsDetail={saveGoodsDetail}
+        discardGoodsDetailDraft={() => {
+          if (inboundQuickEditVariant) {
+            setInboundQuickEditDraft(buildGoodsDetailDraft(inboundQuickEditVariant))
+          } else {
+            setInboundQuickEditDraft(null)
+          }
+        }}
+        saveGoodsDetail={saveInboundQuickEditDetail}
         v={inboundQuickEditVariant}
         d={inboundQuickEditDraft}
         goodsDetailCtx={inboundQuickEditCtx}
@@ -5129,7 +5172,7 @@ export default function AdminHub({
         onGoodsInvLedgerDocumentSearchChange={setGoodsInvLedgerDocSearch}
         onInventoryDocumentActivate={handleInventoryLedgerDocActivate}
         getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
-        openGoodsUnitModal={openGoodsUnitModal}
+        openGoodsUnitModal={openInboundGoodsUnitModal}
         catalogList={catalogList}
         isComboDetail={!!inboundQuickEditCtx?.product && isComboCatalogProduct(inboundQuickEditCtx.product)}
         comboDetailProduct={inboundQuickEditCtx?.product ?? null}
@@ -5156,11 +5199,11 @@ export default function AdminHub({
     goodsInvLedgerDateTo,
     goodsInvLedgerDocSearch,
     handleInventoryLedgerDocActivate,
-    saveGoodsDetail,
+    saveInboundQuickEditDetail,
     buildGoodsDetailDraft,
     copyGoodsDetail,
     deleteGoodsDetailVariant,
-    openGoodsUnitModal,
+    openInboundGoodsUnitModal,
     catalogList,
     inboundNccAutocompleteOptions,
     revenueReadOnly,
@@ -9500,7 +9543,9 @@ export default function AdminHub({
 
       {unitModal && (
         <div
-          className="ah-unit-modal-overlay"
+          className={`ah-unit-modal-overlay${
+            unitModal.source === 'inbound' ? ' ah-unit-modal-overlay--stack' : ''
+          }`}
           role="presentation"
           onClick={closeUnitModal}
         >
