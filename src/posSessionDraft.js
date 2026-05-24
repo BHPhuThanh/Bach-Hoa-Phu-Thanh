@@ -66,13 +66,7 @@ export function sellOrdersHaveAnyCartLines(sellOrders) {
 /**
  * Ghi hoặc xóa nháp POS ngay (không debounce) — sau thanh toán để F5 không khôi phục giỏ đã chốt.
  */
-export function syncPosSessionDraftNow({
-  products,
-  fileName,
-  sellOrders,
-  activeSellOrderId,
-  sellWholesaleMode,
-}) {
+export function syncPosSessionDraftNow({ products, fileName, sellOrders, activeSellOrderId }) {
   if (!products?.length) {
     clearPosSessionDraft()
     return
@@ -87,7 +81,6 @@ export function syncPosSessionDraftNow({
     fileName: fileName || '',
     sellOrders,
     activeSellOrderId,
-    sellWholesaleMode: sellWholesaleMode === true,
     savedAt: new Date().toISOString(),
   })
 }
