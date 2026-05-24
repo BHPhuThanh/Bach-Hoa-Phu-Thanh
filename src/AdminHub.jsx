@@ -1608,6 +1608,8 @@ export default function AdminHub({
   const [inboundQuickEditExpandId, setInboundQuickEditExpandId] = useState(null)
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
+  /** Tab phụ trong modal sửa nhanh SP (tab Nhập hàng). */
+  const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
   const [goodsDetailSelectedVid, setGoodsDetailSelectedVid] = useState(null)
@@ -1782,6 +1784,7 @@ export default function AdminHub({
     setInboundQuickEditExpandId(null)
     setInboundQuickEditSelectedVid(null)
     setInboundQuickEditDraft(null)
+    setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
   }, [])
 
   const openInboundProductQuickEdit = useCallback(
