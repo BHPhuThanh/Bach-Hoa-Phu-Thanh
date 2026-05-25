@@ -2492,6 +2492,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [selectedCartLineId, setSelectedCartLineId] = useState(null)
   /** Index dòng giỏ đang chọn (0 = món vừa thêm — prepended đầu danh sách). */
   const [selectedItemIndex, setSelectedItemIndex] = useState(null)
+  /** Hộp thoại In trình duyệt (window.print) — theo dõi đóng ESC/Hủy. */
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
+  const prevPrintModalOpenRef = useRef(false)
   /** Chuỗi đang gõ ô SL theo lineId (khi undefined → hiển thị formatCartQtyDisplay). */
   const [cartQtyDraftByLine, setCartQtyDraftByLine] = useState(() => ({}))
   /** Chuỗi đang gõ ô giá bán theo lineId (chỉ đơn hiện tại; không ghi Supabase). */
@@ -2518,8 +2521,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [newCustomerName, setNewCustomerName] = useState('')
   const [newCustomerPhone, setNewCustomerPhone] = useState('')
   const headerSearchRef = useRef(null)
-  /** Chặn onFocus mở dropdown sau khi chuyển tab / thanh toán (focus programmatic). */
-  const suppressNextSearchFocusOpenRef = useRef(false)
   const [headerSearchDebounced, setHeaderSearchDebounced] = useState('')
   const headerSearchDebounceRef = useRef(null)
   if (headerSearchDebounceRef.current == null) {
@@ -2563,24 +2564,36 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [initialCatalogLoadPending])
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
-  /** Trả focus về ô tìm sau đóng modal In / ESC (50ms). */
-  const recoverPosFocusAfterModal = useCallback(() => {
-    window.setTimeout(() => {
-      const el =
-        document.getElementById('pos-search-input') ??
-        document.getElementById('search-product-input') ??
-        headerSearchRef.current
-      if (el && typeof el.focus === 'function') {
-        try {
-          el.focus({ preventScroll: true })
-        } catch {
-          el.focus()
-        }
-      }
-    }, 50)
-  }, [])
+  const printReceiptCallbacks = useMemo(
+    () => ({
+      onPrintDialogOpen: () => setIsPrintModalOpen(true),
+      onPrintDialogClose: () => setIsPrintModalOpen(false),
+    }),
+    []
+  )
 
-  const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe(recoverPosFocusAfterModal)
+  const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe(printReceiptCallbacks)
+
+  /** Khi hộp thoại In đóng (In xong / ESC / Hủy) — trả focus ô tìm, tránh F1 → Chrome Help. */
+  useEffect(() => {
+    if (prevPrintModalOpenRef.current && !isPrintModalOpen) {
+      window.setTimeout(() => {
+        document.getElementById('pos-search-input')?.focus()
+      }, 100)
+    }
+    prevPrintModalOpenRef.current = isPrintModalOpen
+  }, [isPrintModalOpen])
+
+  /** Chặn F1 toàn cục — Chrome không mở Help. */
+  useEffect(() => {
+    const blockF1Help = (e) => {
+      if (e.key === 'F1') {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', blockF1Help, { capture: true })
+    return () => window.removeEventListener('keydown', blockF1Help, { capture: true })
+  }, [])
   const handleThanhToanRef = useRef(() => {})
   const sellOrdersRef = useRef([])
   const productsRef = useRef([])
@@ -3505,7 +3518,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
-  /** Mở dropdown gợi ý — ô trống vẫn hiện sản phẩm bán chạy. */
+  /** Mở gợi ý — kể cả ô trống (bán chạy). F3 / click chuột. */
   const openHeaderSearchPanel = useCallback(() => {
     headerSearchDebounceRef.current?.cancel()
     const v = String(headerSearchRef.current?.value ?? headerSearch ?? '').trim()
@@ -3522,22 +3535,22 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [headerSearch])
 
-  const openHeaderSearchPanelFromPointer = useCallback(() => {
-    if (suppressNextSearchFocusOpenRef.current) return
+  const openBestSellersDropdown = useCallback(() => {
     headerSearchDebounceRef.current?.cancel()
-    const v = String(headerSearchRef.current?.value ?? headerSearch ?? '').trim()
-    setHeaderSearchDebounced(v)
+    setHeaderSearchDebounced('')
     setHeaderHighlightIndex(0)
     setHeaderSuggestUnitPickByProductId({})
     setHeaderSearchInvalid(false)
     setHeaderSearchFeedback('')
     setHeaderSuggestOpen(true)
-  }, [headerSearch])
+  }, [])
 
   const closeEInvoiceModal = useCallback(() => {
     setEInvoiceModalOpen(false)
-    recoverPosFocusAfterModal()
-  }, [recoverPosFocusAfterModal])
+    window.setTimeout(() => {
+      document.getElementById('pos-search-input')?.focus()
+    }, 100)
+  }, [])
 
   useEffect(
     () => () => {
@@ -3593,27 +3606,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     queueMicrotask(() => {
       headerSearchRef.current?.blur()
     })
-  }, [])
-
-  /** Neo focus vào ô tìm POS — tránh F1 rơi vào body (Chrome Help). */
-  const focusPosSearchInput = useCallback(() => {
-    suppressNextSearchFocusOpenRef.current = true
-    window.setTimeout(() => {
-      const el =
-        document.getElementById('pos-search-input') ??
-        document.getElementById('search-product-input') ??
-        headerSearchRef.current
-      if (el && typeof el.focus === 'function') {
-        try {
-          el.focus({ preventScroll: true })
-        } catch {
-          el.focus()
-        }
-      }
-      window.setTimeout(() => {
-        suppressNextSearchFocusOpenRef.current = false
-      }, 80)
-    }, 100)
   }, [])
 
   /** Sau khi thêm hàng (quét / Enter): không focus lại — tránh dropdown bung khi input rỗng. */
@@ -4048,8 +4040,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       sellOrders: nextOrders,
       activeSellOrderId: nextActiveId,
     })
-    focusPosSearchInput()
-  }, [hardDismissHeaderSearch, focusPosSearchInput])
+  }, [hardDismissHeaderSearch])
 
   const closeSellTab = useCallback(
     (id) => {
@@ -5055,12 +5046,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setShowConversionByLineId({})
   }, [activeSellOrderId, hardDismissHeaderSearch])
 
-  /** Sau chuyển tab đơn: ép focus ô tìm (100ms) — không để focus rơi body. */
-  useEffect(() => {
-    if (activeView !== 'sell' || !activeSellOrderId) return
-    focusPosSearchInput()
-  }, [activeSellOrderId, activeView, focusPosSearchInput])
-
   useEffect(() => {
     if (!scannerMenuOpen) return
     const onDoc = (e) => {
@@ -5388,21 +5373,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (e.key === 'Home') {
         e.preventDefault()
         e.stopPropagation()
-        const idx =
-          selectedItemIndex != null &&
-          selectedItemIndex >= 0 &&
-          selectedItemIndex < cartRef.current.length
-            ? selectedItemIndex
-            : cartRef.current.length > 0
-              ? 0
-              : null
-        if (idx == null) return
-        const line = cartRef.current[idx]
+        if (
+          selectedItemIndex == null ||
+          selectedItemIndex < 0 ||
+          selectedItemIndex >= cartRef.current.length
+        ) {
+          return
+        }
+        const line = cartRef.current[selectedItemIndex]
         if (line?.lineId) {
           setSelectedCartLineId(line.lineId)
-          setSelectedItemIndex(idx)
         }
-        const el = document.querySelector(`.quantity-input[data-item-index="${idx}"]`)
+        const el = document.querySelector(
+          `.quantity-input[data-item-index="${selectedItemIndex}"]`
+        )
         if (el && typeof el.focus === 'function') {
           el.focus()
           if (typeof el.select === 'function') {
@@ -5470,8 +5454,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     saveEInvoiceSettings(eInvoiceModalDraft)
     setEInvoiceSettings({ ...eInvoiceModalDraft })
     setEInvoiceModalOpen(false)
-    recoverPosFocusAfterModal()
-  }, [eInvoiceModalDraft, recoverPosFocusAfterModal])
+    window.setTimeout(() => {
+      document.getElementById('pos-search-input')?.focus()
+    }, 100)
+  }, [eInvoiceModalDraft])
 
   const renderHeaderIconRail = (variant) => {
     const railClass =
@@ -5951,8 +5937,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       setHeaderSearchFeedback('')
                       setHeaderSuggestOpen(true)
                     }}
-                    onFocus={() => openHeaderSearchPanelFromPointer()}
-                    onClick={() => openHeaderSearchPanelFromPointer()}
+                    onMouseDown={() => {
+                      if (!headerSearch.trim()) {
+                        openBestSellersDropdown()
+                      }
+                    }}
                     onKeyDown={onHeaderSearchKeyDown}
                     autoComplete="off"
                     aria-label="Thêm sản phẩm vào đơn"
@@ -6497,6 +6486,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       className={`pos-cart-row${isSelected ? ' pos-cart-row--selected' : ''}${
                         convDetailOpen ? ' pos-cart-row--conv-detail-open' : ''
                       }`}
+                      onClick={() => {
+                        setSelectedItemIndex(idx)
+                        setSelectedCartLineId(l.lineId)
+                      }}
                     >
                       <td className="pos-col--act">
                         <div className="pos-col-act-stack">

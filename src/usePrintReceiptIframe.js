@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 /**
- * @param {() => void} [onAfterPrintDismiss] — gọi khi đóng hộp thoại In (ESC / Hủy / In xong).
+ * @param {{ onPrintDialogOpen?: () => void, onPrintDialogClose?: () => void }} [callbacks]
  */
-export function usePrintReceiptIframe(onAfterPrintDismiss) {
+export function usePrintReceiptIframe(callbacks) {
   const receiptIframeRef = useRef(null)
-  const onAfterPrintDismissRef = useRef(onAfterPrintDismiss)
+  const callbacksRef = useRef(callbacks)
   useEffect(() => {
-    onAfterPrintDismissRef.current = onAfterPrintDismiss
-  }, [onAfterPrintDismiss])
+    callbacksRef.current = callbacks
+  }, [callbacks])
 
   const printReceiptHtml = useCallback((html) => {
     const frame = receiptIframeRef.current
@@ -24,28 +24,44 @@ export function usePrintReceiptIframe(onAfterPrintDismiss) {
       return
     }
 
-    let recovered = false
-    const recoverFocus = () => {
-      if (recovered) return
-      recovered = true
-      onAfterPrintDismissRef.current?.()
+    const openedAt = Date.now()
+    let closed = false
+    const closeDialog = () => {
+      if (closed) return
+      closed = true
+      callbacksRef.current?.onPrintDialogClose?.()
     }
+
+    callbacksRef.current?.onPrintDialogOpen?.()
 
     const onAfterPrint = () => {
       window.removeEventListener('afterprint', onAfterPrint)
-      recoverFocus()
+      closeDialog()
     }
     window.addEventListener('afterprint', onAfterPrint)
+
+    const onWinFocus = () => {
+      if (closed) return
+      if (Date.now() - openedAt < 450) return
+      window.removeEventListener('focus', onWinFocus)
+      closeDialog()
+    }
+    window.addEventListener('focus', onWinFocus)
 
     window.setTimeout(() => {
       try {
         win.focus()
         win.print()
       } catch {
-        recoverFocus()
+        window.removeEventListener('focus', onWinFocus)
+        closeDialog()
       }
-      window.setTimeout(recoverFocus, 2000)
+      window.setTimeout(() => {
+        window.removeEventListener('focus', onWinFocus)
+        closeDialog()
+      }, 4000)
     }, 500)
   }, [])
+
   return { receiptIframeRef, printReceiptHtml }
 }
