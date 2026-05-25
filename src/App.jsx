@@ -2490,6 +2490,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     requestAnimationFrame(run)
   }, [])
   const [selectedCartLineId, setSelectedCartLineId] = useState(null)
+  /** Index dòng giỏ đang chọn (0 = món vừa thêm — prepended đầu danh sách). */
+  const [selectedItemIndex, setSelectedItemIndex] = useState(null)
   /** Chuỗi đang gõ ô SL theo lineId (khi undefined → hiển thị formatCartQtyDisplay). */
   const [cartQtyDraftByLine, setCartQtyDraftByLine] = useState(() => ({}))
   /** Chuỗi đang gõ ô giá bán theo lineId (chỉ đơn hiện tại; không ghi Supabase). */
@@ -2561,7 +2563,24 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [initialCatalogLoadPending])
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
-  const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
+  /** Trả focus về ô tìm sau đóng modal In / ESC (50ms). */
+  const recoverPosFocusAfterModal = useCallback(() => {
+    window.setTimeout(() => {
+      const el =
+        document.getElementById('pos-search-input') ??
+        document.getElementById('search-product-input') ??
+        headerSearchRef.current
+      if (el && typeof el.focus === 'function') {
+        try {
+          el.focus({ preventScroll: true })
+        } catch {
+          el.focus()
+        }
+      }
+    }, 50)
+  }, [])
+
+  const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe(recoverPosFocusAfterModal)
   const handleThanhToanRef = useRef(() => {})
   const sellOrdersRef = useRef([])
   const productsRef = useRef([])
@@ -3486,12 +3505,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
-  /** Mở gợi ý (kể cả ô trống — danh sách bán chạy mặc định). */
+  /** Mở dropdown gợi ý — ô trống vẫn hiện sản phẩm bán chạy. */
   const openHeaderSearchPanel = useCallback(() => {
     headerSearchDebounceRef.current?.cancel()
-    setHeaderSearchDebounced(headerSearch)
+    const v = String(headerSearchRef.current?.value ?? headerSearch ?? '').trim()
+    setHeaderSearchDebounced(v)
     setHeaderSuggestOpen(true)
     setHeaderHighlightIndex(0)
+    setHeaderSuggestUnitPickByProductId({})
     setHeaderSearchInvalid(false)
     setHeaderSearchFeedback('')
     queueMicrotask(() => {
@@ -3500,6 +3521,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       el?.select()
     })
   }, [headerSearch])
+
+  const openHeaderSearchPanelFromPointer = useCallback(() => {
+    if (suppressNextSearchFocusOpenRef.current) return
+    headerSearchDebounceRef.current?.cancel()
+    const v = String(headerSearchRef.current?.value ?? headerSearch ?? '').trim()
+    setHeaderSearchDebounced(v)
+    setHeaderHighlightIndex(0)
+    setHeaderSuggestUnitPickByProductId({})
+    setHeaderSearchInvalid(false)
+    setHeaderSearchFeedback('')
+    setHeaderSuggestOpen(true)
+  }, [headerSearch])
+
+  const closeEInvoiceModal = useCallback(() => {
+    setEInvoiceModalOpen(false)
+    recoverPosFocusAfterModal()
+  }, [recoverPosFocusAfterModal])
 
   useEffect(
     () => () => {
@@ -4172,13 +4210,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             conversionHint: cur.conversionHint || '',
             variantOptions,
           }
-          return [updated, ...prev.filter((_, j) => j !== i)]
+          const next = [updated, ...prev.filter((_, j) => j !== i)]
+          queueMicrotask(() => {
+            setSelectedItemIndex(0)
+            setSelectedCartLineId(updated.lineId)
+          })
+          return next
         }
         const stub = { catalogId: p.id, variantId: cur.id, qty: 1 }
         const defaultBatch = pickDefaultBatchIdForLine(productsRef.current, stub)
-        return [
+        const newLineId = newCartLineId()
+        const next = [
           {
-            lineId: newCartLineId(),
+            lineId: newLineId,
             catalogId: p.id,
             variantId: cur.id,
             groupRoot: p.groupRoot ?? p.code,
@@ -4194,6 +4238,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           },
           ...prev,
         ]
+        queueMicrotask(() => {
+          setSelectedItemIndex(0)
+          setSelectedCartLineId(newLineId)
+        })
+        return next
       })
     },
     [setCart, sellWholesaleMode]
@@ -4684,12 +4733,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (cart.length === 0) {
       setCartQtyDraftByLine({})
       setSelectedCartLineId(null)
+      setSelectedItemIndex(null)
       return
     }
     setSelectedCartLineId((prev) => {
       if (prev != null && cart.some((l) => l.lineId === prev)) return prev
       if (prev === null) return null
       return cart[0]?.lineId ?? null
+    })
+    setSelectedItemIndex((prev) => {
+      if (prev != null && prev >= 0 && prev < cart.length) return prev
+      if (prev === null) return null
+      return 0
     })
   }, [cart])
 
@@ -4706,6 +4761,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         const nid = cartRef.current[nextIdx].lineId
         setSelectedCartLineId(nid)
+        setSelectedItemIndex(nextIdx)
         queueMicrotask(() => {
           const el = cartQtyInputRefs.current.get(nid)
           el?.focus()
@@ -4734,6 +4790,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const i = Math.min(idx, c.length - 1)
           const nid = c[i].lineId
           setSelectedCartLineId(nid)
+          setSelectedItemIndex(i)
           const el = cartQtyInputRefs.current.get(nid)
           el?.focus()
           el?.select()
@@ -5161,7 +5218,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (eInvoiceModalOpen) {
         e.preventDefault()
         e.stopPropagation()
-        setEInvoiceModalOpen(false)
+        closeEInvoiceModal()
         return
       }
       if (customerAddOpen) {
@@ -5226,7 +5283,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         e.preventDefault()
         e.stopPropagation()
-        setSelectedCartLineId(null)
         clearPosSearchForScan()
         headerSearchRef.current?.focus()
         return
@@ -5255,13 +5311,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     closeReturnPickModal,
     clearPosSearchForScan,
     focusHeaderSearchSelect,
+    closeEInvoiceModal,
     batchPickLineId,
     posMaHhLienConvModal,
   ])
 
-  /** F1 — capture cao nhất: chặn Chrome Help trước, rồi thanh toán. */
+  /** F1 — capture cao nhất: chặn Chrome Help tuyệt đối, rồi thanh toán. */
   useEffect(() => {
-    const onF1 = (e) => {
+    const handleF1 = (e) => {
       if (e.key !== 'F1') return
       e.preventDefault()
       e.stopPropagation()
@@ -5277,8 +5334,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (posMaHhLienConvModal) return
       handleThanhToanRef.current()
     }
-    window.addEventListener('keydown', onF1, true)
-    return () => window.removeEventListener('keydown', onF1, true)
+    document.addEventListener('keydown', handleF1, { capture: true })
+    return () => document.removeEventListener('keydown', handleF1, { capture: true })
   }, [
     activeView,
     products.length,
@@ -5331,13 +5388,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (e.key === 'Home') {
         e.preventDefault()
         e.stopPropagation()
-        const inputs = document.querySelectorAll('.quantity-input')
-        if (inputs.length > 0) {
-          const last = inputs[inputs.length - 1]
-          last.focus()
-          if (typeof last.select === 'function') {
-            last.select()
+        const idx =
+          selectedItemIndex != null &&
+          selectedItemIndex >= 0 &&
+          selectedItemIndex < cartRef.current.length
+            ? selectedItemIndex
+            : cartRef.current.length > 0
+              ? 0
+              : null
+        if (idx == null) return
+        const line = cartRef.current[idx]
+        if (line?.lineId) {
+          setSelectedCartLineId(line.lineId)
+          setSelectedItemIndex(idx)
+        }
+        const el = document.querySelector(`.quantity-input[data-item-index="${idx}"]`)
+        if (el && typeof el.focus === 'function') {
+          el.focus()
+          if (typeof el.select === 'function') {
+            el.select()
           }
+          if (line?.lineId) scrollCartLineIntoView(line.lineId)
         }
         return
       }
@@ -5377,7 +5448,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     cart.length,
     focusDiscountField,
     addSellTab,
-    selectedCartLineId,
+    selectedItemIndex,
     scrollCartLineIntoView,
     activeSellerId,
     openDoanhThuInNewTab,
@@ -5399,7 +5470,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     saveEInvoiceSettings(eInvoiceModalDraft)
     setEInvoiceSettings({ ...eInvoiceModalDraft })
     setEInvoiceModalOpen(false)
-  }, [eInvoiceModalDraft])
+    recoverPosFocusAfterModal()
+  }, [eInvoiceModalDraft, recoverPosFocusAfterModal])
 
   const renderHeaderIconRail = (variant) => {
     const railClass =
@@ -5879,11 +5951,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       setHeaderSearchFeedback('')
                       setHeaderSuggestOpen(true)
                     }}
-                    onFocus={(e) => {
-                      if (suppressNextSearchFocusOpenRef.current) return
-                      const v = String(e.currentTarget.value ?? '').trim()
-                      if (v) setHeaderSuggestOpen(true)
-                    }}
+                    onFocus={() => openHeaderSearchPanelFromPointer()}
+                    onClick={() => openHeaderSearchPanelFromPointer()}
                     onKeyDown={onHeaderSearchKeyDown}
                     autoComplete="off"
                     aria-label="Thêm sản phẩm vào đơn"
@@ -6230,7 +6299,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         <div
           className="einv-backdrop"
           role="presentation"
-          onClick={() => setEInvoiceModalOpen(false)}
+          onClick={closeEInvoiceModal}
         >
           <div
             className="einv-modal"
@@ -6290,7 +6359,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               <button
                 type="button"
                 className="einv-modal-btn einv-modal-btn--ghost"
-                onClick={() => setEInvoiceModalOpen(false)}
+                onClick={closeEInvoiceModal}
               >
                 Bỏ qua
               </button>
@@ -6395,7 +6464,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 </thead>
                 <tbody>
                   {cart.map((l, idx) => {
-                    const isSelected = l.lineId === selectedCartLineId
+                    const isSelected =
+                      idx === selectedItemIndex || l.lineId === selectedCartLineId
                     const showBatch = cartLineNeedsBatchSelection(products, l)
                     const batchCtx = showBatch ? resolveLineBatchContext(products, l) : null
                     const selBatchMeta =
@@ -6606,6 +6676,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                               inputMode="decimal"
                               autoComplete="off"
                               className="pos-qty-input quantity-input"
+                              data-item-index={idx}
                               value={
                                 cartQtyDraftByLine[l.lineId] !== undefined
                                   ? cartQtyDraftByLine[l.lineId]
@@ -6617,6 +6688,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                               }}
                               onFocus={() => {
                                 setSelectedCartLineId(l.lineId)
+                                setSelectedItemIndex(idx)
                                 setCartQtyDraftByLine((m) => ({
                                   ...m,
                                   [l.lineId]: numberToQtyDraftString(l.qty),
