@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import debounce from 'lodash/debounce'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { buildK80ReceiptHtml, RECEIPT_STORE_NAME } from './receiptHtml.js'
@@ -153,7 +154,11 @@ import {
   deleteProductsForRemovedVariants,
   updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
-import { fetchInboundInvoices } from './supabaseInboundHistory.js'
+import {
+  bumpInboundSync,
+  fetchInboundInvoices,
+  INBOUND_SYNC_BUMP_EVENT,
+} from './supabaseInboundHistory.js'
 import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
@@ -3120,12 +3125,13 @@ export default function AdminHub({
     }
   }, [inboundOrders])
 
-  const refreshInboundInvoices = useCallback(async () => {
+  const refreshInboundInvoices = useCallback(async (opts = {}) => {
+    const quiet = opts?.quiet === true
     if (!isSupabaseConfigured()) {
       setInboundOrders(loadInboundOrdersFromStorage())
       return
     }
-    setInboundRemoteLoading(true)
+    if (!quiet) setInboundRemoteLoading(true)
     try {
       const r = await fetchInboundInvoices()
       if (!r.ok) {
@@ -3143,15 +3149,26 @@ export default function AdminHub({
         return [...byId.values()].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
       })
     } finally {
-      setInboundRemoteLoading(false)
+      if (!quiet) setInboundRemoteLoading(false)
     }
   }, [])
 
-  /** Bootstrap danh sách phiếu nhập (đọc Supabase): một lần khi Hub mount — không đặt state đọc được vào dependency (tránh vòng lặp). */
   useEffect(() => {
     void refreshInboundInvoices()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ chạy khi mount; refreshInboundInvoices ổn định useCallback([])
-  }, [])
+  }, [refreshInboundInvoices])
+
+  useEffect(() => {
+    if (activeTab !== TAB_INBOUND) return
+    void refreshInboundInvoices({ quiet: true })
+  }, [activeTab, refreshInboundInvoices])
+
+  useEffect(() => {
+    const onBump = () => {
+      void refreshInboundInvoices({ quiet: true })
+    }
+    window.addEventListener(INBOUND_SYNC_BUMP_EVENT, onBump)
+    return () => window.removeEventListener(INBOUND_SYNC_BUMP_EVENT, onBump)
+  }, [refreshInboundInvoices])
 
   const inboundRowsFiltered = useMemo(() => {
     const q = inboundDebounced.trim().toLowerCase()
@@ -3452,7 +3469,8 @@ export default function AdminHub({
     resetInboundForm()
     setActiveTab(TAB_INBOUND)
     syncHubUrlToMainTab(TAB_INBOUND)
-  }, [resetInboundForm, syncHubUrlToMainTab])
+    void refreshInboundInvoices({ quiet: true })
+  }, [resetInboundForm, syncHubUrlToMainTab, refreshInboundInvoices])
 
   const openInboundCreateForm = useCallback(() => {
     const url = getInboundCreateAbsUrl()
@@ -4098,6 +4116,8 @@ export default function AdminHub({
       })
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
+      bumpInboundSync()
+      void refreshInboundInvoices({ quiet: true })
 
       void syncInboundToApp({ row, patches: fulfillmentPatches })
         .then((saved) => {
@@ -4108,6 +4128,7 @@ export default function AdminHub({
               return [merged, ...rest]
             })
           })
+          void refreshInboundInvoices({ quiet: true })
         })
         .catch((e) => {
           console.error('[inbound] Hoàn thành phiếu mới thất bại', e)
@@ -4122,6 +4143,7 @@ export default function AdminHub({
       syncInboundToApp,
       completeInboundFlowReturnToList,
       triggerInboundSaveToast,
+      refreshInboundInvoices,
     ]
   )
 
@@ -4149,6 +4171,8 @@ export default function AdminHub({
       })
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
+      bumpInboundSync()
+      void refreshInboundInvoices({ quiet: true })
 
       void syncInboundToApp({ row: merged, patches: fulfillmentPatches })
         .then((saved) => {
@@ -4159,6 +4183,7 @@ export default function AdminHub({
               return [normalized, ...rest]
             })
           })
+          void refreshInboundInvoices({ quiet: true })
         })
         .catch((e) => {
           console.error('[inbound] Hoàn thành sửa phiếu thất bại', e)
@@ -4175,6 +4200,7 @@ export default function AdminHub({
       syncInboundToApp,
       completeInboundFlowReturnToList,
       triggerInboundSaveToast,
+      refreshInboundInvoices,
     ]
   )
 
@@ -9938,66 +9964,73 @@ export default function AdminHub({
         </div>
       )}
 
-      {hubCameraToast ? (
-        <div
-          className={`ah-hub-scan-toast${hubCameraToast.kind === 'err' ? ' ah-hub-scan-toast--error' : ''}`}
-          role={hubCameraToast.kind === 'err' ? 'alert' : 'status'}
-          aria-live="polite"
-        >
-          {hubCameraToast.text}
-        </div>
-      ) : null}
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <>
+              {hubCameraToast ? (
+                <div
+                  className={`ah-hub-scan-toast${hubCameraToast.kind === 'err' ? ' ah-hub-scan-toast--error' : ''}`}
+                  role={hubCameraToast.kind === 'err' ? 'alert' : 'status'}
+                  aria-live="polite"
+                >
+                  {hubCameraToast.text}
+                </div>
+              ) : null}
 
-      {inboundSyncErrMsg ? (
-        <div className="ah-inbound-sync-err-toast" role="alert">
-          Đồng bộ thất bại: {inboundSyncErrMsg}
-        </div>
-      ) : null}
+              {inboundSyncErrMsg ? (
+                <div className="ah-inbound-sync-err-toast" role="alert">
+                  Đồng bộ thất bại: {inboundSyncErrMsg}
+                </div>
+              ) : null}
 
-      {goodsSaveToastGen > 0 && (
-        <div
-          key={goodsSaveToastGen}
-          className="ah-save-toast"
-          role="status"
-          aria-live="polite"
-          onAnimationEnd={(e) => {
-            if (e.target !== e.currentTarget) return
-            setGoodsSaveToastGen(0)
-          }}
-        >
-          Cập nhật thành công
-        </div>
-      )}
+              {goodsSaveToastGen > 0 ? (
+                <div
+                  key={goodsSaveToastGen}
+                  className="ah-save-toast"
+                  role="status"
+                  aria-live="polite"
+                  onAnimationEnd={(e) => {
+                    if (e.target !== e.currentTarget) return
+                    setGoodsSaveToastGen(0)
+                  }}
+                >
+                  Cập nhật thành công
+                </div>
+              ) : null}
 
-      {supplierSavedToastGen > 0 && (
-        <div
-          key={`ncc-toast-${supplierSavedToastGen}`}
-          className="ah-save-toast ah-save-toast--supplier"
-          role="status"
-          aria-live="polite"
-          onAnimationEnd={(e) => {
-            if (e.target !== e.currentTarget) return
-            setSupplierSavedToastGen(0)
-          }}
-        >
-          Đã lưu nhà cung cấp
-        </div>
-      )}
+              {supplierSavedToastGen > 0 ? (
+                <div
+                  key={`ncc-toast-${supplierSavedToastGen}`}
+                  className="ah-save-toast ah-save-toast--supplier"
+                  role="status"
+                  aria-live="polite"
+                  onAnimationEnd={(e) => {
+                    if (e.target !== e.currentTarget) return
+                    setSupplierSavedToastGen(0)
+                  }}
+                >
+                  Đã lưu nhà cung cấp
+                </div>
+              ) : null}
 
-      {inboundSaveToastGen > 0 && (
-        <div
-          key={`inb-toast-${inboundSaveToastGen}`}
-          className="ah-save-toast ah-save-toast--inbound"
-          role="status"
-          aria-live="polite"
-          onAnimationEnd={(e) => {
-            if (e.target !== e.currentTarget) return
-            setInboundSaveToastGen(0)
-          }}
-        >
-          Đã lưu phiếu nhập — xem thêm ở chuông thông báo nếu có thay đổi giá vốn
-        </div>
-      )}
+              {inboundSaveToastGen > 0 ? (
+                <div
+                  key={`inb-toast-${inboundSaveToastGen}`}
+                  className="ah-save-toast ah-save-toast--inbound"
+                  role="status"
+                  aria-live="polite"
+                  onAnimationEnd={(e) => {
+                    if (e.target !== e.currentTarget) return
+                    setInboundSaveToastGen(0)
+                  }}
+                >
+                  Đã lưu phiếu nhập — xem thêm ở chuông thông báo nếu có thay đổi giá vốn
+                </div>
+              ) : null}
+            </>,
+            document.body
+          )
+        : null}
     </div>
   )
 }

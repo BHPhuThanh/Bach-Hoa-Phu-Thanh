@@ -8,6 +8,12 @@
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const INBOUND_HISTORY_TABLE = 'inbound_history'
+export const INBOUND_SYNC_BUMP_EVENT = 'csv-preview-inbound-sync-bump-v1'
+
+export function bumpInboundSync() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(INBOUND_SYNC_BUMP_EVENT))
+}
 
 /** Loại bỏ `undefined` (PostgREST/json có thể drop hoặc lỗi ngầm). */
 export function stripUndefinedDeep(value) {
@@ -113,6 +119,7 @@ export async function insertInboundHistoryEntry(order) {
         ? { ...newOrder.payload, code: newOrder.payload.code || newOrder.order_code }
         : payload
 
+    bumpInboundSync()
     return { ok: true, order: persisted, dbRow: newOrder }
   } catch (error) {
     console.error('Lỗi tạo phiếu nhập:', error)

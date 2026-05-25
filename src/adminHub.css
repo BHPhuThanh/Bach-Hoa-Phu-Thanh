@@ -4802,12 +4802,13 @@ a.ah-inbound-line-code-link:hover {
 }
 
 /* Quét mã (camera mở): toast phía trên cùng, 2s */
+/* Toast hệ thống — luôn trên modal (chi tiết SP, nhập hàng, ĐVT…). */
 .ah-hub-scan-toast {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100001;
+  z-index: 200000 !important;
   max-width: min(92vw, 22rem);
   padding: 0.55rem 0.9rem;
   border-radius: 10px;
@@ -4832,7 +4833,7 @@ a.ah-inbound-line-code-link:hover {
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   left: calc(12px + env(safe-area-inset-left, 0px));
   right: auto;
-  z-index: 100002;
+  z-index: 200000 !important;
   max-width: min(92vw, 24rem);
   padding: 0.65rem 1rem;
   border-radius: 10px;
@@ -4855,7 +4856,7 @@ a.ah-inbound-line-code-link:hover {
   bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   right: calc(20px + env(safe-area-inset-right, 0px));
   left: auto;
-  z-index: 100000;
+  z-index: 200000 !important;
   pointer-events: none;
   max-width: min(90vw, 22.8rem);
   padding: 0.87rem 1.5rem;

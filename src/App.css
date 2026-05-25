@@ -960,7 +960,7 @@
   top: calc(12px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10050;
+  z-index: 200000 !important;
   max-width: min(22rem, calc(100vw - 2rem));
   padding: 0.65rem 1rem;
   border-radius: 10px;
@@ -987,7 +987,7 @@
   position: fixed;
   right: 1rem;
   bottom: 1rem;
-  z-index: 9999;
+  z-index: 200000 !important;
   max-width: min(22rem, calc(100vw - 2rem));
   padding: 0.65rem 1rem;
   border-radius: 10px;
@@ -2106,8 +2106,8 @@
   overflow: hidden;
 }
 
-/* Màn rộng: giỏ + dock cột trái; rail Thanh toán span 2 hàng (sát đáy), mép phải dock thẳng cạnh sidebar */
-@media (min-width: 961px) {
+/* Màn rộng + chuột (PC): giỏ + dock cột trái — không áp layout desktop khi điện thoại nằm ngang (touch). */
+@media (min-width: 961px) and (hover: hover) and (pointer: fine) {
   .pos-main.pos-main--dock {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
