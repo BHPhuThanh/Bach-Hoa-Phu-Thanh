@@ -10,25 +10,6 @@ import InboundCreatePage from './InboundCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
 import { registerPwaServiceWorker } from './pwaRegister.js'
 
-/** Chặn Chrome Help (F1) ngay từ boot — không phụ thuộc mount React hay trạng thái loading. */
-function installGlobalF1HelpBlocker() {
-  if (typeof window === 'undefined') return
-  window.addEventListener(
-    'keydown',
-    (e) => {
-      if (e.key !== 'F1') return
-      e.preventDefault()
-      e.stopPropagation()
-      if (typeof e.stopImmediatePropagation === 'function') {
-        e.stopImmediatePropagation()
-      }
-    },
-    { capture: true }
-  )
-}
-
-installGlobalF1HelpBlocker()
-
 function appRouterBasename() {
   const raw = import.meta.env.BASE_URL || '/'
   if (raw === '/') return undefined

@@ -2586,6 +2586,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [isPrintModalOpen])
 
   const handleThanhToanRef = useRef(() => {})
+  const f1CheckoutGuardRef = useRef({})
   const sellOrdersRef = useRef([])
   const productsRef = useRef([])
   const catalogImportInputRef = useRef(null)
@@ -5052,6 +5053,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   handleThanhToanRef.current = handleThanhToan
 
+  f1CheckoutGuardRef.current = {
+    activeView,
+    productsLength: products.length,
+    shortcutsHelpOpen,
+    eInvoiceModalOpen,
+    customerAddOpen,
+    returnPickModalOpen,
+    batchPickLineId,
+    posMaHhLienConvModal,
+    isCheckingOut,
+  }
+
   useEffect(() => {
     setHeaderSearch('')
     setHeaderSuggestOpen(false)
@@ -5318,36 +5331,26 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     posMaHhLienConvModal,
   ])
 
-  /** F1 — capture cao nhất: chặn Chrome Help tuyệt đối, rồi thanh toán. */
+  /** F1 — một listener duy nhất (capture): chặn Chrome Help + thanh toán đơn hiện tại. */
   useEffect(() => {
-    const handleF1 = (e) => {
+    const handleGlobalF1 = (e) => {
       if (e.key !== 'F1') return
       e.preventDefault()
       e.stopPropagation()
-      if (typeof e.stopImmediatePropagation === 'function') {
-        e.stopImmediatePropagation()
-      }
-      if (activeView !== 'sell' || products.length === 0) return
-      if (shortcutsHelpOpen) return
-      if (eInvoiceModalOpen) return
-      if (customerAddOpen) return
-      if (returnPickModalOpen) return
-      if (batchPickLineId) return
-      if (posMaHhLienConvModal) return
+      const g = f1CheckoutGuardRef.current
+      if (g.activeView !== 'sell' || g.productsLength === 0) return
+      if (g.shortcutsHelpOpen) return
+      if (g.eInvoiceModalOpen) return
+      if (g.customerAddOpen) return
+      if (g.returnPickModalOpen) return
+      if (g.batchPickLineId) return
+      if (g.posMaHhLienConvModal) return
+      if (g.isCheckingOut) return
       handleThanhToanRef.current()
     }
-    document.addEventListener('keydown', handleF1, { capture: true })
-    return () => document.removeEventListener('keydown', handleF1, { capture: true })
-  }, [
-    activeView,
-    products.length,
-    shortcutsHelpOpen,
-    eInvoiceModalOpen,
-    customerAddOpen,
-    returnPickModalOpen,
-    batchPickLineId,
-    posMaHhLienConvModal,
-  ])
+    window.addEventListener('keydown', handleGlobalF1, { capture: true })
+    return () => window.removeEventListener('keydown', handleGlobalF1, { capture: true })
+  }, [])
 
   useEffect(() => {
     const onKey = (e) => {
