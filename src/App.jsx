@@ -2429,7 +2429,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [error, setError] = useState('')
   const [sellOrders, setSellOrders] = useState(() => [createEmptySellOrder()])
   const [activeSellOrderId, setActiveSellOrderId] = useState(() => sellOrders[0].id)
-  const [isCheckingOut, setIsCheckingOut] = useState(false)
   const [headerSearch, setHeaderSearch] = useState('')
   const [headerSearchInvalid, setHeaderSearchInvalid] = useState(false)
   const [headerSearchFeedback, setHeaderSearchFeedback] = useState('')
@@ -4832,8 +4831,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return cashGivenNum - payTotal
   }, [cashGivenNum, payTotal])
 
-  const handleThanhToan = useCallback(async () => {
-    if (isCheckingOut) return
+  const handleThanhToan = useCallback(() => {
     const paidOrderId = activeSellOrderId
     const checkoutOrder = sellOrdersRef.current.find((o) => o.id === paidOrderId)
     if (!checkoutOrder) {
@@ -4880,8 +4878,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const snapshotDisc = parseDiscountApplied(snapshotDiscountStr, snapshotSubtotal)
     const snapshotPayTotal = Math.max(0, snapshotSubtotal - snapshotDisc)
     const snapshotCashGivenNum = parseVnIntMoney(snapshotCashGivenStr)
-    setIsCheckingOut(true)
-    try {
     const fixedAt = new Date()
     const invoiceNo = formatInvoiceNo(fixedAt)
     const items = snapshotCart.map((l) => {
@@ -4952,58 +4948,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       ...(noteStr ? { note: noteStr } : {}),
       sellWholesaleMode: checkoutWholesale,
     }
-    let orderSaved = false
-    try {
-      await saveOrder(order)
-      orderSaved = true
-      setSalesRefresh((k) => k + 1)
-      bumpOrdersSync()
-      const cartForStock = snapshotCart.map((l) => ({
-        ...l,
-        qty: effectiveCartLineQty(l, cartQtyDraftByLine),
-      }))
-      const deductByMaGoc = buildNonComboDeductionByMaGoc(products, cartForStock)
-      const comboDelta = buildComboCartSaleDeltaByVariantId(products, cartForStock)
-      const touchedVariantIds = collectCartSaleTouchedVariantIds(products, cartForStock)
-      setProducts((prev) => {
-        const next = applySoldQtyToCatalog(prev, cartForStock, {
-          precomputedDeductByMaGoc: deductByMaGoc,
-          precomputedComboDelta: comboDelta,
-        })
-        queueMicrotask(() => {
-          if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-          void (async () => {
-            const flat = flattenDisplayCatalogToVariants(next)
-            /* Tồn kho cơ bản (Base Stock) chung một số DB cho toàn họ ĐVT; PATCH Supabase không chia quy_doi — POS hiển thị chia sẵn. */
-            const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-              tonKhoOnlyVariants,
-            })
-            if (r.ok) {
-              await applyServerCatalogAfterPersist()
-              if (isSupabaseConfigured()) {
-                const invRows = buildPosSaleInventoryLogRows(prev, next, order, cartForStock)
-                await insertInventoryLogRows(invRows)
-                runLowStockAlertsInBackground(
-                  {
-                    catalog: next,
-                    touchedVariantIds,
-                    userId: activeSellerId,
-                  },
-                  mergeCreatedLowStockNotifications
-                )
-              }
-            }
-          })()
-        })
-        return next
-      })
-    } catch (e) {
-      console.error(e)
-      alert(
-        'Không lưu được đơn hàng (Supabase hoặc IndexedDB). Vẫn in hóa đơn; kiểm tra mạng, biến môi trường hoặc quyền lưu trữ.'
-      )
-    }
+    const cartForStock = snapshotCart.map((l) => ({
+      ...l,
+      qty: effectiveCartLineQty(l, cartQtyDraftByLine),
+    }))
     const cartPrint = snapshotCart.map((l) => ({
       id: l.lineId,
       code: l.code,
@@ -5027,12 +4975,65 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (eInvoiceSettings.autoPrint) {
       printReceiptHtml(html)
     }
-    if (orderSaved) {
-      finalizePaidSellOrder(paidOrderId)
-    }
-  } finally {
-    setIsCheckingOut(false)
-  }
+
+    const productsSnap = productsRef.current
+    const deductByMaGoc = buildNonComboDeductionByMaGoc(productsSnap, cartForStock)
+    const comboDelta = buildComboCartSaleDeltaByVariantId(productsSnap, cartForStock)
+    const touchedVariantIds = collectCartSaleTouchedVariantIds(productsSnap, cartForStock)
+    const nextProducts = applySoldQtyToCatalog(productsSnap, cartForStock, {
+      precomputedDeductByMaGoc: deductByMaGoc,
+      precomputedComboDelta: comboDelta,
+    })
+    setProducts(nextProducts)
+    finalizePaidSellOrder(paidOrderId)
+
+    const sellerIdSnap = activeSellerId
+    const fileNameSnap = catalogFileNameRef.current
+
+    void (async () => {
+      try {
+        await saveOrder(order)
+        setSalesRefresh((k) => k + 1)
+        bumpOrdersSync()
+      } catch (e) {
+        console.error('[handleThanhToan] saveOrder', e)
+        showPosPersistErrorToast(
+          `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
+        )
+      }
+      if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+      try {
+        const flat = flattenDisplayCatalogToVariants(nextProducts)
+        const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
+        const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
+          tonKhoOnlyVariants,
+        })
+        if (r.ok) {
+          await applyServerCatalogAfterPersist()
+          if (isSupabaseConfigured()) {
+            const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
+            await insertInventoryLogRows(invRows)
+            runLowStockAlertsInBackground(
+              {
+                catalog: nextProducts,
+                touchedVariantIds,
+                userId: sellerIdSnap,
+              },
+              mergeCreatedLowStockNotifications
+            )
+          }
+        } else if (!r.skipped) {
+          showPosPersistErrorToast(
+            describeCatalogPersistError(r.error) || 'Không cập nhật tồn kho lên máy chủ.'
+          )
+        }
+      } catch (e) {
+        console.error('[handleThanhToan] persist catalog', e)
+        showPosPersistErrorToast(
+          describeCatalogPersistError(e) || 'Không cập nhật tồn kho lên máy chủ.'
+        )
+      }
+    })()
   }, [
     cartQtyDraftByLine,
     printReceiptHtml,
@@ -5047,7 +5048,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     activeSeller,
     activeSellerId,
     mergeCreatedLowStockNotifications,
-    isCheckingOut,
+    showPosPersistErrorToast,
     finalizePaidSellOrder,
   ])
 
@@ -5062,7 +5063,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     returnPickModalOpen,
     batchPickLineId,
     posMaHhLienConvModal,
-    isCheckingOut,
   }
 
   useEffect(() => {
@@ -5345,7 +5345,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (g.returnPickModalOpen) return
       if (g.batchPickLineId) return
       if (g.posMaHhLienConvModal) return
-      if (g.isCheckingOut) return
       handleThanhToanRef.current()
     }
     window.addEventListener('keydown', handleGlobalF1, { capture: true })
@@ -6980,31 +6979,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 type="button"
                 className="pos-btn-checkout"
                 onClick={handleThanhToan}
-                disabled={cart.length === 0 || isCheckingOut}
-                aria-busy={isCheckingOut}
+                disabled={cart.length === 0}
               >
-                {isCheckingOut ? (
-                  <svg
-                    className="pos-btn-checkout-spinner"
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden
-                  >
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="9"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeDasharray="42"
-                      strokeDashoffset="12"
-                    />
-                  </svg>
-                ) : null}
-                <span>{isCheckingOut ? 'Đang thanh toán…' : 'THANH TOÁN (F1)'}</span>
+                <span>THANH TOÁN (F1)</span>
               </button>
             </div>
           </aside>
