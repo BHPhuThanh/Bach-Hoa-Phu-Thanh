@@ -54,6 +54,7 @@ import { pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
 
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
 import { getAllOrders, saveOrder } from './ordersDb.js'
+import { bumpOrdersSync } from './ordersSyncEvents.js'
 import {
   aggregateCodeQtyFromOrders,
   scoreCatalogProduct,
@@ -2584,16 +2585,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     prevPrintModalOpenRef.current = isPrintModalOpen
   }, [isPrintModalOpen])
 
-  /** Chặn F1 toàn cục — Chrome không mở Help. */
-  useEffect(() => {
-    const blockF1Help = (e) => {
-      if (e.key === 'F1') {
-        e.preventDefault()
-      }
-    }
-    window.addEventListener('keydown', blockF1Help, { capture: true })
-    return () => window.removeEventListener('keydown', blockF1Help, { capture: true })
-  }, [])
   const handleThanhToanRef = useRef(() => {})
   const sellOrdersRef = useRef([])
   const productsRef = useRef([])
@@ -2649,6 +2640,24 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       await refreshSupabaseNotifications()
     })()
   }, [refreshSupabaseNotifications, activeSellerId])
+
+  useEffect(() => {
+    if (!lowStockAlertOpen) return
+    void refreshSupabaseNotifications()
+  }, [lowStockAlertOpen, refreshSupabaseNotifications])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      void refreshSupabaseNotifications()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [refreshSupabaseNotifications])
 
   const lowStockDigestSyncedRef = useRef(false)
 
@@ -2879,8 +2888,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setFileName(fresh.fileName)
       setCsvRowCount(fresh.csvRowCount)
       setSalesRefresh((x) => x + 1)
+      bumpOrdersSync()
     })
   }, [])
+
+  useEffect(() => {
+    if (activeView !== 'dashboard') return
+    void applyServerCatalogAfterPersist()
+  }, [activeView, applyServerCatalogAfterPersist])
 
   /** AdminHub đăng ký — sau `upsert` + `select('*')` đồng bộ lại id dòng phiếu nhập với biến thể catalog (sb-…). */
   const inboundCatalogUpsertReconcileRef = useRef(null)
@@ -3462,6 +3477,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               setFileName(snap.fileName)
               setCsvRowCount(snap.csvRowCount)
               setSalesRefresh((x) => x + 1)
+              bumpOrdersSync()
             })
             return prepareCatalogForPosSearch(snap.products)
           })
@@ -4940,6 +4956,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       await saveOrder(order)
       orderSaved = true
       setSalesRefresh((k) => k + 1)
+      bumpOrdersSync()
       const cartForStock = snapshotCart.map((l) => ({
         ...l,
         qty: effectiveCartLineQty(l, cartQtyDraftByLine),

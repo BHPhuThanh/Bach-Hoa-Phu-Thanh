@@ -6824,6 +6824,23 @@ li.ah-inbound-suggest-empty {
   }
 }
 
+.ah-goods-create-barcode-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.ah-goods-create-barcode-row .ah-goods-create-input--barcode {
+  flex: 1;
+  min-width: 0;
+}
+
+.ah-goods-create-barcode-scan {
+  width: 44px;
+  height: 44px;
+  align-self: center;
+}
+
 .ah-goods-create-input--barcode {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;

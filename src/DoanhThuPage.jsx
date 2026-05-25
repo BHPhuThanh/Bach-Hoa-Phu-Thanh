@@ -1,13 +1,32 @@
+import { useEffect, useState } from 'react'
 import './App.css'
 import './dashboard-dark.css'
 import AdminHub from './AdminHub.jsx'
 import DoanhThuErrorBoundary from './DoanhThuErrorBoundary.jsx'
+import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 
 export default function DoanhThuPage() {
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
   const isAdmin = readStoredSellerId() === 'admin'
+  const [hubRefreshKey, setHubRefreshKey] = useState(0)
+
+  useEffect(() => {
+    const bump = () => setHubRefreshKey((k) => k + 1)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') bump()
+    }
+    bump()
+    window.addEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
+      window.removeEventListener('focus', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
 
   return (
     <div className="app app--dark app--doanh-thu-shell">
@@ -22,7 +41,7 @@ export default function DoanhThuPage() {
       <DoanhThuErrorBoundary>
         <AdminHub
           printReceiptHtml={printReceiptHtml}
-          refreshKey={0}
+          refreshKey={hubRefreshKey}
           doanhThuMode={isAdmin ? undefined : { readOnlyRevenue: true }}
         />
       </DoanhThuErrorBoundary>

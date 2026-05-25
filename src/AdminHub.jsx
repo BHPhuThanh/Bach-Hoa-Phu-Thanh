@@ -98,6 +98,7 @@ import {
   orderLineCostTotal,
   orderLineProfit,
   orderLineRevenue,
+  orderReportCostFromCatalog,
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
@@ -108,6 +109,7 @@ import {
   sumPosReturnAdjustmentsInRange,
 } from './posReturnDayLedger.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
+import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
@@ -1195,17 +1197,60 @@ export default function AdminHub({
 
   useEffect(() => {
     void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ tải danh sách đơn một lần khi mount (tránh chớp tab Đơn hàng)
-  }, [])
+  }, [load])
 
-  const refreshKeySkipMountRef = useRef(true)
   useEffect(() => {
-    if (refreshKeySkipMountRef.current) {
-      refreshKeySkipMountRef.current = false
-      return
-    }
     void refetchOrdersQuiet()
   }, [refreshKey, refetchOrdersQuiet])
+
+  useEffect(() => {
+    const onOrdersBump = () => {
+      void refetchOrdersQuiet()
+    }
+    window.addEventListener(ORDERS_SYNC_BUMP_EVENT, onOrdersBump)
+    return () => window.removeEventListener(ORDERS_SYNC_BUMP_EVENT, onOrdersBump)
+  }, [refetchOrdersQuiet])
+
+  useEffect(() => {
+    if (activeTab !== TAB_OVERVIEW && activeTab !== TAB_ORDERS) return
+    void refetchOrdersQuiet()
+    if (!parentCatalogSupplied && activeTab === TAB_OVERVIEW) {
+      void (async () => {
+        const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
+        if (snap?.products?.length) {
+          setStandaloneCatalog({
+            products: refreshCatalogSearchTexts(snap.products),
+            fileName: snap.fileName || '',
+          })
+        }
+      })()
+    }
+  }, [activeTab, refetchOrdersQuiet, parentCatalogSupplied])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (activeTab === TAB_OVERVIEW || activeTab === TAB_ORDERS) {
+        void refetchOrdersQuiet()
+      }
+      if (!parentCatalogSupplied && activeTab === TAB_OVERVIEW) {
+        void fetchProducts().then((snap) => {
+          if (snap?.products?.length) {
+            setStandaloneCatalog({
+              products: refreshCatalogSearchTexts(snap.products),
+              fileName: snap.fileName || '',
+            })
+          }
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [activeTab, refetchOrdersQuiet, parentCatalogSupplied])
 
   useEffect(() => {
     try {
@@ -1242,47 +1287,6 @@ export default function AdminHub({
       return mergeRevenueTableRows(ovFiltered, [])
     }
   }, [orders, ovFiltered, returnDayLedger, ovRange, ovFrom, ovTo])
-
-  const ovStats = useMemo(() => {
-    try {
-      let baseRevenue = 0
-      let baseCost = 0
-      for (const o of ovFiltered) {
-        try {
-          baseRevenue += safeMoney(o?.total)
-          baseCost += orderTotalCost(o)
-        } catch (err) {
-          console.warn('[AdminHub ovStats] bỏ qua đơn lỗi dữ liệu', o?.id, err)
-        }
-      }
-      const ledger = Array.isArray(returnDayLedger) ? returnDayLedger : []
-      const w = getReportTimeWindow(ovRange, ovFrom, ovTo)
-      let revenueSub = 0
-      let costSub = 0
-      if (w) {
-        try {
-          const adj = sumPosReturnAdjustmentsInRange(ledger, w.start.getTime(), w.end.getTime())
-          revenueSub = adj.revenueSub
-          costSub = adj.costSub
-        } catch (err) {
-          console.warn('[AdminHub ovStats] lỗi tổng hoàn trả theo khoảng ngày', err)
-        }
-      }
-      const revenue = baseRevenue - revenueSub
-      const cost = baseCost - costSub
-      const profit = revenue - cost
-      return { revenue, cost, profit, count: ovFiltered.length, countAll: orders.length }
-    } catch (err) {
-      console.error('[AdminHub ovStats]', err)
-      return {
-        revenue: 0,
-        cost: 0,
-        profit: 0,
-        count: ovFiltered.length,
-        countAll: orders.length,
-      }
-    }
-  }, [ovFiltered, orders.length, ovRange, ovFrom, ovTo, returnDayLedger])
 
   const handleExport = () => {
     if (revenueReadOnly) {
@@ -1392,6 +1396,47 @@ export default function AdminHub({
   }, [parentCatalogSupplied])
 
   const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+
+  const ovStats = useMemo(() => {
+    try {
+      let baseRevenue = 0
+      let baseCost = 0
+      for (const o of ovFiltered) {
+        try {
+          baseRevenue += safeMoney(o?.total)
+          baseCost += orderReportCostFromCatalog(o, catalogList)
+        } catch (err) {
+          console.warn('[AdminHub ovStats] bỏ qua đơn lỗi dữ liệu', o?.id, err)
+        }
+      }
+      const ledger = Array.isArray(returnDayLedger) ? returnDayLedger : []
+      const w = getReportTimeWindow(ovRange, ovFrom, ovTo)
+      let revenueSub = 0
+      let costSub = 0
+      if (w) {
+        try {
+          const adj = sumPosReturnAdjustmentsInRange(ledger, w.start.getTime(), w.end.getTime())
+          revenueSub = adj.revenueSub
+          costSub = adj.costSub
+        } catch (err) {
+          console.warn('[AdminHub ovStats] lỗi tổng hoàn trả theo khoảng ngày', err)
+        }
+      }
+      const revenue = baseRevenue - revenueSub
+      const cost = baseCost - costSub
+      const profit = revenue - cost
+      return { revenue, cost, profit, count: ovFiltered.length, countAll: orders.length }
+    } catch (err) {
+      console.error('[AdminHub ovStats]', err)
+      return {
+        revenue: 0,
+        cost: 0,
+        profit: 0,
+        count: ovFiltered.length,
+        countAll: orders.length,
+      }
+    }
+  }, [ovFiltered, orders.length, ovRange, ovFrom, ovTo, returnDayLedger, catalogList])
 
   /** Biến thể vừa thêm qua modal «Tạo mới» trên phiếu nhập (chờ `products` từ App kịp cập nhật). Được dọn trong useLayoutEffect khi đã có trong danh mục. */
   const [inboundPendingNewFlatVariants, setInboundPendingNewFlatVariants] = useState([])

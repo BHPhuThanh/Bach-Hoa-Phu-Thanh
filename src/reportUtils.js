@@ -1,3 +1,5 @@
+import { normalizePosOrder } from './posOrderAdmin.js'
+
 /** Khoảng thời gian báo cáo trên Dashboard */
 export const RANGE_TODAY = 'today'
 export const RANGE_YESTERDAY = 'yesterday'
@@ -280,6 +282,21 @@ export function orderTotalCost(o) {
   if (o == null) return 0
   if (o.totalCost != null && Number.isFinite(Number(o.totalCost))) return Number(o.totalCost)
   return (o.items || []).reduce((s, it) => s + orderLineCostTotal(it), 0)
+}
+
+/**
+ * Giá vốn báo cáo: lấy cost từng dòng sau normalize với catalog hiện tại (không dùng totalCost/lineCost đã lưu trên đơn).
+ * Thuật toán normalizePosOrder giữ nguyên; chỉ bỏ qua snapshot tổng khi cộng báo cáo.
+ */
+export function orderReportCostFromCatalog(o, catalogList) {
+  if (o == null) return orderTotalCost(o)
+  const n = normalizePosOrder(o, catalogList, { preferStoredLineFinancials: false })
+  if (!n?.items?.length) return orderTotalCost(o)
+  return n.items.reduce((s, it) => {
+    const unit = Math.max(0, Number(it.cost) || 0)
+    const qty = Math.max(0, Number(it.qty) || 0)
+    return s + unit * qty
+  }, 0)
 }
 
 export function orderTotalProfit(o) {

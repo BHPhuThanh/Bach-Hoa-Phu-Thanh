@@ -16,8 +16,10 @@ import {
   validateUnitModalLines,
 } from './goodsUnitSetupModalLogic.js'
 import InboundThuongHieuAutocomplete from './InboundThuongHieuAutocomplete.jsx'
+import BarcodeScanModal from './BarcodeScanModal.jsx'
 import { formatPostgrestErrorForUser } from './entityContactsRepository.js'
 import './adminHub.css'
+import './barcodeScan.css'
 
 /** Giá trong ô chỉnh sửa: phân tách hàng nghìn bằng dấu phẩy (vd. 132,000). */
 function formatMoneyDraftVi(n) {
@@ -122,6 +124,7 @@ export default function AdminHubGoodsCreateModal({
   const [goodsNewExpiryYmd, setGoodsNewExpiryYmd] = useState('')
   const [goodsNewMultiVariants, setGoodsNewMultiVariants] = useState(null)
   const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
+  const [goodsCreateBarcodeScanOpen, setGoodsCreateBarcodeScanOpen] = useState(false)
   const [goodsCreateSaving, setGoodsCreateSaving] = useState(false)
   const [gcUnitModal, setGcUnitModal] = useState(null)
 
@@ -160,6 +163,19 @@ export default function AdminHubGoodsCreateModal({
     const nextMsg = !n ? '' : catalogHasNormalizedBarcode(list, n) ? 'Mã QR đã có sẵn' : ''
     setGoodsNewBarcodeDupMsg((prev) => (prev === nextMsg ? prev : nextMsg))
   }, [])
+
+  const applyGoodsCreateScannedBarcode = useCallback(
+    (raw) => {
+      const code = String(normalizeBarcodeValue(raw ?? '')).trim()
+      if (!code || !goodsNewBarcodeRef.current) return
+      goodsNewBarcodeRef.current.value = code
+      revalidateGoodsNewBarcode()
+      goodsNewBarcodeRef.current.focus()
+      goodsNewBarcodeRef.current.select?.()
+      setGoodsCreateBarcodeScanOpen(false)
+    },
+    [revalidateGoodsNewBarcode]
+  )
 
   useLayoutEffect(() => {
     if (!open) return
@@ -722,18 +738,37 @@ export default function AdminHubGoodsCreateModal({
                   <span className="ah-goods-create-label">
                     Mã vạch <span className="ah-goods-create-hint">(ưu tiên quét; có thể gõ)</span>
                   </span>
-                  <input
-                    key={`gnew-bc-${goodsCreateFieldsKey}`}
-                    ref={goodsNewBarcodeRef}
-                    className="ah-goods-create-input ah-goods-create-input--barcode"
-                    type="text"
-                    defaultValue=""
-                    placeholder="Quét hoặc nhập mã vạch"
-                    autoComplete="off"
-                    spellCheck={false}
-                    inputMode="text"
-                    onInput={revalidateGoodsNewBarcode}
-                  />
+                  <div className="ah-goods-create-barcode-row">
+                    <input
+                      key={`gnew-bc-${goodsCreateFieldsKey}`}
+                      ref={goodsNewBarcodeRef}
+                      className="ah-goods-create-input ah-goods-create-input--barcode"
+                      type="text"
+                      defaultValue=""
+                      placeholder="Quét hoặc nhập mã vạch"
+                      autoComplete="off"
+                      spellCheck={false}
+                      inputMode="text"
+                      onInput={revalidateGoodsNewBarcode}
+                    />
+                    <button
+                      type="button"
+                      className="barcode-scan-trigger ah-goods-create-barcode-scan"
+                      aria-label="Quét mã vạch bằng camera"
+                      title="Quét mã vạch"
+                      onClick={() => setGoodsCreateBarcodeScanOpen(true)}
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                   {goodsNewBarcodeDupMsg ? (
                     <p className="ah-goods-create-barcode-err" role="alert">
                       {goodsNewBarcodeDupMsg}
@@ -1293,6 +1328,13 @@ export default function AdminHubGoodsCreateModal({
           </div>
         </div>
       )}
+
+      <BarcodeScanModal
+        open={goodsCreateBarcodeScanOpen}
+        onClose={() => setGoodsCreateBarcodeScanOpen(false)}
+        title="Quét mã — mã vạch sản phẩm mới"
+        onScan={applyGoodsCreateScannedBarcode}
+      />
     </>
   )
 }
