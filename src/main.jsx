@@ -10,6 +10,19 @@ import InboundCreatePage from './InboundCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
 import { registerPwaServiceWorker } from './pwaRegister.js'
 
+/** Lớp 1: chặn Chrome Help — chỉ preventDefault, không stopPropagation (React vẫn nhận F1). */
+if (typeof window !== 'undefined') {
+  window.addEventListener(
+    'keydown',
+    function (e) {
+      if (e.key === 'F1') {
+        e.preventDefault()
+      }
+    },
+    { capture: true }
+  )
+}
+
 function appRouterBasename() {
   const raw = import.meta.env.BASE_URL || '/'
   if (raw === '/') return undefined

@@ -2574,17 +2574,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe(printReceiptCallbacks)
 
-  /** Khi hộp thoại In đóng (In xong / ESC / Hủy) — trả focus ô tìm, tránh F1 → Chrome Help. */
+  /** Lớp 2 (dự phòng): hook in đã gọi window.focus — đồng bộ khi isPrintModalOpen tắt. */
   useEffect(() => {
     if (prevPrintModalOpenRef.current && !isPrintModalOpen) {
+      try {
+        window.focus()
+      } catch {
+        /* ignore */
+      }
       window.setTimeout(() => {
-        document.getElementById('pos-search-input')?.focus()
-      }, 100)
+        document.getElementById('pos-search-input')?.focus?.()
+      }, 50)
     }
     prevPrintModalOpenRef.current = isPrintModalOpen
   }, [isPrintModalOpen])
 
   const handleThanhToanRef = useRef(() => {})
+  const checkoutBusyOrderIdRef = useRef(null)
   const f1CheckoutGuardRef = useRef({})
   const sellOrdersRef = useRef([])
   const productsRef = useRef([])
@@ -4046,6 +4052,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
 
     sellOrdersRef.current = nextOrders
+    activeSellOrderIdRef.current = nextActiveId
+    const nextActive = nextOrders.find((o) => o.id === nextActiveId)
+    cartRef.current = nextActive?.cart ? [...nextActive.cart] : []
     setSellOrders(nextOrders)
     setActiveSellOrderId(nextActiveId)
 
@@ -4833,6 +4842,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleThanhToan = useCallback(() => {
     const paidOrderId = activeSellOrderId
+    if (checkoutBusyOrderIdRef.current === paidOrderId) return
     const checkoutOrder = sellOrdersRef.current.find((o) => o.id === paidOrderId)
     if (!checkoutOrder) {
       alert('Không tìm thấy đơn đang thanh toán. Vui lòng chọn lại tab đơn.')
@@ -4841,9 +4851,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const checkoutWholesale = checkoutOrder.isWholesale === true
     const snapshotCart = [...(checkoutOrder.cart || [])]
     if (snapshotCart.length === 0) {
-      alert('Chưa có sản phẩm để in')
       return
     }
+    checkoutBusyOrderIdRef.current = paidOrderId
     const snapshotDiscountStr = String(checkoutOrder.orderDiscountStr ?? '')
     const snapshotCashGivenStr = String(checkoutOrder.cashGivenStr ?? '')
     const snapshotCustName = String(checkoutOrder.customerName ?? '').trim()
@@ -4854,6 +4864,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return !Number.isFinite(q) || q <= 0
     })
     if (hasInvalidQty) {
+      checkoutBusyOrderIdRef.current = null
       alert('Có số lượng không được phép là 0. Vui lòng kiểm tra lại đơn hàng!')
       return
     }
@@ -4869,6 +4880,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         scrollCartLineIntoView(hit.lineId)
       }
       window.alert('Vui lòng chọn lô — hạn sử dụng trước khi thanh toán.')
+      checkoutBusyOrderIdRef.current = null
       return
     }
     const snapshotSubtotal = snapshotCart.reduce(
@@ -4972,10 +4984,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ? { eInvoice: { showQrLookup: true } }
         : {}),
     })
-    if (eInvoiceSettings.autoPrint) {
-      printReceiptHtml(html)
-    }
-
     const productsSnap = productsRef.current
     const deductByMaGoc = buildNonComboDeductionByMaGoc(productsSnap, cartForStock)
     const comboDelta = buildComboCartSaleDeltaByVariantId(productsSnap, cartForStock)
@@ -4986,6 +4994,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
     setProducts(nextProducts)
     finalizePaidSellOrder(paidOrderId)
+    checkoutBusyOrderIdRef.current = null
+
+    if (eInvoiceSettings.autoPrint) {
+      printReceiptHtml(html)
+    }
 
     const sellerIdSnap = activeSellerId
     const fileNameSnap = catalogFileNameRef.current
@@ -5057,6 +5070,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   f1CheckoutGuardRef.current = {
     activeView,
     productsLength: products.length,
+    cartLength: cartRef.current.length,
     shortcutsHelpOpen,
     eInvoiceModalOpen,
     customerAddOpen,
@@ -5331,12 +5345,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     posMaHhLienConvModal,
   ])
 
-  /** F1 — một listener duy nhất (capture): chặn Chrome Help + thanh toán đơn hiện tại. */
+  /** Lớp 3: thanh toán F1 — không stopPropagation (Lớp 1 đã preventDefault Help ở main.jsx). */
   useEffect(() => {
     const handleGlobalF1 = (e) => {
       if (e.key !== 'F1') return
-      e.preventDefault()
-      e.stopPropagation()
       const g = f1CheckoutGuardRef.current
       if (g.activeView !== 'sell' || g.productsLength === 0) return
       if (g.shortcutsHelpOpen) return
@@ -5345,6 +5357,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (g.returnPickModalOpen) return
       if (g.batchPickLineId) return
       if (g.posMaHhLienConvModal) return
+      if (cartRef.current.length === 0) return
       handleThanhToanRef.current()
     }
     window.addEventListener('keydown', handleGlobalF1, { capture: true })
