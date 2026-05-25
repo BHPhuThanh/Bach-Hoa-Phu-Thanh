@@ -2516,6 +2516,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [newCustomerName, setNewCustomerName] = useState('')
   const [newCustomerPhone, setNewCustomerPhone] = useState('')
   const headerSearchRef = useRef(null)
+  /** Chặn onFocus mở dropdown sau khi chuyển tab / thanh toán (focus programmatic). */
+  const suppressNextSearchFocusOpenRef = useRef(false)
   const [headerSearchDebounced, setHeaderSearchDebounced] = useState('')
   const headerSearchDebounceRef = useRef(null)
   if (headerSearchDebounceRef.current == null) {
@@ -3555,6 +3557,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     })
   }, [])
 
+  /** Neo focus vào ô tìm POS — tránh F1 rơi vào body (Chrome Help). */
+  const focusPosSearchInput = useCallback(() => {
+    suppressNextSearchFocusOpenRef.current = true
+    window.setTimeout(() => {
+      const el =
+        document.getElementById('pos-search-input') ??
+        document.getElementById('search-product-input') ??
+        headerSearchRef.current
+      if (el && typeof el.focus === 'function') {
+        try {
+          el.focus({ preventScroll: true })
+        } catch {
+          el.focus()
+        }
+      }
+      window.setTimeout(() => {
+        suppressNextSearchFocusOpenRef.current = false
+      }, 80)
+    }, 100)
+  }, [])
+
   /** Sau khi thêm hàng (quét / Enter): không focus lại — tránh dropdown bung khi input rỗng. */
   const afterSuccessfulHeaderAdd = useCallback(() => {
     hardDismissHeaderSearch()
@@ -3724,6 +3747,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const switchActiveSellOrder = useCallback(
     (orderId) => {
+      setHeaderSearch('')
+      setHeaderSuggestOpen(false)
       hardDismissHeaderSearch()
       setActiveSellOrderId(orderId)
     },
@@ -3932,6 +3957,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [activeSellOrderId, sellWholesaleMode])
 
   const addSellTab = useCallback(() => {
+    setHeaderSearch('')
+    setHeaderSuggestOpen(false)
     hardDismissHeaderSearch()
     const o = createEmptySellOrder()
     setSellOrders((prev) => [...prev, o])
@@ -3983,7 +4010,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       sellOrders: nextOrders,
       activeSellOrderId: nextActiveId,
     })
-  }, [hardDismissHeaderSearch])
+    focusPosSearchInput()
+  }, [hardDismissHeaderSearch, focusPosSearchInput])
 
   const closeSellTab = useCallback(
     (id) => {
@@ -4960,6 +4988,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   handleThanhToanRef.current = handleThanhToan
 
   useEffect(() => {
+    setHeaderSearch('')
+    setHeaderSuggestOpen(false)
     hardDismissHeaderSearch()
     setUnitPickerProduct(null)
     setBatchPickLineId(null)
@@ -4968,24 +4998,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setShowConversionByLineId({})
   }, [activeSellOrderId, hardDismissHeaderSearch])
 
-  /** Sau thanh toán / chuyển tab đơn: neo focus vào ô tìm (tránh F1 bị Chrome Help chiếm). */
+  /** Sau chuyển tab đơn: ép focus ô tìm (100ms) — không để focus rơi body. */
   useEffect(() => {
     if (activeView !== 'sell' || !activeSellOrderId) return
-    const tid = window.setTimeout(() => {
-      const el =
-        headerSearchRef.current ??
-        document.getElementById('search-product-input') ??
-        document.getElementById('pos-header-search')
-      if (el && typeof el.focus === 'function') {
-        try {
-          el.focus({ preventScroll: true })
-        } catch {
-          el.focus()
-        }
-      }
-    }, 50)
-    return () => window.clearTimeout(tid)
-  }, [activeSellOrderId, activeView])
+    focusPosSearchInput()
+  }, [activeSellOrderId, activeView, focusPosSearchInput])
 
   useEffect(() => {
     if (!scannerMenuOpen) return
@@ -5242,16 +5259,39 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     posMaHhLienConvModal,
   ])
 
+  /** F1 — capture cao nhất: chặn Chrome Help trước, rồi thanh toán. */
+  useEffect(() => {
+    const onF1 = (e) => {
+      if (e.key !== 'F1') return
+      e.preventDefault()
+      e.stopPropagation()
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation()
+      }
+      if (activeView !== 'sell' || products.length === 0) return
+      if (shortcutsHelpOpen) return
+      if (eInvoiceModalOpen) return
+      if (customerAddOpen) return
+      if (returnPickModalOpen) return
+      if (batchPickLineId) return
+      if (posMaHhLienConvModal) return
+      handleThanhToanRef.current()
+    }
+    window.addEventListener('keydown', onF1, true)
+    return () => window.removeEventListener('keydown', onF1, true)
+  }, [
+    activeView,
+    products.length,
+    shortcutsHelpOpen,
+    eInvoiceModalOpen,
+    customerAddOpen,
+    returnPickModalOpen,
+    batchPickLineId,
+    posMaHhLienConvModal,
+  ])
+
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'F1' && activeView === 'sell') {
-        e.preventDefault()
-        e.stopPropagation()
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation()
-        }
-      }
-
       if (activeView !== 'sell' || products.length === 0) return
       if (shortcutsHelpOpen) return
       if (eInvoiceModalOpen) return
@@ -5260,7 +5300,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (batchPickLineId) return
       if (posMaHhLienConvModal) return
       if (e.key === 'F1') {
-        handleThanhToanRef.current()
         return
       }
       if (e.key === 'F2') {
@@ -5292,16 +5331,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (e.key === 'Home') {
         e.preventDefault()
         e.stopPropagation()
-        if (cart.length === 0) return
-        const lastLine = cart[cart.length - 1]
-        const id = lastLine.lineId
-        setSelectedCartLineId(id)
-        queueMicrotask(() => {
-          const el = cartQtyInputRefs.current.get(id)
-          el?.focus()
-          el?.select()
-          scrollCartLineIntoView(id)
-        })
+        const inputs = document.querySelectorAll('.quantity-input')
+        if (inputs.length > 0) {
+          const last = inputs[inputs.length - 1]
+          last.focus()
+          if (typeof last.select === 'function') {
+            last.select()
+          }
+        }
         return
       }
       if (e.key === 'F11' && e.altKey && activeSellerId === 'admin') {
@@ -5815,7 +5852,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   </span>
                   <input
                     ref={headerSearchRef}
-                    id="search-product-input"
+                    id="pos-search-input"
                     className={`pos-header-search-input${
                       headerSearchInvalid ? ' pos-header-search-input--invalid' : ''
                     }`}
@@ -5842,7 +5879,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       setHeaderSearchFeedback('')
                       setHeaderSuggestOpen(true)
                     }}
-                    onFocus={() => setHeaderSuggestOpen(true)}
+                    onFocus={(e) => {
+                      if (suppressNextSearchFocusOpenRef.current) return
+                      const v = String(e.currentTarget.value ?? '').trim()
+                      if (v) setHeaderSuggestOpen(true)
+                    }}
                     onKeyDown={onHeaderSearchKeyDown}
                     autoComplete="off"
                     aria-label="Thêm sản phẩm vào đơn"
@@ -6564,7 +6605,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                               type="text"
                               inputMode="decimal"
                               autoComplete="off"
-                              className="pos-qty-input"
+                              className="pos-qty-input quantity-input"
                               value={
                                 cartQtyDraftByLine[l.lineId] !== undefined
                                   ? cartQtyDraftByLine[l.lineId]
