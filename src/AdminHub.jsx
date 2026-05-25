@@ -132,7 +132,7 @@ import {
 } from './costAdjustStorage.js'
 import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
 import {
-  fetchInventoryLogsByMaHang,
+  fetchInventoryLogsByProductId,
   INVENTORY_LOG_UPDATED_EVENT,
   mapInventoryLogDbRowToDisplay,
   staffNameForInventoryLog,
@@ -4995,10 +4995,10 @@ export default function AdminHub({
   ])
 
   useEffect(() => {
-    const ma = String(inboundQuickEditVariant?.code ?? '').trim()
+    const productId = String(inboundQuickEditCtx?.product?.id ?? '').trim()
     const want =
       Boolean(inboundQuickEditExpandId) &&
-      Boolean(ma) &&
+      Boolean(productId) &&
       (inboundQuickEditShelfTab === GOODS_DETAIL_VIEW_TONKHO ||
         inboundQuickEditShelfTab === GOODS_DETAIL_VIEW_LICHSU)
     if (!want || !isSupabaseConfigured()) {
@@ -5009,7 +5009,7 @@ export default function AdminHub({
     }
     let cancelled = false
     setGoodsSfInventoryLoading(true)
-    fetchInventoryLogsByMaHang(ma, {
+    fetchInventoryLogsByProductId(productId, catalogList, {
       limit: 200,
       dateFrom: goodsInvLedgerDateFrom,
       dateTo: goodsInvLedgerDateTo,
@@ -5030,8 +5030,9 @@ export default function AdminHub({
     }
   }, [
     inboundQuickEditExpandId,
-    inboundQuickEditVariant?.code,
+    inboundQuickEditCtx?.product?.id,
     inboundQuickEditShelfTab,
+    catalogList,
     inventoryLogRefreshTick,
     goodsInvLedgerDateFrom,
     goodsInvLedgerDateTo,
@@ -5039,10 +5040,10 @@ export default function AdminHub({
   ])
 
   useEffect(() => {
-    const ma = String(soloGoodsVariant?.code ?? '').trim()
+    const productId = String(soloGoodsCtx?.product?.id ?? '').trim()
     const want =
       isSoloProductTabId(activeTab) &&
-      Boolean(ma) &&
+      Boolean(productId) &&
       (soloGoodsUiTab === GOODS_DETAIL_VIEW_TONKHO || soloGoodsUiTab === GOODS_DETAIL_VIEW_LICHSU)
     if (!want || !isSupabaseConfigured()) {
       setSoloSfInventoryRows([])
@@ -5052,7 +5053,7 @@ export default function AdminHub({
     }
     let cancelled = false
     setSoloSfInventoryLoading(true)
-    fetchInventoryLogsByMaHang(ma, {
+    fetchInventoryLogsByProductId(productId, catalogList, {
       limit: 200,
       dateFrom: soloInvLedgerDateFrom,
       dateTo: soloInvLedgerDateTo,
@@ -5074,8 +5075,9 @@ export default function AdminHub({
   }, [
     activeTab,
     soloActiveVariantId,
-    soloGoodsVariant?.code,
+    soloGoodsCtx?.product?.id,
     soloGoodsUiTab,
+    catalogList,
     inventoryLogRefreshTick,
     soloInvLedgerDateFrom,
     soloInvLedgerDateTo,
@@ -5086,21 +5088,26 @@ export default function AdminHub({
     if (!isSupabaseConfigured() || goodsSfInventoryFetchErr) return { mode: 'supabase', rows: [] }
     if (goodsSfInventoryLoading && goodsSfInventoryRows.length === 0)
       return { mode: 'loading', rows: [] }
-    const mapped = (goodsSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
+    const mapped = (goodsSfInventoryRows || []).map((row) =>
+      mapInventoryLogDbRowToDisplay(row, { catalogProducts: catalogList })
+    )
     return { mode: 'supabase', rows: mapped }
   }, [
     goodsSfInventoryRows,
     goodsSfInventoryLoading,
     goodsSfInventoryFetchErr,
+    catalogList,
   ])
 
   const soloMergedInventoryLedgerRows = useMemo(() => {
     if (!isSupabaseConfigured() || soloSfInventoryFetchErr) return { mode: 'supabase', rows: [] }
     if (soloSfInventoryLoading && soloSfInventoryRows.length === 0)
       return { mode: 'loading', rows: [] }
-    const mapped = (soloSfInventoryRows || []).map(mapInventoryLogDbRowToDisplay)
+    const mapped = (soloSfInventoryRows || []).map((row) =>
+      mapInventoryLogDbRowToDisplay(row, { catalogProducts: catalogList })
+    )
     return { mode: 'supabase', rows: mapped }
-  }, [soloSfInventoryRows, soloSfInventoryLoading, soloSfInventoryFetchErr])
+  }, [soloSfInventoryRows, soloSfInventoryLoading, soloSfInventoryFetchErr, catalogList])
 
   const goodsInventoryPreviewRows = useMemo(() => {
     const r = goodsMergedInventoryLedgerRows.rows
@@ -7768,7 +7775,9 @@ export default function AdminHub({
                           <th>Ngày</th>
                           <th>Nhân viên</th>
                           <th>Thao tác</th>
-                          <th className="ah-num">Số lượng</th>
+                          <th>ĐVT giao dịch</th>
+                          <th>Quy đổi</th>
+                          <th className="ah-num">SL cơ bản</th>
                           <th className="ah-num">Tồn kho</th>
                           <th>Mã chứng từ</th>
                         </tr>
@@ -7776,14 +7785,14 @@ export default function AdminHub({
                       <tbody>
                         {soloMergedInventoryLedgerRows.mode === 'loading' ? (
                           <tr>
-                            <td colSpan={6} className="admin-hub-muted">
+                            <td colSpan={8} className="admin-hub-muted">
                               Đang tải nhật ký từ Supabase…
                             </td>
                           </tr>
                         ) : soloMergedInventoryLedgerRows.rows?.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="admin-hub-muted">
-                              {'Chưa có dòng nào trên Supabase cho biến thể này.'}
+                            <td colSpan={8} className="admin-hub-muted">
+                              Chưa có dòng nhật ký trên Supabase cho sản phẩm này (mọi đơn vị tính).
                             </td>
                           </tr>
                         ) : (
@@ -7799,6 +7808,18 @@ export default function AdminHub({
                                 <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
                                 <td>{row.staffNameLabel ?? row.staff}</td>
                                 <td>{row.transactionTypeLabel ?? row.action}</td>
+                                <td
+                                  className="ah-inv-ledger-unit-txn"
+                                  title={row.unitConversionDetailLabel}
+                                >
+                                  {row.unitTxnLabel ?? '—'}
+                                </td>
+                                <td
+                                  className="ah-inv-ledger-conversion"
+                                  title={row.unitConversionDetailLabel}
+                                >
+                                  {row.conversionLabel ?? '—'}
+                                </td>
                                 <td
                                   className={`ah-num${
                                     row.delta > 0

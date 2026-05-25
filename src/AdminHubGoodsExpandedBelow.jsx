@@ -46,7 +46,8 @@ export function AdminHubGoodsExpandedBelow(props) {
   const glMerged = goodsStockLedgerMerged || { mode: 'legacy', rows: [] }
   const glRows = Array.isArray(glMerged.rows) ? glMerged.rows : []
   const glLoading = glMerged.mode === 'loading'
-  const glLegacyEmptyMsg = 'Chưa có dòng nào trên Supabase cho biến thể này.'
+  const glLegacyEmptyMsg =
+    'Chưa có dòng nhật ký trên Supabase cho sản phẩm này (mọi đơn vị tính).'
 
   return (
     <div className="ah-goods-detail-after-virt" onClick={(e) => e.stopPropagation()}>
@@ -601,7 +602,9 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                       <th>Ngày</th>
                                                       <th>Nhân viên</th>
                                                       <th>Thao tác</th>
-                                                      <th className="ah-num">Số lượng</th>
+                                                      <th>ĐVT giao dịch</th>
+                                                      <th>Quy đổi</th>
+                                                      <th className="ah-num">SL cơ bản</th>
                                                       <th className="ah-num">Tồn kho</th>
                                                       <th>Mã chứng từ</th>
                                                     </tr>
@@ -612,6 +615,12 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                         <td className="ah-solo-stock-cell-time">{pr.dateLabel}</td>
                                                         <td>{pr.staffNameLabel ?? pr.staff}</td>
                                                         <td>{pr.transactionTypeLabel ?? pr.action}</td>
+                                                        <td className="ah-inv-ledger-unit-txn" title={pr.unitConversionDetailLabel}>
+                                                          {pr.unitTxnLabel ?? '—'}
+                                                        </td>
+                                                        <td className="ah-inv-ledger-conversion" title={pr.unitConversionDetailLabel}>
+                                                          {pr.conversionLabel ?? '—'}
+                                                        </td>
                                                         <td className={`ah-num${pr.delta > 0 ? ' ah-solo-stock-delta--pos' : pr.delta < 0 ? ' ah-solo-stock-delta--neg' : ''}`}>
                                                           {pr.qtyLabel ?? pr.deltaLabel}
                                                         </td>
@@ -702,7 +711,9 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                 <th>Ngày</th>
                                                 <th>Nhân viên</th>
                                                 <th>Thao tác</th>
-                                                <th className="ah-num">Số lượng</th>
+                                                <th>ĐVT giao dịch</th>
+                                                <th>Quy đổi</th>
+                                                <th className="ah-num">SL cơ bản</th>
                                                 <th className="ah-num">Tồn kho</th>
                                                 <th>Mã chứng từ</th>
                                               </tr>
@@ -710,13 +721,13 @@ export function AdminHubGoodsExpandedBelow(props) {
                                             <tbody>
                                               {glLoading ? (
                                                 <tr>
-                                                  <td colSpan={6} className="admin-hub-muted">
+                                                  <td colSpan={8} className="admin-hub-muted">
                                                     Đang tải nhật ký từ Supabase…
                                                   </td>
                                                 </tr>
                                               ) : glRows.length === 0 ? (
                                                 <tr>
-                                                  <td colSpan={6} className="admin-hub-muted">
+                                                  <td colSpan={8} className="admin-hub-muted">
                                                     {glLegacyEmptyMsg}
                                                   </td>
                                                 </tr>
@@ -733,6 +744,18 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                       <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
                                                       <td>{row.staffNameLabel ?? row.staff}</td>
                                                       <td>{row.transactionTypeLabel ?? row.action}</td>
+                                                      <td
+                                                        className="ah-inv-ledger-unit-txn"
+                                                        title={row.unitConversionDetailLabel}
+                                                      >
+                                                        {row.unitTxnLabel ?? '—'}
+                                                      </td>
+                                                      <td
+                                                        className="ah-inv-ledger-conversion"
+                                                        title={row.unitConversionDetailLabel}
+                                                      >
+                                                        {row.conversionLabel ?? '—'}
+                                                      </td>
                                                       <td
                                                         className={`ah-num${
                                                           row.delta > 0

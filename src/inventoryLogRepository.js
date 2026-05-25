@@ -7,6 +7,7 @@ import { readStoredSellerId } from './sellerRoleStorage.js'
 import { flattenDisplayCatalogToVariants } from './catalogRepository.js'
 import {
   collectSiblingVariantIds,
+  findCanonicalStockRootVariant,
   findCatalogVariantInProducts,
   findProductContainingVariantId,
   isComboCatalogProduct,
@@ -14,6 +15,7 @@ import {
   resolveMaGocFromVariant,
   variantQuyDoiNumber,
 } from './comboCatalog.js'
+import { normalizeCatalogUnitLabel } from './productUnits.js'
 
 export const INVENTORY_LOG_TABLE = 'inventory_log'
 export const INVENTORY_LOG_UPDATED_EVENT = 'inventory-log-updated'
@@ -60,6 +62,46 @@ function parseYyyyMmDdToLocalIsoRangeEnds(ymd) {
   }
 }
 
+/** Mọi `ma_hang` thuộc nhóm catalog (ĐVT anh em) — dùng khi fetch dòng cũ chưa có product_id. */
+export function collectMaHangCodesForCatalogProduct(products, productId) {
+  const pid = String(productId ?? '').trim()
+  if (!pid) return []
+  const p = (products || []).find((x) => String(x?.id) === pid)
+  if (!p) return []
+  const codes = new Set()
+  for (const v of p.groupVariants || [p]) {
+    const c = String(v.code ?? '').trim()
+    if (c) codes.add(c)
+  }
+  return [...codes]
+}
+
+function inventoryLogCatalogMeta(products, variant) {
+  if (!variant) return {}
+  const p = findProductContainingVariantId(products, variant.id)
+  const productId = String(p?.id ?? '').trim()
+  const maGoc = resolveMaGocFromVariant(variant)
+  const root = maGoc
+    ? findCanonicalStockRootVariant(products, collectSiblingVariantIds(products, maGoc))
+    : null
+  return {
+    product_id: productId || null,
+    variant_id: String(variant.id ?? '').trim() || null,
+    txn_unit_label: normalizeCatalogUnitLabel(variant.unitLabel),
+    base_unit_label: normalizeCatalogUnitLabel(root?.unitLabel ?? variant.unitLabel),
+  }
+}
+
+function withInventoryLogCatalogMeta(row, products, variant, txnQty) {
+  const meta = inventoryLogCatalogMeta(products, variant)
+  const q = Number(txnQty)
+  return {
+    ...row,
+    ...meta,
+    txn_qty: Number.isFinite(q) ? q : null,
+  }
+}
+
 function stockTonAfterMaGoc(catalogProducts, maGoc) {
   const k = String(maGoc ?? '').trim()
   if (!k) return null
@@ -96,15 +138,22 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
         if (!ma || !maGoc) continue
         const stockAfter = stockTonAfterMaGoc(nextProducts, maGoc)
         if (stockAfter == null) continue
-        rows.push({
-          ma_hang: ma,
-          ten_hang: String(hit.product?.name ?? hit.variant?.name ?? '').trim() || '—',
-          transaction_type: 'Bán hàng',
-          document_code: doc,
-          change_qty: -q,
-          stock_after: stockAfter,
-          staff_name: staffName,
-        })
+        rows.push(
+          withInventoryLogCatalogMeta(
+            {
+              ma_hang: ma,
+              ten_hang: String(hit.product?.name ?? hit.variant?.name ?? '').trim() || '—',
+              transaction_type: 'Bán hàng',
+              document_code: doc,
+              change_qty: -q,
+              stock_after: stockAfter,
+              staff_name: staffName,
+            },
+            prevProducts,
+            hit.variant,
+            q
+          )
+        )
       }
       continue
     }
@@ -120,15 +169,22 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
     const dq = qty * variantQuyDoiNumber(v)
     const stockAfter = stockTonAfterMaGoc(nextProducts, maGoc)
     if (stockAfter == null) continue
-    rows.push({
-      ma_hang: ma,
-      ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
-      transaction_type: 'Bán hàng',
-      document_code: doc,
-      change_qty: -dq,
-      stock_after: stockAfter,
-      staff_name: staffName,
-    })
+    rows.push(
+      withInventoryLogCatalogMeta(
+        {
+          ma_hang: ma,
+          ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
+          transaction_type: 'Bán hàng',
+          document_code: doc,
+          change_qty: -dq,
+          stock_after: stockAfter,
+          staff_name: staffName,
+        },
+        prevProducts,
+        v,
+        qty
+      )
+    )
   }
 
   return rows
@@ -160,15 +216,23 @@ export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches
     if (Math.abs(n1 - n0) < 1e-9) continue
     const ma = String(v1.code ?? '').trim()
     if (!ma) continue
-    rows.push({
-      ma_hang: ma,
-      ten_hang: String(v1.name ?? '').trim() || '—',
-      transaction_type: 'Nhập hàng',
-      document_code: doc,
-      change_qty: n1 - n0,
-      stock_after: n1,
-      staff_name: staffName,
-    })
+    const delta = n1 - n0
+    rows.push(
+      withInventoryLogCatalogMeta(
+        {
+          ma_hang: ma,
+          ten_hang: String(v1.name ?? '').trim() || '—',
+          transaction_type: 'Nhập hàng',
+          document_code: doc,
+          change_qty: delta,
+          stock_after: n1,
+          staff_name: staffName,
+        },
+        nextProducts,
+        v1,
+        Math.abs(delta)
+      )
+    )
   }
 
   return rows
@@ -209,15 +273,23 @@ export function buildStockAdjustInventoryLogRows(
     if (Math.abs(b - a) < 1e-9) continue
     const ma = String(v1.code ?? '').trim()
     if (!ma) continue
-    rows.push({
-      ma_hang: ma,
-      ten_hang: String(v1.name ?? '').trim() || '—',
-      transaction_type: transactionType,
-      document_code: docCode,
-      change_qty: b - a,
-      stock_after: b,
-      staff_name: staffName,
-    })
+    const delta = b - a
+    rows.push(
+      withInventoryLogCatalogMeta(
+        {
+          ma_hang: ma,
+          ten_hang: String(v1.name ?? '').trim() || '—',
+          transaction_type: transactionType,
+          document_code: docCode,
+          change_qty: delta,
+          stock_after: b,
+          staff_name: staffName,
+        },
+        nextProducts,
+        v1,
+        Math.abs(delta)
+      )
+    )
   }
 
   return rows
@@ -238,6 +310,11 @@ export async function insertInventoryLogRows(rows) {
         document_code: row.document_code === undefined ? null : row.document_code,
         ma_hang: row.ma_hang === undefined ? null : row.ma_hang,
         ten_hang: row.ten_hang === undefined ? null : row.ten_hang,
+        product_id: row.product_id === undefined ? null : row.product_id,
+        variant_id: row.variant_id === undefined ? null : row.variant_id,
+        txn_qty: row.txn_qty === undefined ? null : row.txn_qty,
+        txn_unit_label: row.txn_unit_label === undefined ? null : row.txn_unit_label,
+        base_unit_label: row.base_unit_label === undefined ? null : row.base_unit_label,
       }
     })
   if (!cleanedRows.length) return { ok: true, skipped: true }
@@ -270,6 +347,86 @@ function formatQtyViSigned(n) {
   return x > 0 ? `+${body}` : `-${body}`
 }
 
+function formatQtyViAbs(n) {
+  const x = Number(n)
+  if (!Number.isFinite(x) || x === 0) return '0'
+  return Math.abs(x).toLocaleString('vi-VN', { maximumFractionDigits: 6 })
+}
+
+function findVariantInCatalogProductByMaHang(products, productId, maHang) {
+  const pid = String(productId ?? '').trim()
+  const ma = String(maHang ?? '').trim()
+  if (!pid || !ma) return null
+  const p = (products || []).find((x) => String(x?.id) === pid)
+  if (!p) return null
+  for (const v of p.groupVariants || [p]) {
+    if (String(v.code ?? '').trim() === ma) return v
+  }
+  return null
+}
+
+function resolveInventoryLogUnitLabels(row, catalogProducts) {
+  let txnUnit = String(row.txn_unit_label ?? '').trim()
+  let baseUnit = String(row.base_unit_label ?? '').trim()
+  const pid = String(row.product_id ?? '').trim()
+  const vid = String(row.variant_id ?? '').trim()
+  const ma = String(row.ma_hang ?? '').trim()
+
+  if (catalogProducts?.length) {
+    if (!txnUnit && vid) {
+      const hit = findCatalogVariantInProducts(catalogProducts, vid)
+      if (hit?.variant) txnUnit = normalizeCatalogUnitLabel(hit.variant.unitLabel)
+    }
+    if (!txnUnit && pid && ma) {
+      const v = findVariantInCatalogProductByMaHang(catalogProducts, pid, ma)
+      if (v) txnUnit = normalizeCatalogUnitLabel(v.unitLabel)
+    }
+    if (!baseUnit && (vid || (pid && ma))) {
+      const v =
+        (vid && findCatalogVariantInProducts(catalogProducts, vid)?.variant) ||
+        (pid && ma ? findVariantInCatalogProductByMaHang(catalogProducts, pid, ma) : null)
+      if (v) {
+        const maGoc = resolveMaGocFromVariant(v)
+        const root = maGoc
+          ? findCanonicalStockRootVariant(
+              catalogProducts,
+              collectSiblingVariantIds(catalogProducts, maGoc)
+            )
+          : null
+        baseUnit = normalizeCatalogUnitLabel(root?.unitLabel ?? v.unitLabel)
+      }
+    }
+  }
+  return { txnUnit, baseUnit }
+}
+
+/** Nhãn ĐVT giao dịch + quy đổi cơ bản (vd. «1 Lốc» + «Quy đổi: -6 Chai»). */
+export function formatInventoryLogUnitConversionLabels(row, catalogProducts) {
+  const txnQtyRaw = row.txn_qty
+  const txnQty =
+    txnQtyRaw != null && txnQtyRaw !== '' && Number.isFinite(Number(txnQtyRaw))
+      ? Number(txnQtyRaw)
+      : null
+  const baseDelta = Number(row.change_qty)
+  const { txnUnit, baseUnit } = resolveInventoryLogUnitLabels(row, catalogProducts)
+
+  const txnPart =
+    txnQty != null && txnQty > 0 && txnUnit ? `${formatQtyViAbs(txnQty)} ${txnUnit}` : ''
+
+  const convPart =
+    baseUnit && Number.isFinite(baseDelta) && baseDelta !== 0
+      ? `Quy đổi: ${formatQtyViSigned(baseDelta)} ${baseUnit}`
+      : Number.isFinite(baseDelta) && baseDelta !== 0
+        ? formatQtyViSigned(baseDelta)
+        : ''
+  const unitTxnLabel = txnPart || (txnUnit ? txnUnit : '—')
+  const conversionLabel = convPart || '—'
+  const detailLabel =
+    txnPart && convPart ? `${txnPart} (${convPart})` : txnPart || convPart || '—'
+
+  return { unitTxnLabel, conversionLabel, detailLabel }
+}
+
 function formatStockAfterVi(n) {
   const x = Number(n)
   if (!Number.isFinite(x)) return '—'
@@ -298,11 +455,15 @@ function isInboundDocumentCode(docNoRaw) {
 }
 
 /** Dòng UI «Lịch sử kho» (inventory_log đã fetch). */
-export function mapInventoryLogDbRowToDisplay(row) {
+export function mapInventoryLogDbRowToDisplay(row, opts = {}) {
   const delta = Number(row.change_qty)
   const balance = Number(row.stock_after)
   const docNo = String(row.document_code ?? '—')
   const staffName = String(row.staff_name ?? '').trim() || '—'
+  const { unitTxnLabel, conversionLabel, detailLabel } = formatInventoryLogUnitConversionLabels(
+    row,
+    opts.catalogProducts
+  )
   return {
     key: String(row.id),
     /** Hiển thị cột Ngày ↔ created_at */
@@ -311,7 +472,13 @@ export function mapInventoryLogDbRowToDisplay(row) {
     staffNameLabel: staffName,
     /** Hiển thị cột Thao tác ↔ transaction_type */
     transactionTypeLabel: String(row.transaction_type ?? '—'),
-    /** Hiển thị cột Số lượng ↔ change_qty */
+    /** ĐVT giao dịch (vd. 1 Lốc) */
+    unitTxnLabel,
+    /** Quy đổi cơ bản (vd. Quy đổi: -6 Chai) */
+    conversionLabel,
+    /** Gộp cho tooltip / xem trước */
+    unitConversionDetailLabel: detailLabel,
+    /** Hiển thị cột Số lượng ↔ change_qty (đơn vị cơ bản) */
     qtyLabel: formatQtyViSigned(delta),
     /** Hiển thị cột Tồn kho ↔ stock_after */
     stockAfterLabel: formatStockAfterVi(balance),
@@ -333,14 +500,7 @@ export function mapInventoryLogDbRowToDisplay(row) {
   }
 }
 
-/**
- * @param {string} maHangRaw
- * @param {number | object} limitOrOpts — số hoặc { limit?, dateFrom?, dateTo?, documentSearch? }
- */
-export async function fetchInventoryLogsByMaHang(maHangRaw, limitOrOpts = 200) {
-  const ma = String(maHangRaw ?? '').trim()
-  if (!isSupabaseConfigured() || !ma) return { ok: false, rows: [], skipped: true }
-
+function parseInventoryLogFetchOpts(limitOrOpts) {
   let limit = 200
   let dateFromStr = ''
   let dateToStr = ''
@@ -353,27 +513,92 @@ export async function fetchInventoryLogsByMaHang(maHangRaw, limitOrOpts = 200) {
     dateToStr = String(limitOrOpts.dateTo ?? '').trim()
     documentSearch = String(limitOrOpts.documentSearch ?? '').trim()
   }
-  limit = Math.min(Math.max(limit, 1), 800)
+  return {
+    limit: Math.min(Math.max(limit, 1), 800),
+    dateFromStr,
+    dateToStr,
+    documentSearch,
+  }
+}
+
+function applyInventoryLogFetchFilters(q, { dateFromStr, dateToStr, documentSearch }) {
+  const rngFrom = dateFromStr ? parseYyyyMmDdToLocalIsoRangeEnds(dateFromStr) : null
+  const rngTo = dateToStr ? parseYyyyMmDdToLocalIsoRangeEnds(dateToStr) : null
+  if (rngFrom?.startIso) q = q.gte('created_at', rngFrom.startIso)
+  if (rngTo?.endIso) q = q.lte('created_at', rngTo.endIso)
+  if (documentSearch) {
+    const pat = `%${escapeIlikePct(documentSearch)}%`
+    q = q.ilike('document_code', pat)
+  }
+  return q
+}
+
+/**
+ * Lấy nhật ký theo nhóm sản phẩm (mọi ĐVT). Gồm dòng cũ (chỉ ma_hang) qua OR.
+ * @param {string} productId — `catalog product.id`
+ * @param {Array} catalogProducts — danh mục hiện tại (gom ma_hang anh em)
+ * @param {number | object} limitOrOpts
+ */
+export async function fetchInventoryLogsByProductId(
+  productId,
+  catalogProducts,
+  limitOrOpts = 200
+) {
+  const pid = String(productId ?? '').trim()
+  if (!isSupabaseConfigured() || !pid) return { ok: false, rows: [], skipped: true }
+
+  const { limit, dateFromStr, dateToStr, documentSearch } = parseInventoryLogFetchOpts(limitOrOpts)
+  const maCodes = collectMaHangCodesForCatalogProduct(catalogProducts, pid)
 
   const sb = getSupabaseClient()
   if (!sb) return { ok: false, rows: [], skipped: true }
 
   try {
-    let q = sb
-      .from(INVENTORY_LOG_TABLE)
-      .select('*')
-      .eq('ma_hang', ma)
-
-    const rngFrom = dateFromStr ? parseYyyyMmDdToLocalIsoRangeEnds(dateFromStr) : null
-    const rngTo = dateToStr ? parseYyyyMmDdToLocalIsoRangeEnds(dateToStr) : null
-    if (rngFrom?.startIso) q = q.gte('created_at', rngFrom.startIso)
-    if (rngTo?.endIso) q = q.lte('created_at', rngTo.endIso)
-
-    if (documentSearch) {
-      const pat = `%${escapeIlikePct(documentSearch)}%`
-      q = q.ilike('document_code', pat)
+    const orParts = [`product_id.eq.${pid}`]
+    if (maCodes.length > 0) {
+      const inList = maCodes.map((c) => `"${String(c).replace(/"/g, '\\"')}"`).join(',')
+      orParts.push(`ma_hang.in.(${inList})`)
     }
+    let q = sb.from(INVENTORY_LOG_TABLE).select('*').or(orParts.join(','))
+    q = applyInventoryLogFetchFilters(q, { dateFromStr, dateToStr, documentSearch })
+    const { data, error } = await q.order('created_at', { ascending: false }).limit(limit)
 
+    if (error) {
+      console.warn('[inventory_log] fetch by product:', error.message || error)
+      return { ok: false, rows: [], error }
+    }
+    const rows = Array.isArray(data) ? data : []
+    const seen = new Set()
+    const deduped = []
+    for (const row of rows) {
+      const k = String(row.id ?? '')
+      if (k && seen.has(k)) continue
+      if (k) seen.add(k)
+      deduped.push(row)
+    }
+    return { ok: true, rows: deduped }
+  } catch (e) {
+    console.warn('[inventory_log] fetch by product:', e)
+    return { ok: false, rows: [], error: e }
+  }
+}
+
+/**
+ * @deprecated Dùng `fetchInventoryLogsByProductId` — giữ cho tương thích.
+ * @param {string} maHangRaw
+ * @param {number | object} limitOrOpts
+ */
+export async function fetchInventoryLogsByMaHang(maHangRaw, limitOrOpts = 200) {
+  const ma = String(maHangRaw ?? '').trim()
+  if (!isSupabaseConfigured() || !ma) return { ok: false, rows: [], skipped: true }
+
+  const { limit, dateFromStr, dateToStr, documentSearch } = parseInventoryLogFetchOpts(limitOrOpts)
+  const sb = getSupabaseClient()
+  if (!sb) return { ok: false, rows: [], skipped: true }
+
+  try {
+    let q = sb.from(INVENTORY_LOG_TABLE).select('*').eq('ma_hang', ma)
+    q = applyInventoryLogFetchFilters(q, { dateFromStr, dateToStr, documentSearch })
     const { data, error } = await q.order('created_at', { ascending: false }).limit(limit)
 
     if (error) {
