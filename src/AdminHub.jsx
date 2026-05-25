@@ -102,12 +102,13 @@ import {
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
+import { clearPosReturnDayLedger, sumPosReturnAdjustmentsInRange } from './posReturnDayLedger.js'
 import {
-  appendPosReturnDayEntry,
-  clearPosReturnDayLedger,
-  loadPosReturnDayLedger,
-  sumPosReturnAdjustmentsInRange,
-} from './posReturnDayLedger.js'
+  fetchPosReturnLedgerEntries,
+  insertPosReturnLedgerEntry,
+  migrateLocalPosReturnLedgerToSupabaseOnce,
+  POS_RETURN_LEDGER_BUMP_EVENT,
+} from './posReturnLedgerRepository.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
 import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
@@ -1132,15 +1133,9 @@ export default function AdminHub({
   inboundLowStockPrefillRequest = null,
   onInboundLowStockPrefillConsumed,
 }) {
-  /** Ledger hoàn trả POS — khai báo đầu component (mặc định []) để mọi useMemo Thẻ kho / ovStats không TDZ. */
-  const [returnDayLedger, setReturnDayLedger] = useState(() => {
-    try {
-      const v = loadPosReturnDayLedger()
-      return Array.isArray(v) ? v : []
-    } catch {
-      return []
-    }
-  })
+  /** Ledger hoàn trả POS — nguồn chính Supabase (`pos_return_ledger`), không cache báo cáo localStorage. */
+  const [returnDayLedger, setReturnDayLedger] = useState([])
+  const [returnLedgerRemoteLoading, setReturnLedgerRemoteLoading] = useState(false)
 
   const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
   const navigate = useNavigate()
@@ -1252,14 +1247,62 @@ export default function AdminHub({
     }
   }, [activeTab, refetchOrdersQuiet, parentCatalogSupplied])
 
-  useEffect(() => {
-    try {
-      const v = loadPosReturnDayLedger()
-      setReturnDayLedger(Array.isArray(v) ? v : [])
-    } catch {
-      setReturnDayLedger([])
+  const refreshPosReturnLedger = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      try {
+        const { loadPosReturnDayLedger } = await import('./posReturnDayLedger.js')
+        const v = loadPosReturnDayLedger()
+        setReturnDayLedger(Array.isArray(v) ? v : [])
+      } catch {
+        setReturnDayLedger([])
+      }
+      return
     }
-  }, [refreshKey])
+    setReturnLedgerRemoteLoading(true)
+    try {
+      await migrateLocalPosReturnLedgerToSupabaseOnce()
+      const r = await fetchPosReturnLedgerEntries()
+      if (!r.ok) {
+        console.error('[AdminHub] Không tải pos_return_ledger', r.error)
+        return
+      }
+      setReturnDayLedger(Array.isArray(r.entries) ? r.entries : [])
+    } finally {
+      setReturnLedgerRemoteLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshPosReturnLedger()
+  }, [refreshPosReturnLedger, refreshKey])
+
+  useEffect(() => {
+    const onBump = () => {
+      void refreshPosReturnLedger()
+    }
+    window.addEventListener(POS_RETURN_LEDGER_BUMP_EVENT, onBump)
+    return () => window.removeEventListener(POS_RETURN_LEDGER_BUMP_EVENT, onBump)
+  }, [refreshPosReturnLedger])
+
+  useEffect(() => {
+    if (activeTab !== TAB_OVERVIEW && !isPosReturnDetailTabId(activeTab)) return
+    void refreshPosReturnLedger()
+  }, [activeTab, refreshPosReturnLedger])
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (activeTab === TAB_OVERVIEW || isPosReturnDetailTabId(activeTab)) {
+        void refreshPosReturnLedger()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [activeTab, refreshPosReturnLedger])
 
   /* —— Tổng quan —— */
   const [ovRange, setOvRange] = useState(RANGE_TODAY)
@@ -3968,7 +4011,7 @@ export default function AdminHub({
 
   /** delta > 0 nhập thêm tồn, < 0 trừ tồn (clamp về 0). */
   const applyInboundStockDeltas = useCallback(
-    async (deltaByVariant) => {
+    async (deltaByVariant, stockMeta) => {
       if (!deltaByVariant || deltaByVariant.size === 0) return { ok: true }
       if (typeof onBulkPatchCatalogVariants === 'function') {
         const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
@@ -3982,7 +4025,16 @@ export default function AdminHub({
           patches.push({ variantId, patch: { stockQty: Math.max(0, cur + delta) } })
         }
         if (patches.length === 0) return { ok: true }
-        return onBulkPatchCatalogVariants(patches, {})
+        const ib =
+          stockMeta?.documentCode || stockMeta?.inboundOrderId
+            ? {
+                inboundInventoryMeta: {
+                  documentCode: String(stockMeta.documentCode || '').trim(),
+                  inboundOrderId: String(stockMeta.inboundOrderId || '').trim(),
+                },
+              }
+            : {}
+        return onBulkPatchCatalogVariants(patches, ib)
       }
       if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
       let nextFlat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
@@ -5178,24 +5230,14 @@ export default function AdminHub({
       alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
       return
     }
-    const stockRes = await applyInboundStockDeltas(deltas)
-    if (stockRes && stockRes.ok === false) {
-      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
-      return
-    }
-    appendPosReturnDayEntry({
-      atMs: Date.now(),
-      orderId: String(base.id || ''),
-      revenueSub,
-      costSub,
-      sourceInvoiceNo: String(base.invoiceNo || '').trim(),
-      lines: returnLines,
+    const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
+    const stockRes = await applyInboundStockDeltas(deltas, {
+      documentCode: returnDocCode,
+      inboundOrderId: String(base.id || ''),
     })
-    try {
-      const next = loadPosReturnDayLedger()
-      setReturnDayLedger(Array.isArray(next) ? next : [])
-    } catch {
-      setReturnDayLedger([])
+    if (stockRes && stockRes.ok === false) {
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho trên máy chủ.'))
+      return
     }
     const nextStatus = computePosOrderStatusFromItems(newItems)
     const merged = normalizePosOrder(
@@ -5204,6 +5246,22 @@ export default function AdminHub({
       { preferStoredLineFinancials: true }
     )
     await persistPosOrderAndReload(merged)
+    const ins = await insertPosReturnLedgerEntry({
+      atMs: Date.now(),
+      orderId: String(base.id || ''),
+      revenueSub,
+      costSub,
+      sourceInvoiceNo: String(base.invoiceNo || '').trim(),
+      lines: returnLines,
+    })
+    if (!ins.ok) {
+      console.error('[confirmPosReturnSubmit] insert pos_return_ledger', ins.error)
+      window.alert(
+        formatPostgrestErrorForUser(ins.error) ||
+          'Đơn và tồn kho đã cập nhật nhưng không ghi được phiếu trả hàng lên Supabase. Kiểm tra migration bảng pos_return_ledger.'
+      )
+    }
+    await refreshPosReturnLedger()
     setPosReturnModal(null)
     setPosReturnQtyDraft({})
     setPosDetailEditDrafts((prev) => {
@@ -5218,6 +5276,7 @@ export default function AdminHub({
     catalogList,
     applyInboundStockDeltas,
     persistPosOrderAndReload,
+    refreshPosReturnLedger,
     revenueReadOnly,
   ])
 

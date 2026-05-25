@@ -5,3 +5,6 @@ export function bumpOrdersSync() {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent(ORDERS_SYNC_BUMP_EVENT))
 }
+
+/** Sau ghi hoàn trả POS — tab Doanh thu / chi tiết trả hàng refetch ledger. */
+export { POS_RETURN_LEDGER_BUMP_EVENT, bumpPosReturnLedgerSync } from './posReturnLedgerRepository.js'

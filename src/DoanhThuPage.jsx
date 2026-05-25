@@ -4,6 +4,7 @@ import './dashboard-dark.css'
 import AdminHub from './AdminHub.jsx'
 import DoanhThuErrorBoundary from './DoanhThuErrorBoundary.jsx'
 import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
+import { POS_RETURN_LEDGER_BUMP_EVENT } from './posReturnLedgerRepository.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 
@@ -19,10 +20,12 @@ export default function DoanhThuPage() {
     }
     bump()
     window.addEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
+    window.addEventListener(POS_RETURN_LEDGER_BUMP_EVENT, bump)
     window.addEventListener('focus', onVisible)
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       window.removeEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
+      window.removeEventListener(POS_RETURN_LEDGER_BUMP_EVENT, bump)
       window.removeEventListener('focus', onVisible)
       document.removeEventListener('visibilitychange', onVisible)
     }
