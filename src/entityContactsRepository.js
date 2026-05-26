@@ -150,6 +150,38 @@ export async function updateSupplierSupabase(id, payload) {
   return updatePerson('suppliers', id, payload)
 }
 
+/** @param {'suppliers'|'customers'|'employees'} table */
+async function deletePerson(table, id) {
+  const sb = getSupabaseClient()
+  if (!sb || !isSupabaseConfigured()) {
+    return { ok: false, skipped: true, error: new Error('Supabase chưa cấu hình') }
+  }
+  const idStr = String(id ?? '').trim()
+  if (!idStr) {
+    return { ok: false, error: new Error('Thiếu mã (id)') }
+  }
+  try {
+    const { error } = await sb.from(table).delete().eq('id', idStr)
+    if (error) {
+      return { ok: false, error, code: error.code, message: error.message }
+    }
+    return { ok: true }
+  } catch (e) {
+    const err = /** @type {Error & { code?: string }} */ (e)
+    return {
+      ok: false,
+      error: err,
+      code: err?.code,
+      message: err?.message ?? String(e),
+    }
+  }
+}
+
+/** Xóa nhà cung cấp theo `id` (UUID Supabase). */
+export async function deleteSupplierSupabase(id) {
+  return deletePerson('suppliers', id)
+}
+
 /** Gộp danh sách (ưu tiên thứ tự `remote` trước), tránh trùng cặp (phone + name). */
 export function mergeCustomerListsDedupe(remote, local) {
   const seen = new Set()

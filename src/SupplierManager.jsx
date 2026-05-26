@@ -3,6 +3,7 @@ import { AutoSizer } from 'react-virtualized-auto-sizer'
 import EntityPersonModal from './EntityPersonModal.jsx'
 import {
   formatPostgrestErrorForUser,
+  deleteSupplierSupabase,
   insertSupplierSupabase,
   updateSupplierSupabase,
 } from './entityContactsRepository.js'
@@ -104,6 +105,28 @@ export default function SupplierManager({ revenueReadOnly = false }) {
     setEditingSupplier(null)
   }, [modalSaving])
 
+  const handleDeleteSupplier = useCallback(
+    async (row) => {
+      if (revenueReadOnly || !row) return
+      const name = String(row.name || '').trim() || 'nhà cung cấp này'
+      if (
+        !window.confirm(`Sếp có chắc chắn muốn xóa nhà cung cấp này không?\n\n${name}`)
+      ) {
+        return
+      }
+      const id = String(row.id ?? '').trim()
+      if (id) {
+        const del = await deleteSupplierSupabase(id)
+        if (!del.ok && !del.skipped) {
+          window.alert(formatPostgrestErrorForUser(del.error))
+          return
+        }
+      }
+      setSuppliers((prev) => prev.filter((r) => String(r.id) !== id))
+    },
+    [revenueReadOnly]
+  )
+
   const handleSubmit = useCallback(
     async (draft) => {
       if (revenueReadOnly) return
@@ -182,17 +205,30 @@ export default function SupplierManager({ revenueReadOnly = false }) {
     (r) => {
       if (isMobileLayout) {
         return (
-          <div className="ah-supplier-virt-card">
+          <div className="ah-supplier-virt-card ah-hub-entity-mobile-card">
             <div className="ah-supplier-virt-card-top">
               <span className="ah-supplier-virt-id">{r.id || '—'}</span>
-              <button
-                type="button"
-                className="ah-inbound-code-link ah-supplier-virt-name-btn"
-                onClick={() => openEdit(r)}
-                disabled={revenueReadOnly}
-              >
-                {r.name || '—'}
-              </button>
+              <div className="ah-supplier-virt-card-actions">
+                <button
+                  type="button"
+                  className="ah-inbound-code-link ah-supplier-virt-name-btn"
+                  onClick={() => openEdit(r)}
+                  disabled={revenueReadOnly}
+                >
+                  {r.name || '—'}
+                </button>
+                {!revenueReadOnly ? (
+                  <button
+                    type="button"
+                    className="ah-hub-entity-delete-btn"
+                    onClick={() => void handleDeleteSupplier(r)}
+                    title="Xóa nhà cung cấp"
+                    aria-label={`Xóa ${r.name || 'nhà cung cấp'}`}
+                  >
+                    Xóa
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="ah-supplier-virt-meta">
               <span>{r.phone || '—'}</span>
@@ -220,10 +256,22 @@ export default function SupplierManager({ revenueReadOnly = false }) {
           <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.address || '—'}</div>
           <div className="ah-sup-virt-cell">{r.cccd || '—'}</div>
           <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.mail || '—'}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-actions">
+            {!revenueReadOnly ? (
+              <button
+                type="button"
+                className="ah-hub-entity-delete-btn"
+                onClick={() => void handleDeleteSupplier(r)}
+                title="Xóa nhà cung cấp"
+              >
+                Xóa
+              </button>
+            ) : null}
+          </div>
         </div>
       )
     },
-    [isMobileLayout, openEdit, revenueReadOnly]
+    [isMobileLayout, openEdit, revenueReadOnly, handleDeleteSupplier]
   )
 
   const supplierVirtRowHeight = isMobileLayout ? 132 : 48
@@ -257,7 +305,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
       </div>
       <div className="admin-hub-table-wrap ah-supplier-table-wrap">
         {showLoading ? (
-          <table className="admin-hub-table">
+          <table className="admin-hub-table ah-supplier-status-table">
             <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
@@ -267,7 +315,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
             </tbody>
           </table>
         ) : fetchPhase === 'error' ? (
-          <table className="admin-hub-table">
+          <table className="admin-hub-table ah-supplier-status-table">
             <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
@@ -277,7 +325,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
             </tbody>
           </table>
         ) : filtered.length === 0 ? (
-          <table className="admin-hub-table">
+          <table className="admin-hub-table ah-supplier-status-table">
             <tbody>
               <tr>
                 <td colSpan={6} className="admin-hub-muted">
@@ -300,6 +348,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
                 <span>Địa chỉ</span>
                 <span>CCCD</span>
                 <span>Mail</span>
+                <span />
               </div>
             ) : null}
             <AutoSizer>
@@ -315,8 +364,47 @@ export default function SupplierManager({ revenueReadOnly = false }) {
               )}
             </AutoSizer>
           </div>
+        ) : isMobileLayout ? (
+          <div className="ah-hub-entity-mobile-list">
+            {filtered.map((r) => (
+              <div key={r.id} className="ah-hub-entity-mobile-card ah-supplier-virt-card">
+                <div className="ah-supplier-virt-card-top">
+                  <span className="ah-supplier-virt-id">{r.id || '—'}</span>
+                  <div className="ah-supplier-virt-card-actions">
+                    <button
+                      type="button"
+                      className="ah-inbound-code-link ah-supplier-virt-name-btn"
+                      onClick={() => openEdit(r)}
+                      disabled={revenueReadOnly}
+                    >
+                      {r.name || '—'}
+                    </button>
+                    {!revenueReadOnly ? (
+                      <button
+                        type="button"
+                        className="ah-hub-entity-delete-btn"
+                        onClick={() => void handleDeleteSupplier(r)}
+                        title="Xóa nhà cung cấp"
+                      >
+                        Xóa
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="ah-supplier-virt-meta">
+                  <span>{r.phone || '—'}</span>
+                  <span className="ah-supplier-virt-meta-sep">·</span>
+                  <span>{r.mail || '—'}</span>
+                </div>
+                {r.address ? <div className="ah-supplier-virt-addr">{r.address}</div> : null}
+                {r.cccd ? (
+                  <div className="ah-hub-entity-mobile-card-extra">CCCD: {r.cccd}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         ) : (
-          <table className="admin-hub-table">
+          <table className="admin-hub-table ah-supplier-data-table">
             <thead>
               <tr>
                 <th>Mã NCC</th>
@@ -325,6 +413,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
                 <th>Địa chỉ</th>
                 <th>CCCD</th>
                 <th>Mail</th>
+                <th aria-label="Thao tác" />
               </tr>
             </thead>
             <tbody>
@@ -348,6 +437,20 @@ export default function SupplierManager({ revenueReadOnly = false }) {
                   <td>{r.address || '—'}</td>
                   <td>{r.cccd || '—'}</td>
                   <td>{r.mail || '—'}</td>
+                  <td>
+                    {!revenueReadOnly ? (
+                      <button
+                        type="button"
+                        className="ah-hub-entity-delete-btn"
+                        onClick={() => void handleDeleteSupplier(r)}
+                        title="Xóa nhà cung cấp"
+                      >
+                        Xóa
+                      </button>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

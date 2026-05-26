@@ -7280,8 +7280,8 @@ export default function AdminHub({
                 + Thêm nhân viên
               </button>
             </div>
-            <div className="admin-hub-table-wrap">
-              <table className="admin-hub-table">
+            <div className="admin-hub-table-wrap ah-staff-table-wrap">
+              <table className="admin-hub-table ah-hub-voucher-table ah-staff-hub-table">
                 <thead>
                   <tr>
                     <th>Họ tên / Vai trò</th>
@@ -7293,19 +7293,25 @@ export default function AdminHub({
                 </thead>
                 <tbody>
                   {staffRemoteLoading && isSupabaseConfigured() ? (
-                    <tr>
+                    <tr className="ah-hub-voucher-empty-row">
                       <td colSpan={5} className="admin-hub-muted">
                         Đang tải danh sách từ Supabase (một lần)…
                       </td>
                     </tr>
+                  ) : staffFiltered.length === 0 ? (
+                    <tr className="ah-hub-voucher-empty-row">
+                      <td colSpan={5} className="admin-hub-muted">
+                        Không có dòng khớp tìm kiếm.
+                      </td>
+                    </tr>
                   ) : (
                     staffFiltered.map((r, i) => (
-                      <tr key={i}>
-                        <td>{r.name}</td>
-                        <td>{r.phone}</td>
-                        <td>{r.address}</td>
-                        <td>{r.cccd}</td>
-                        <td>{r.mail}</td>
+                      <tr key={i} className="ah-hub-voucher-summary-row ah-hub-entity-mobile-card-row">
+                        <td data-label="Họ tên / Vai trò">{r.name}</td>
+                        <td data-label="Số điện thoại">{r.phone}</td>
+                        <td data-label="Địa chỉ">{r.address}</td>
+                        <td data-label="Số CCCD">{r.cccd}</td>
+                        <td data-label="Mail">{r.mail}</td>
                       </tr>
                     ))
                   )}

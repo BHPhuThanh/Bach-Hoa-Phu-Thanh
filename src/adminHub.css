@@ -4444,9 +4444,20 @@ a.ah-inbound-line-code-link:hover {
   scrollbar-width: thin;
 }
 
+.ah-inbound-ncc-combo-dropdown.is-drop-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .ah-goods-create-dialog .ah-inbound-ncc-combo-dropdown,
-.ah-goods-card-body .ah-inbound-ncc-combo-dropdown {
+.ah-goods-card-body .ah-inbound-ncc-combo-dropdown,
+.ah-goods-detail-brand-wrap .ah-inbound-ncc-combo-dropdown {
   z-index: 60;
+}
+
+.ah-goods-detail-brand-wrap {
+  position: relative;
+  overflow: visible;
 }
 
 .ah-inbound-ncc-combo-add-supplier {
@@ -8501,7 +8512,7 @@ li.ah-inbound-suggest-empty {
 
 .ah-sup-virt-header {
   display: grid;
-  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr;
+  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr 0.55fr;
   gap: 0.3rem;
   padding: 0.45rem 0.5rem;
   font-size: 0.68rem;
@@ -8515,7 +8526,7 @@ li.ah-inbound-suggest-empty {
 
 .ah-sup-virt-row {
   display: grid;
-  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr;
+  grid-template-columns: 1.1fr 1.1fr 0.85fr 1.1fr 0.65fr 1fr 0.55fr;
   gap: 0.3rem;
   align-items: center;
   padding: 0 0.5rem;
@@ -9122,6 +9133,18 @@ li.ah-inbound-suggest-empty {
   padding-bottom: 0;
 }
 
+.ah-inbound-quick-edit-body .ah-goods-card-body--below-tabs,
+.ah-goods-detail-card--v2-modal .ah-goods-card-body--below-tabs,
+.ah-goods-detail-card--v2-modal .ah-goods-card-stock-wrap {
+  padding-bottom: 8rem;
+}
+
+.ah-inbound-quick-edit-body .ah-goods-detail-brand-wrap,
+.ah-goods-detail-card--v2-modal .ah-goods-detail-brand-wrap {
+  overflow: visible;
+  z-index: 4;
+}
+
 .ah-inbound-line-qty-price-mobile {
   display: none;
 }
@@ -9195,6 +9218,209 @@ li.ah-inbound-suggest-empty {
 
 @media (min-width: 768px) {
   .ah-inbound-detail-lines-wrap .ah-inbound-line-qty-price-mobile {
+    display: none;
+  }
+}
+
+/* —— Hub: nút xóa NCC / entity —— */
+.ah-hub-entity-delete-btn {
+  flex-shrink: 0;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 6px;
+  padding: 0.28rem 0.55rem;
+  background: rgba(127, 29, 29, 0.35);
+  color: #fecaca;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ah-hub-entity-delete-btn:hover {
+  background: rgba(185, 28, 28, 0.45);
+  color: #fff;
+}
+
+.ah-supplier-virt-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.ah-hub-entity-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.15rem 0;
+}
+
+.ah-hub-entity-mobile-card {
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: linear-gradient(165deg, #1a2332 0%, #141a22 100%);
+  padding: 0.75rem;
+}
+
+.ah-hub-entity-mobile-card-extra {
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+/* —— Mobile ≤768px: Card layout — Nhân viên, Kiểm hàng, Điều chỉnh GV —— */
+@media (max-width: 768px) {
+  .ah-staff-table-wrap .ah-staff-hub-table thead,
+  .ah-hub-voucher-table.ah-stock-check-table > thead {
+    display: none;
+  }
+
+  .ah-staff-table-wrap .ah-staff-hub-table,
+  .ah-hub-voucher-table.ah-stock-check-table {
+    display: block;
+    border: none;
+    background: transparent;
+  }
+
+  .ah-staff-table-wrap .ah-staff-hub-table tbody,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-summary-row,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-summary-row {
+    display: block;
+    border-radius: 12px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: linear-gradient(165deg, #1a2332 0%, #141a22 100%);
+    padding: 0.75rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-summary-row td,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-summary-row > td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.35rem 0;
+    border: none;
+    font-size: 0.84rem;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-summary-row td::before,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-summary-row > td::before {
+    content: attr(data-label);
+    flex: 0 0 42%;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #94a3b8;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-summary-row td:first-child,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-summary-row > td:first-child {
+    font-weight: 800;
+    font-size: 0.95rem;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-empty-row,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-empty-row {
+    display: block;
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-empty-row td,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-empty-row > td {
+    display: block;
+    text-align: center;
+  }
+
+  .ah-staff-table-wrap .ah-hub-voucher-empty-row td::before,
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-hub-voucher-empty-row > td::before {
+    display: none;
+  }
+
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-stock-check-detail-row {
+    display: block;
+    margin-top: -0.35rem;
+    margin-bottom: 0.35rem;
+    border: none;
+    background: transparent;
+  }
+
+  .ah-hub-voucher-table.ah-stock-check-table > tbody > tr.ah-stock-check-detail-row > td {
+    display: block;
+    padding: 0;
+    border: none;
+  }
+
+  .ah-stock-check-detail-meta--grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ah-hub-voucher-line-table thead {
+    display: none;
+  }
+
+  .ah-hub-voucher-line-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card {
+    display: block;
+    border-radius: 10px;
+    border: 1px solid rgba(71, 85, 105, 0.65);
+    background: rgba(15, 23, 42, 0.85);
+    padding: 0.55rem 0.65rem;
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.28rem 0;
+    border: none;
+    font-size: 0.82rem;
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td.ah-voucher-line-hide-mobile {
+    display: none !important;
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td[data-label='Tên sản phẩm'],
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td[data-label='Tên SP'] {
+    flex-direction: column;
+    align-items: stretch;
+    font-weight: 700;
+    font-size: 0.9rem;
+    padding-bottom: 0.35rem;
+    margin-bottom: 0.2rem;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.45);
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td[data-label='Tên sản phẩm']::before,
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td[data-label='Tên SP']::before {
+    display: none;
+  }
+
+  .ah-hub-voucher-line-table tr.ah-hub-voucher-line-card td::before {
+    content: attr(data-label);
+    flex: 0 0 46%;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .ah-supplier-table-wrap .admin-hub-table.ah-supplier-data-table {
     display: none;
   }
 }

@@ -326,7 +326,7 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
       </p>
 
       <div className="admin-hub-table-wrap ah-stock-check-table-wrap">
-        <table className="admin-hub-table ah-stock-check-table">
+        <table className="admin-hub-table ah-stock-check-table ah-hub-voucher-table">
           <thead>
             <tr>
               <th>Mã phiếu kiểm</th>
@@ -349,8 +349,10 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                 const done = row.status === 'hoan_thanh'
                 return (
                   <Fragment key={row.code}>
-                    <tr className={open ? 'ah-stock-check-row--open' : ''}>
-                      <td>
+                    <tr
+                      className={`ah-hub-voucher-summary-row${open ? ' ah-stock-check-row--open' : ''}`}
+                    >
+                      <td data-label="Mã phiếu kiểm">
                         <button
                           type="button"
                           className="ah-stock-check-code-btn"
@@ -360,16 +362,16 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                           {row.code}
                         </button>
                       </td>
-                      <td>
+                      <td data-label="Trạng thái">
                         {done ? (
                           <span className="ah-stock-check-badge ah-stock-check-badge--ok">Hoàn thành</span>
                         ) : (
                           <span className="ah-stock-check-badge ah-stock-check-badge--cancel">Đã hủy</span>
                         )}
                       </td>
-                      <td>{formatDateTimeVi(row.createdAtMs)}</td>
-                      <td>{formatDateTimeVi(row.balancedAtMs)}</td>
-                      <td>{row.createdBy || '—'}</td>
+                      <td data-label="Ngày tạo">{formatDateTimeVi(row.createdAtMs)}</td>
+                      <td data-label="Ngày cân bằng">{formatDateTimeVi(row.balancedAtMs)}</td>
+                      <td data-label="Nhân viên tạo">{row.createdBy || '—'}</td>
                     </tr>
                     {open && (
                       <tr className="ah-stock-check-detail-row">
@@ -413,7 +415,7 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                               {row.lines?.length ? (
                                 <div className="admin-hub-table-wrap ah-stock-check-subtable-wrap">
                                   <table
-                                    className="admin-hub-table ah-stock-check-subtable ah-stock-check-subtable--stock"
+                                    className="admin-hub-table ah-stock-check-subtable ah-stock-check-subtable--stock ah-hub-voucher-line-table"
                                   >
                                     <colgroup>
                                       <col className="ah-stock-col-stt" />
@@ -441,12 +443,17 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                                     </thead>
                                     <tbody>
                                       {row.lines.map((ln, i) => (
-                                        <tr key={`${row.code}-${ln.variantId}-${i}`}>
-                                          <td>{i + 1}</td>
-                                          <td>
+                                        <tr
+                                          key={`${row.code}-${ln.variantId}-${i}`}
+                                          className="ah-hub-voucher-line-card"
+                                        >
+                                          <td data-label="STT" className="ah-voucher-line-hide-mobile">
+                                            {i + 1}
+                                          </td>
+                                          <td className="ah-voucher-line-hide-mobile">
                                             <span className="ah-stock-check-ph-img" aria-hidden />
                                           </td>
-                                          <td>
+                                          <td data-label="Tên sản phẩm">
                                             <div className="ah-stock-check-name-cell">
                                               <a
                                                 href={
@@ -471,12 +478,18 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                                               <div className="ah-stock-check-code-sub">{ln.productCode || '—'}</div>
                                             </div>
                                           </td>
-                                          <td>{ln.unitLabel || '—'}</td>
-                                          <td className="ah-num">{qtyLabel(ln.branchQty)}</td>
-                                          <td className="ah-num">{qtyLabel(ln.actualQty)}</td>
-                                          <td className="ah-num">{qtyLabel(ln.deltaQty)}</td>
-                                          <td>{ln.reason || '—'}</td>
-                                          <td>{ln.note || ''}</td>
+                                          <td data-label="Đơn vị">{ln.unitLabel || '—'}</td>
+                                          <td data-label="Tồn chi nhánh" className="ah-num">
+                                            {qtyLabel(ln.branchQty)}
+                                          </td>
+                                          <td data-label="Tồn thực tế" className="ah-num">
+                                            {qtyLabel(ln.actualQty)}
+                                          </td>
+                                          <td data-label="Số lượng lệch" className="ah-num">
+                                            {qtyLabel(ln.deltaQty)}
+                                          </td>
+                                          <td data-label="Lý do">{ln.reason || '—'}</td>
+                                          <td data-label="Ghi chú">{ln.note || ''}</td>
                                         </tr>
                                       ))}
                                     </tbody>

@@ -342,7 +342,7 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
       </p>
 
       <div className="admin-hub-table-wrap ah-stock-check-table-wrap">
-        <table className="admin-hub-table ah-stock-check-table">
+        <table className="admin-hub-table ah-stock-check-table ah-hub-voucher-table">
           <thead>
             <tr>
               <th>Mã phiếu điều chỉnh</th>
@@ -365,8 +365,10 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                 const done = row.status === 'hoan_thanh'
                 return (
                   <Fragment key={row.code}>
-                    <tr className={open ? 'ah-stock-check-row--open' : ''}>
-                      <td>
+                    <tr
+                      className={`ah-hub-voucher-summary-row${open ? ' ah-stock-check-row--open' : ''}`}
+                    >
+                      <td data-label="Mã phiếu điều chỉnh">
                         <button
                           type="button"
                           className="ah-stock-check-code-btn"
@@ -376,16 +378,16 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                           {row.code}
                         </button>
                       </td>
-                      <td>
+                      <td data-label="Trạng thái">
                         {done ? (
                           <span className="ah-stock-check-badge ah-stock-check-badge--ok">Hoàn thành</span>
                         ) : (
                           <span className="ah-stock-check-badge ah-stock-check-badge--cancel">Đã hủy</span>
                         )}
                       </td>
-                      <td>{formatDateTimeVi(row.createdAtMs)}</td>
-                      <td>{formatDateTimeVi(row.adjustedAtMs)}</td>
-                      <td>{row.createdBy || '—'}</td>
+                      <td data-label="Ngày tạo">{formatDateTimeVi(row.createdAtMs)}</td>
+                      <td data-label="Ngày điều chỉnh">{formatDateTimeVi(row.adjustedAtMs)}</td>
+                      <td data-label="Nhân viên tạo">{row.createdBy || '—'}</td>
                     </tr>
                     {open && (
                       <tr className="ah-stock-check-detail-row">
@@ -429,7 +431,7 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                               {row.lines?.length ? (
                                 <div className="admin-hub-table-wrap ah-stock-check-subtable-wrap">
                                   <table
-                                    className="admin-hub-table ah-stock-check-subtable ah-stock-check-subtable--cost"
+                                    className="admin-hub-table ah-stock-check-subtable ah-stock-check-subtable--cost ah-hub-voucher-line-table"
                                   >
                                     <colgroup>
                                       <col className="ah-cost-col-code" />
@@ -451,9 +453,12 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                                     </thead>
                                     <tbody>
                                       {row.lines.map((ln, i) => (
-                                        <tr key={`${row.code}-${ln.variantId}-${i}`}>
-                                          <td>{ln.productCode || '—'}</td>
-                                          <td>
+                                        <tr
+                                          key={`${row.code}-${ln.variantId}-${i}`}
+                                          className="ah-hub-voucher-line-card"
+                                        >
+                                          <td data-label="Mã SP">{ln.productCode || '—'}</td>
+                                          <td data-label="Tên SP">
                                             <div className="ah-stock-check-name-cell">
                                               <a
                                                 href={
@@ -477,10 +482,16 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                                               </a>
                                             </div>
                                           </td>
-                                          <td>{ln.unitLabel || '—'}</td>
-                                          <td className="ah-num">{moneyVi(ln.oldCost)}</td>
-                                          <td className="ah-num">{moneyVi(ln.newCost)}</td>
-                                          <td className="ah-num">{diffVi(ln.oldCost, ln.newCost)}</td>
+                                          <td data-label="ĐVT">{ln.unitLabel || '—'}</td>
+                                          <td data-label="Giá vốn cũ" className="ah-num">
+                                            {moneyVi(ln.oldCost)}
+                                          </td>
+                                          <td data-label="Giá vốn mới" className="ah-num">
+                                            {moneyVi(ln.newCost)}
+                                          </td>
+                                          <td data-label="Chênh lệch" className="ah-num">
+                                            {diffVi(ln.oldCost, ln.newCost)}
+                                          </td>
                                         </tr>
                                       ))}
                                     </tbody>

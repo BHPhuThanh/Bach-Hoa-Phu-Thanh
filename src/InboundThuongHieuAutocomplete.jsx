@@ -73,6 +73,7 @@ export default function InboundThuongHieuAutocomplete({
   const inputRef = useRef(null)
   const listRef = useListRef()
   const [open, setOpen] = useState(false)
+  const [dropUp, setDropUp] = useState(false)
   const [listW, setListW] = useState(280)
 
   const all = useMemo(() => (Array.isArray(options) ? options : []).filter(Boolean), [options])
@@ -130,6 +131,23 @@ export default function InboundThuongHieuAutocomplete({
   const showNoCatalogHint = all.length === 0
   const showDropdownPanel = open && (showAddRow || showList || showEmptyHint || showNoCatalogHint)
 
+  useLayoutEffect(() => {
+    if (!open || !showDropdownPanel) {
+      setDropUp(false)
+      return
+    }
+    const el = wrapRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const panelH = Math.min(
+      listCap + (showAddRow ? 44 : 0) + (showEmptyHint || showNoCatalogHint ? 56 : 0),
+      320
+    )
+    const spaceBelow = window.innerHeight - rect.bottom - 12
+    const spaceAbove = rect.top - 12
+    setDropUp(spaceBelow < panelH && spaceAbove > spaceBelow)
+  }, [open, showDropdownPanel, listCap, showAddRow, showEmptyHint, showNoCatalogHint])
+
   const fireAddSupplier = useCallback(() => {
     setOpen(false)
     onRequestAddSupplier?.()
@@ -164,7 +182,7 @@ export default function InboundThuongHieuAutocomplete({
           id={`${id}-listbox`}
           role="listbox"
           aria-label="Gợi ý"
-          className={`ah-inbound-ncc-combo-dropdown${showList ? ' is-open' : ''}`}
+          className={`ah-inbound-ncc-combo-dropdown${showList ? ' is-open' : ''}${dropUp ? ' is-drop-up' : ''}`}
         >
           {showAddRow ? (
             <div className="ah-inbound-ncc-combo-add-supplier">
