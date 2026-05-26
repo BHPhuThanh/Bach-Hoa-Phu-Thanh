@@ -56,6 +56,7 @@ import { GOODS_DATE_PRESET_OPTIONS, resolveGoodsCreatedAtRangeMs } from './admin
 import EntityPersonModal from './EntityPersonModal.jsx'
 import SupplierManager from './SupplierManager.jsx'
 import { SimpleVirtualList } from './SimpleVirtualList.jsx'
+import { useViewportMaxWidth } from './useViewportMaxWidth.js'
 import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
@@ -1143,6 +1144,7 @@ export default function AdminHub({
   const [returnLedgerRemoteLoading, setReturnLedgerRemoteLoading] = useState(false)
 
   const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
+  const isHubMobileLayout = useViewportMaxWidth(768)
   const navigate = useNavigate()
   const location = useLocation()
   const syncHubUrlToMainTab = useCallback(
@@ -5778,17 +5780,43 @@ export default function AdminHub({
     )
   }, [customers, custDebounced])
 
-  const renderCustomerVirtualRow = useCallback((c) => {
-    return (
-      <div className="ah-cust-virt-row">
-        <div className="ah-cust-virt-cell ah-cust-virt-name">{c.name}</div>
-        <div className="ah-cust-virt-cell ah-cust-virt-phone">{c.phone || '—'}</div>
-        <div className="ah-cust-virt-cell ah-cust-virt-addr ah-cust-virt-muted">{c.address || '—'}</div>
-        <div className="ah-cust-virt-cell ah-cust-virt-cccd">{c.cccd || '—'}</div>
-        <div className="ah-cust-virt-cell ah-cust-virt-mail ah-cust-virt-muted">{c.mail || '—'}</div>
-      </div>
-    )
-  }, [])
+  const renderCustomerVirtualRow = useCallback(
+    (c) => {
+      if (isHubMobileLayout) {
+        return (
+          <div className="ah-hub-entity-mobile-card ah-cust-mobile-card">
+            <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+            <div className="ah-cust-mobile-card-row">
+              <span className="ah-cust-mobile-lbl">Số điện thoại</span>
+              <span>{c.phone || '—'}</span>
+            </div>
+            <div className="ah-cust-mobile-card-row">
+              <span className="ah-cust-mobile-lbl">Địa chỉ</span>
+              <span>{c.address || '—'}</span>
+            </div>
+            <div className="ah-cust-mobile-card-row">
+              <span className="ah-cust-mobile-lbl">CCCD</span>
+              <span>{c.cccd || '—'}</span>
+            </div>
+            <div className="ah-cust-mobile-card-row">
+              <span className="ah-cust-mobile-lbl">Mail</span>
+              <span>{c.mail || '—'}</span>
+            </div>
+          </div>
+        )
+      }
+      return (
+        <div className="ah-cust-virt-row">
+          <div className="ah-cust-virt-cell ah-cust-virt-name">{c.name}</div>
+          <div className="ah-cust-virt-cell ah-cust-virt-phone">{c.phone || '—'}</div>
+          <div className="ah-cust-virt-cell ah-cust-virt-addr ah-cust-virt-muted">{c.address || '—'}</div>
+          <div className="ah-cust-virt-cell ah-cust-virt-cccd">{c.cccd || '—'}</div>
+          <div className="ah-cust-virt-cell ah-cust-virt-mail ah-cust-virt-muted">{c.mail || '—'}</div>
+        </div>
+      )
+    },
+    [isHubMobileLayout]
+  )
 
   const [staffQ, setStaffQ] = useState('')
   const staffDebounced = useDebounced(staffQ)
@@ -6804,8 +6832,8 @@ export default function AdminHub({
               </div>
             )}
 
-            <div className="admin-hub-table-wrap ah-inbound-table-wrap">
-              <table className="admin-hub-table ah-inbound-table">
+            <div className="admin-hub-table-wrap ah-inbound-table-wrap ah-responsive-table-wrap">
+              <table className="admin-hub-table ah-inbound-table ah-responsive-table">
                 <thead>
                   <tr>
                     <th className="ah-inbound-col-check">
@@ -6826,7 +6854,7 @@ export default function AdminHub({
                 </thead>
                 <tbody>
                   {inboundRowsFiltered.length === 0 ? (
-                    <tr>
+                    <tr className="ah-responsive-table-empty">
                       <td colSpan={6} className="admin-hub-muted">
                         {inboundOrders.length === 0
                           ? 'Chưa có phiếu nhập.'
@@ -6835,8 +6863,12 @@ export default function AdminHub({
                     </tr>
                   ) : (
                     inboundRowsFiltered.map((r) => (
-                      <tr key={r.id}>
-                        <td className="ah-inbound-col-check" onClick={(e) => e.stopPropagation()}>
+                      <tr key={r.id} className="ah-responsive-table-card-row">
+                        <td
+                          className="ah-inbound-col-check"
+                          data-label=""
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
                             checked={!!inboundSelected[r.id]}
@@ -6844,7 +6876,7 @@ export default function AdminHub({
                             aria-label={`Chọn đơn ${r.code}`}
                           />
                         </td>
-                        <td className="ah-inbound-code">
+                        <td className="ah-inbound-code" data-label="Mã đơn nhập">
                           <button
                             type="button"
                             className="ah-inbound-code-link"
@@ -6853,14 +6885,14 @@ export default function AdminHub({
                             {r.code || '—'}
                           </button>
                         </td>
-                        <td className="ah-inbound-time">
+                        <td className="ah-inbound-time" data-label="Ngày nhập">
                           {new Date(r.createdAtMs).toLocaleString('vi-VN')}
                         </td>
-                        <td>{r.supplier || '—'}</td>
-                        <td className="ah-num ah-inbound-value">
+                        <td data-label="Nhà cung cấp">{r.supplier || '—'}</td>
+                        <td className="ah-num ah-inbound-value" data-label="Giá trị đơn">
                           {r.totalValue.toLocaleString('vi-VN')} đ
                         </td>
-                        <td>
+                        <td data-label="Trạng thái nhập">
                           <span
                             className={`ah-inbound-status ah-inbound-status--${r.status}`}
                             title={inboundStatusLabel(r.status)}
@@ -7185,7 +7217,7 @@ export default function AdminHub({
             </div>
             <div className="admin-hub-table-wrap ah-cust-table-wrap">
               {customersRemoteLoading && isSupabaseConfigured() ? (
-                <table className="admin-hub-table">
+                <table className="admin-hub-table ah-cust-status-table">
                   <tbody>
                     <tr>
                       <td colSpan={5} className="admin-hub-muted">
@@ -7195,7 +7227,7 @@ export default function AdminHub({
                   </tbody>
                 </table>
               ) : custFiltered.length === 0 ? (
-                <table className="admin-hub-table">
+                <table className="admin-hub-table ah-cust-status-table">
                   <tbody>
                     <tr>
                       <td colSpan={5} className="admin-hub-muted">
@@ -7206,22 +7238,48 @@ export default function AdminHub({
                     </tr>
                   </tbody>
                 </table>
+              ) : isHubMobileLayout ? (
+                <div className="ah-hub-entity-mobile-list">
+                  {custFiltered.map((c, i) => (
+                    <div key={`${c.name}-${c.phone}-${i}`} className="ah-hub-entity-mobile-card ah-cust-mobile-card">
+                      <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+                      <div className="ah-cust-mobile-card-row">
+                        <span className="ah-cust-mobile-lbl">Số điện thoại</span>
+                        <span>{c.phone || '—'}</span>
+                      </div>
+                      <div className="ah-cust-mobile-card-row">
+                        <span className="ah-cust-mobile-lbl">Địa chỉ</span>
+                        <span>{c.address || '—'}</span>
+                      </div>
+                      <div className="ah-cust-mobile-card-row">
+                        <span className="ah-cust-mobile-lbl">CCCD</span>
+                        <span>{c.cccd || '—'}</span>
+                      </div>
+                      <div className="ah-cust-mobile-card-row">
+                        <span className="ah-cust-mobile-lbl">Mail</span>
+                        <span>{c.mail || '—'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : custFiltered.length > 120 ? (
                 <div className="ah-cust-virt-host">
-                  <div className="ah-cust-virt-header" aria-hidden>
-                    <span>Họ tên</span>
-                    <span>Số điện thoại</span>
-                    <span>Địa chỉ</span>
-                    <span>Số CCCD</span>
-                    <span>Mail</span>
-                  </div>
+                  {!isHubMobileLayout ? (
+                    <div className="ah-cust-virt-header" aria-hidden>
+                      <span>Họ tên</span>
+                      <span>Số điện thoại</span>
+                      <span>Địa chỉ</span>
+                      <span>Số CCCD</span>
+                      <span>Mail</span>
+                    </div>
+                  ) : null}
                   <AutoSizer>
                     {({ height, width }) => (
                       <SimpleVirtualList
                         height={height}
                         width={width}
                         rows={custFiltered}
-                        rowHeight={52}
+                        rowHeight={isHubMobileLayout ? 148 : 52}
                         renderRow={renderCustomerVirtualRow}
                         overscanCount={12}
                       />
@@ -7229,7 +7287,7 @@ export default function AdminHub({
                   </AutoSizer>
                 </div>
               ) : (
-                <table className="admin-hub-table">
+                <table className="admin-hub-table ah-responsive-table ah-cust-data-table">
                   <thead>
                     <tr>
                       <th>Họ tên</th>
@@ -7241,12 +7299,12 @@ export default function AdminHub({
                   </thead>
                   <tbody>
                     {custFiltered.map((c, i) => (
-                      <tr key={`${c.name}-${c.phone}-${i}`}>
-                        <td>{c.name}</td>
-                        <td>{c.phone || '—'}</td>
-                        <td>{c.address || '—'}</td>
-                        <td>{c.cccd || '—'}</td>
-                        <td>{c.mail || '—'}</td>
+                      <tr key={`${c.name}-${c.phone}-${i}`} className="ah-responsive-table-card-row">
+                        <td data-label="Họ tên">{c.name}</td>
+                        <td data-label="Số điện thoại">{c.phone || '—'}</td>
+                        <td data-label="Địa chỉ">{c.address || '—'}</td>
+                        <td data-label="Số CCCD">{c.cccd || '—'}</td>
+                        <td data-label="Mail">{c.mail || '—'}</td>
                       </tr>
                     ))}
                   </tbody>

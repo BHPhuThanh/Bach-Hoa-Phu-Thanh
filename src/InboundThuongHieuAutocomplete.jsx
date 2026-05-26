@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { List, useListRef } from 'react-window'
 
 /**
@@ -21,6 +22,7 @@ export function collectUniqueThuongHieuFromCatalog(catalogList) {
 
 const ROW_H = 36
 const MAX_VISIBLE = 50
+const DROPDOWN_Z_INDEX = 100000
 /** Chiều cao tối đa vùng cuộn danh sách gợi ý (px) — modal Tạo HH / chi tiết dùng ~220–240. */
 const DEFAULT_LIST_MAX_H = 228
 
@@ -56,7 +58,7 @@ function useDebouncedFilterQuery(raw, debounceMs) {
 
 /**
  * Ô Nhà cung cấp / thương hiệu phiếu nhập: nhập + lọc + tối đa 50 gợi ý (virtual list).
- * @param {{ value: string, onValueChange: (s: string) => void, options: string[], placeholder?: string, id?: string, filterDebounceMs?: number, listMaxHeight?: number, showAddSupplierEntry?: boolean, onRequestAddSupplier?: () => void }} props
+ * Dropdown render qua Portal → không bị cắt bởi overflow của Modal.
  */
 export default function InboundThuongHieuAutocomplete({
   value,
@@ -73,8 +75,7 @@ export default function InboundThuongHieuAutocomplete({
   const inputRef = useRef(null)
   const listRef = useListRef()
   const [open, setOpen] = useState(false)
-  const [dropUp, setDropUp] = useState(false)
-  const [listW, setListW] = useState(280)
+  const [anchorRect, setAnchorRect] = useState(null)
 
   const all = useMemo(() => (Array.isArray(options) ? options : []).filter(Boolean), [options])
   const filterQ = useDebouncedFilterQuery(value, filterDebounceMs)
@@ -96,18 +97,25 @@ export default function InboundThuongHieuAutocomplete({
   const listHeight = Math.min(filtered.length * ROW_H, listCap)
   const showAddRow = Boolean(showAddSupplierEntry && typeof onRequestAddSupplier === 'function')
 
+  const measureAnchor = useCallback(() => {
+    const el = inputRef.current || wrapRef.current
+    if (!el) {
+      setAnchorRect(null)
+      return
+    }
+    setAnchorRect(el.getBoundingClientRect())
+  }, [])
+
   useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth
-      if (w > 40) setListW(w)
+      if (w > 40 && open) measureAnchor()
     })
     ro.observe(el)
-    const w0 = el.clientWidth
-    if (w0 > 40) setListW(w0)
     return () => ro.disconnect()
-  }, [])
+  }, [open, measureAnchor])
 
   const onPick = useCallback(
     (label) => {
@@ -132,26 +140,119 @@ export default function InboundThuongHieuAutocomplete({
   const showDropdownPanel = open && (showAddRow || showList || showEmptyHint || showNoCatalogHint)
 
   useLayoutEffect(() => {
-    if (!open || !showDropdownPanel) {
-      setDropUp(false)
-      return
+    if (!showDropdownPanel) {
+      setAnchorRect(null)
+      return undefined
     }
-    const el = wrapRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const panelH = Math.min(
-      listCap + (showAddRow ? 44 : 0) + (showEmptyHint || showNoCatalogHint ? 56 : 0),
-      320
+    measureAnchor()
+    const onScrollOrResize = () => measureAnchor()
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
+    }
+  }, [showDropdownPanel, measureAnchor])
+
+  const dropdownLayout = useMemo(() => {
+    if (!anchorRect) return null
+    const extraH =
+      (showAddRow ? 44 : 0) + (showEmptyHint || showNoCatalogHint ? 56 : 0)
+    const panelH = Math.min(listHeight + extraH, 320)
+    const spaceBelow = window.innerHeight - anchorRect.bottom - 8
+    const spaceAbove = anchorRect.top - 8
+    const dropUp = spaceBelow < panelH && spaceAbove > spaceBelow
+    const width = Math.max(anchorRect.width, 160)
+    const left = Math.min(
+      Math.max(8, anchorRect.left),
+      Math.max(8, window.innerWidth - width - 8)
     )
-    const spaceBelow = window.innerHeight - rect.bottom - 12
-    const spaceAbove = rect.top - 12
-    setDropUp(spaceBelow < panelH && spaceAbove > spaceBelow)
-  }, [open, showDropdownPanel, listCap, showAddRow, showEmptyHint, showNoCatalogHint])
+    if (dropUp) {
+      return {
+        left,
+        width,
+        bottom: window.innerHeight - anchorRect.top + 4,
+        maxHeight: Math.min(panelH, anchorRect.top - 12),
+        dropUp: true,
+      }
+    }
+    return {
+      left,
+      width,
+      top: anchorRect.bottom + 4,
+      maxHeight: Math.min(panelH, spaceBelow),
+      dropUp: false,
+    }
+  }, [
+    anchorRect,
+    listHeight,
+    showAddRow,
+    showEmptyHint,
+    showNoCatalogHint,
+  ])
 
   const fireAddSupplier = useCallback(() => {
     setOpen(false)
     onRequestAddSupplier?.()
   }, [onRequestAddSupplier])
+
+  const dropdownPanel =
+    showDropdownPanel && dropdownLayout && typeof document !== 'undefined' ? (
+      <div
+        id={`${id}-listbox`}
+        role="listbox"
+        aria-label="Gợi ý"
+        className={`ah-inbound-ncc-combo-dropdown ah-inbound-ncc-combo-dropdown--portal${showList ? ' is-open' : ''}${dropdownLayout.dropUp ? ' is-drop-up' : ''}`}
+        style={{
+          position: 'fixed',
+          zIndex: DROPDOWN_Z_INDEX,
+          left: dropdownLayout.left,
+          width: dropdownLayout.width,
+          maxHeight: dropdownLayout.maxHeight,
+          ...(dropdownLayout.dropUp
+            ? { bottom: dropdownLayout.bottom, top: 'auto' }
+            : { top: dropdownLayout.top, bottom: 'auto' }),
+        }}
+      >
+        {showAddRow ? (
+          <div className="ah-inbound-ncc-combo-add-supplier">
+            <button
+              type="button"
+              className="ah-inbound-ncc-combo-add-supplier-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => fireAddSupplier()}
+            >
+              <span className="ah-inbound-ncc-combo-add-supplier-plus" aria-hidden>
+                +
+              </span>
+              Thêm NCC
+            </button>
+          </div>
+        ) : null}
+        {showNoCatalogHint ? (
+          <div className="ah-inbound-ncc-combo-hint">
+            Chưa có thương hiệu trong danh mục — nhập tay hoặc tải CSV có cột <strong>thuong_hieu</strong>.
+          </div>
+        ) : showEmptyHint ? (
+          <div className="ah-inbound-ncc-combo-hint">Không khớp danh sách — giữ nội dung đã gõ (nhà cung cấp tùy chọn).</div>
+        ) : showList ? (
+          <div className="ah-inbound-ncc-combo-list-inner" style={{ height: listHeight }}>
+            <List
+              listRef={listRef}
+              rowCount={filtered.length}
+              rowHeight={ROW_H}
+              rowProps={rowProps}
+              rowComponent={NccSuggestRow}
+              overscanCount={8}
+              style={{
+                height: listHeight,
+                width: dropdownLayout.width,
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+    ) : null
 
   return (
     <div className="ah-inbound-ncc-combo-wrap" ref={wrapRef}>
@@ -177,52 +278,7 @@ export default function InboundThuongHieuAutocomplete({
           if (e.key === 'Escape') setOpen(false)
         }}
       />
-      {showDropdownPanel && (
-        <div
-          id={`${id}-listbox`}
-          role="listbox"
-          aria-label="Gợi ý"
-          className={`ah-inbound-ncc-combo-dropdown${showList ? ' is-open' : ''}${dropUp ? ' is-drop-up' : ''}`}
-        >
-          {showAddRow ? (
-            <div className="ah-inbound-ncc-combo-add-supplier">
-              <button
-                type="button"
-                className="ah-inbound-ncc-combo-add-supplier-btn"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => fireAddSupplier()}
-              >
-                <span className="ah-inbound-ncc-combo-add-supplier-plus" aria-hidden>
-                  +
-                </span>
-                Thêm NCC
-              </button>
-            </div>
-          ) : null}
-          {showNoCatalogHint ? (
-            <div className="ah-inbound-ncc-combo-hint">
-              Chưa có thương hiệu trong danh mục — nhập tay hoặc tải CSV có cột <strong>thuong_hieu</strong>.
-            </div>
-          ) : showEmptyHint ? (
-            <div className="ah-inbound-ncc-combo-hint">Không khớp danh sách — giữ nội dung đã gõ (nhà cung cấp tùy chọn).</div>
-          ) : showList ? (
-            <div className="ah-inbound-ncc-combo-list-inner" style={{ height: listHeight }}>
-              <List
-                listRef={listRef}
-                rowCount={filtered.length}
-                rowHeight={ROW_H}
-                rowProps={rowProps}
-                rowComponent={NccSuggestRow}
-                overscanCount={8}
-                style={{
-                  height: listHeight,
-                  width: listW,
-                }}
-              />
-            </div>
-          ) : null}
-        </div>
-      )}
+      {dropdownPanel ? createPortal(dropdownPanel, document.body) : null}
     </div>
   )
 }

@@ -8612,7 +8612,7 @@ li.ah-inbound-suggest-empty {
 }
 
 /* —— Responsive: Đơn hàng / Doanh thu — card trên mobile —— */
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .ah-responsive-table-wrap {
     overflow-x: visible;
     border: none;
@@ -9133,16 +9133,9 @@ li.ah-inbound-suggest-empty {
   padding-bottom: 0;
 }
 
-.ah-inbound-quick-edit-body .ah-goods-card-body--below-tabs,
-.ah-goods-detail-card--v2-modal .ah-goods-card-body--below-tabs,
-.ah-goods-detail-card--v2-modal .ah-goods-card-stock-wrap {
-  padding-bottom: 8rem;
-}
-
-.ah-inbound-quick-edit-body .ah-goods-detail-brand-wrap,
-.ah-goods-detail-card--v2-modal .ah-goods-detail-brand-wrap {
-  overflow: visible;
-  z-index: 4;
+.ah-inbound-ncc-combo-dropdown--portal {
+  right: auto;
+  margin: 0;
 }
 
 .ah-inbound-line-qty-price-mobile {
@@ -9421,6 +9414,39 @@ li.ah-inbound-suggest-empty {
   }
 
   .ah-supplier-table-wrap .admin-hub-table.ah-supplier-data-table {
+    display: none;
+  }
+
+  .ah-cust-table-wrap .admin-hub-table.ah-cust-data-table {
+    display: none;
+  }
+
+  .ah-cust-mobile-card-title {
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #f1f5f9;
+    margin-bottom: 0.35rem;
+  }
+
+  .ah-cust-mobile-card-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.65rem;
+    font-size: 0.82rem;
+    padding: 0.2rem 0;
+  }
+
+  .ah-cust-mobile-lbl {
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #94a3b8;
+  }
+
+  /* Chi tiết khách / lịch sử đơn — card khi có bảng con */
+  .ah-cust-detail-wrap.ah-responsive-table-wrap .ah-responsive-table thead {
     display: none;
   }
 }

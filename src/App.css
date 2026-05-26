@@ -2106,45 +2106,8 @@
   overflow: hidden;
 }
 
-/*
- * Thiết bị cảm ứng: luôn layout POS dọc (mobile) — không ép grid ngang khi nghiêng máy / landscape.
- * Xoay màn hình do hệ điều hành, không ép bằng JS/CSS transform.
- */
-@media (hover: none), (pointer: coarse) {
-  .pos-main.pos-main--dock {
-    display: flex !important;
-    flex-direction: column !important;
-    grid-template-columns: unset !important;
-    grid-template-rows: unset !important;
-  }
-
-  .pos-main.pos-main--dock > .pos-main-body {
-    grid-column: unset !important;
-    grid-row: unset !important;
-    flex: 1 1 auto;
-    min-height: 0;
-    width: 100%;
-  }
-
-  .pos-main.pos-main--dock > .pos-right-rail {
-    grid-column: unset !important;
-    grid-row: unset !important;
-    flex: 0 0 auto;
-    width: 100%;
-    height: auto;
-    min-height: 0;
-  }
-
-  .pos-main.pos-main--dock > .pos-main-checkout-footer {
-    grid-column: unset !important;
-    grid-row: unset !important;
-    width: 100%;
-    max-width: 100%;
-  }
-}
-
-/* Màn rộng + chuột (PC): giỏ + dock cột trái — không áp layout desktop khi điện thoại nằm ngang (touch). */
-@media (min-width: 961px) and (hover: hover) and (pointer: fine) {
+/* Màn rộng + chuột (PC): giỏ + dock cột trái — không áp khi viewport mobile ≤768px. */
+@media (min-width: 769px) and (hover: hover) and (pointer: fine) {
   .pos-main.pos-main--dock {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
@@ -2184,7 +2147,7 @@
 }
 
 /* Rail là con trực tiếp của main: không cho flex-grow dọc trên màn hẹp (tránh kéo giãn sidebar giữa các khối) */
-@media (max-width: 960px) {
+@media (max-width: 768px) {
   .pos-main.pos-main--dock > .pos-right-rail {
     flex: 0 0 auto;
     width: 100%;
@@ -5018,9 +4981,47 @@
   filter: grayscale(0.2);
 }
 
-@media (max-width: 960px) {
+/*
+ * Mobile ≤768px: luôn layout dọc (flex-col) — bất kể orientation / bàn phím thu nhỏ chiều cao.
+ * Không dùng @media (orientation: landscape); không ép xoay bằng transform.
+ */
+@media (max-width: 768px) {
+  .pos-main.pos-main--dock {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: unset !important;
+    grid-template-rows: unset !important;
+  }
+
+  .pos-main.pos-main--dock > .pos-main-body {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-column: unset !important;
+    grid-row: unset !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+  }
+
+  .pos-main.pos-main--dock > .pos-right-rail {
+    grid-column: unset !important;
+    grid-row: unset !important;
+    flex: 0 0 auto;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto;
+    min-height: 0;
+  }
+
+  .pos-main.pos-main--dock > .pos-main-checkout-footer {
+    grid-column: unset !important;
+    grid-row: unset !important;
+    width: 100%;
+    max-width: 100%;
+  }
+
   .pos-main-body {
-    flex-direction: column;
+    flex-direction: column !important;
   }
 
   .pos-right-rail {
@@ -5039,6 +5040,11 @@
 
   .pos-sidebar--minimal .pos-btn-checkout {
     border-radius: 0;
+  }
+
+  .pos-left {
+    width: 100%;
+    max-width: 100%;
   }
 }
 
