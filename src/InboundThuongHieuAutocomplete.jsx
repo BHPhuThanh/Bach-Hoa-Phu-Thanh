@@ -22,7 +22,21 @@ export function collectUniqueThuongHieuFromCatalog(catalogList) {
 
 const ROW_H = 36
 const MAX_VISIBLE = 50
-const DROPDOWN_Z_INDEX = 100000
+const DROPDOWN_Z_INDEX = 999999
+
+/** Một host cố định trên body — tránh xung đột stacking với modal backdrop. */
+function getNccComboPortalRoot() {
+  if (typeof document === 'undefined') return null
+  const id = 'ah-ncc-combo-portal-root'
+  let el = document.getElementById(id)
+  if (!el) {
+    el = document.createElement('div')
+    el.id = id
+    el.setAttribute('data-ncc-combo-portal-host', 'true')
+    document.body.appendChild(el)
+  }
+  return el
+}
 /** Chiều cao tối đa vùng cuộn danh sách gợi ý (px) — modal Tạo HH / chi tiết dùng ~220–240. */
 const DEFAULT_LIST_MAX_H = 228
 
@@ -196,8 +210,10 @@ export default function InboundThuongHieuAutocomplete({
     onRequestAddSupplier?.()
   }, [onRequestAddSupplier])
 
+  const portalRoot = getNccComboPortalRoot()
+
   const dropdownPanel =
-    showDropdownPanel && dropdownLayout && typeof document !== 'undefined' ? (
+    showDropdownPanel && dropdownLayout && portalRoot ? (
       <div
         id={`${id}-listbox`}
         role="listbox"
@@ -213,6 +229,8 @@ export default function InboundThuongHieuAutocomplete({
             ? { bottom: dropdownLayout.bottom, top: 'auto' }
             : { top: dropdownLayout.top, bottom: 'auto' }),
         }}
+        onMouseDown={(e) => e.preventDefault()}
+        onPointerDown={(e) => e.preventDefault()}
       >
         {showAddRow ? (
           <div className="ah-inbound-ncc-combo-add-supplier">
@@ -278,7 +296,7 @@ export default function InboundThuongHieuAutocomplete({
           if (e.key === 'Escape') setOpen(false)
         }}
       />
-      {dropdownPanel ? createPortal(dropdownPanel, document.body) : null}
+      {dropdownPanel ? createPortal(dropdownPanel, portalRoot) : null}
     </div>
   )
 }

@@ -9133,9 +9133,28 @@ li.ah-inbound-suggest-empty {
   padding-bottom: 0;
 }
 
+/* Portal: menu render ra body — phải cao hơn modal backdrop (100080+) */
 .ah-inbound-ncc-combo-dropdown--portal {
-  right: auto;
+  position: fixed !important;
+  top: auto;
+  left: auto;
+  right: auto !important;
+  z-index: 999999 !important;
   margin: 0;
+  pointer-events: auto;
+  isolation: isolate;
+}
+
+#ah-ncc-combo-portal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  pointer-events: none;
+  overflow: visible;
+}
+
+#ah-ncc-combo-portal-root > * {
+  pointer-events: auto;
 }
 
 .ah-inbound-line-qty-price-mobile {
