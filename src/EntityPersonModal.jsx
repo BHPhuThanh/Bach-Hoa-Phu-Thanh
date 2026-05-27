@@ -45,7 +45,7 @@ export default function EntityPersonModal({
 
   return (
     <div
-      className="ah-inbound-sup-backdrop"
+      className="ah-inbound-sup-backdrop ah-entity-person-modal-backdrop"
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSaving) onClose?.()

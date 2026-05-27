@@ -4738,10 +4738,11 @@ a.ah-inbound-line-code-link:hover {
   filter: brightness(1.06);
 }
 
+/* Thêm NCC/KH/NV — phải trên modal Sản phẩm (100080) và ĐVT (100090) */
 .ah-inbound-sup-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 91000;
+  z-index: 100100;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
