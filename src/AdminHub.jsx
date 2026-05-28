@@ -31,7 +31,7 @@ import {
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
-import { clearAllOrders, getAllOrders, saveOrder } from './ordersDb.js'
+import { clearAllOrders, deleteOrderById, getAllOrders, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
 import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
 import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
@@ -107,6 +107,7 @@ import {
 } from './reportUtils.js'
 import { clearPosReturnDayLedger } from './posReturnDayLedger.js'
 import {
+  deletePosReturnLedgerByOrderId,
   fetchPosReturnLedgerEntries,
   insertPosReturnLedgerEntry,
   migrateLocalPosReturnLedgerToSupabaseOnce,
@@ -1317,6 +1318,7 @@ export default function AdminHub({
   const [ovFrom, setOvFrom] = useState(todayYmd)
   const [ovTo, setOvTo] = useState(todayYmd)
   const [selected, setSelected] = useState(null)
+  const [deletingOrderId, setDeletingOrderId] = useState('')
 
   const ovFiltered = useMemo(
     () => filterOrdersForReport(orders, ovRange, ovFrom, ovTo),
@@ -1396,6 +1398,81 @@ export default function AdminHub({
     })
     printReceiptHtml(html)
   }
+
+  const handleDeleteOrder = useCallback(
+    async (orderRaw) => {
+      if (revenueReadOnly) {
+        alert('Chỉ Admin mới xóa được đơn hàng.')
+        return
+      }
+      const base = normalizePosOrder(orderRaw, catalogList, { preferStoredLineFinancials: true })
+      const orderId = String(base?.id || '').trim()
+      if (!orderId) {
+        alert('Không xác định được mã đơn để xóa.')
+        return
+      }
+      if (
+        !window.confirm(
+          'Sếp có chắc chắn muốn xóa vĩnh viễn đơn hàng này không? Hành động này sẽ hoàn tác cả tồn kho.'
+        )
+      ) {
+        return
+      }
+      if (String(deletingOrderId || '').trim() === orderId) return
+
+      setDeletingOrderId(orderId)
+      try {
+        const deltas = new Map()
+        for (const it of base.items || []) {
+          const variantId = String(resolvePosItemVariantId(it) || '').trim()
+          if (!variantId) continue
+          const qty = Math.max(0, Number(it?.qty) || 0)
+          const returned = Math.max(0, Number(it?.returnedQty) || 0)
+          const rollbackQty = Math.max(0, qty - returned)
+          if (rollbackQty <= 0) continue
+          deltas.set(variantId, (deltas.get(variantId) || 0) + rollbackQty)
+        }
+        if (deltas.size > 0) {
+          const stockRes = await applyInboundStockDeltas(deltas, {
+            documentCode: `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`,
+            inboundOrderId: orderId,
+          })
+          if (stockRes?.ok === false) {
+            throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
+          }
+        }
+
+        const rmLedger = await deletePosReturnLedgerByOrderId(orderId)
+        if (!rmLedger.ok) {
+          throw new Error(
+            formatPostgrestErrorForUser(rmLedger.error) || 'Không thể xóa lịch sử hoàn trả liên quan.'
+          )
+        }
+
+        await deleteOrderById(orderId)
+        setSelected((cur) => (String(cur?.id || '').trim() === orderId ? null : cur))
+        await Promise.all([refetchOrdersQuiet(), refreshPosReturnLedger()])
+        showHubCameraToast('Xóa đơn hàng thành công.', 'ok')
+      } catch (err) {
+        console.error('[handleDeleteOrder] failed', err)
+        showHubCameraToast(
+          formatPostgrestErrorForUser(err) || 'Không thể xóa đơn hàng. Vui lòng thử lại.',
+          'err'
+        )
+      } finally {
+        setDeletingOrderId('')
+      }
+    },
+    [
+      revenueReadOnly,
+      catalogList,
+      deletingOrderId,
+      applyInboundStockDeltas,
+      refetchOrdersQuiet,
+      refreshPosReturnLedger,
+      showHubCameraToast,
+    ]
+  )
 
   /* —— Hàng hóa —— */
   const [standaloneCatalog, setStandaloneCatalog] = useState(null)
@@ -3469,6 +3546,7 @@ export default function AdminHub({
   const [posDetailEditDrafts, setPosDetailEditDrafts] = useState({})
   const [posReturnModal, setPosReturnModal] = useState(null)
   const [posReturnQtyDraft, setPosReturnQtyDraft] = useState({})
+  const [posReturnSubmitting, setPosReturnSubmitting] = useState(false)
   const [posCancelModal, setPosCancelModal] = useState(null)
   const openPosDetailOrderIdsRef = useRef([])
   useEffect(() => {
@@ -5462,6 +5540,7 @@ export default function AdminHub({
         alert('Không còn hàng để hoàn trả (đã hoàn hết hoặc đơn đã hủy).')
         return
       }
+      setPosReturnSubmitting(false)
       setPosReturnQtyDraft({})
       setPosReturnModal(n)
     },
@@ -5471,89 +5550,100 @@ export default function AdminHub({
   const confirmPosReturnSubmit = useCallback(async () => {
     if (revenueReadOnly) return
     if (!posReturnModal) return
-    const base = normalizePosOrder(posReturnModal, catalogList, { preferStoredLineFinancials: true })
-    let revenueSub = 0
-    let costSub = 0
-    let anyTake = false
-    const deltas = new Map()
-    /** @type {Array<{ code: string, name: string, unitLabel: string, qtyReturned: number, unitRefund: number, lineRefund: number }>} */
-    const returnLines = []
-    const newItems = base.items.map((it) => {
-      const ret = posOrderLineReturnableQty(it)
-      const draft = parseReturnQtyDraft(posReturnQtyDraft[it.orderLineId], ret)
-      if (draft <= 0) return it
-      anyTake = true
-      const price = Math.max(0, Number(it.price) || 0)
-      const cost = Math.max(0, Number(it.cost) || 0)
-      const lineRefund = Math.round(draft * price)
-      revenueSub += lineRefund
-      costSub += Math.round(draft * cost)
-      returnLines.push({
-        code: String(it.code || '').trim(),
-        name: String(it.name || '').trim(),
-        unitLabel: String(it.unitLabel || '').trim() || '—',
-        qtyReturned: draft,
-        unitRefund: Math.round(price),
-        lineRefund,
-        variantId: String(it.variantId || '').trim(),
+    if (posReturnSubmitting) return
+    setPosReturnSubmitting(true)
+    try {
+      const base = normalizePosOrder(posReturnModal, catalogList, { preferStoredLineFinancials: true })
+      let revenueSub = 0
+      let costSub = 0
+      let anyTake = false
+      const deltas = new Map()
+      /** @type {Array<{ code: string, name: string, unitLabel: string, qtyReturned: number, unitRefund: number, lineRefund: number }>} */
+      const returnLines = []
+      const newItems = base.items.map((it) => {
+        const ret = posOrderLineReturnableQty(it)
+        const draft = parseReturnQtyDraft(posReturnQtyDraft[it.orderLineId], ret)
+        if (draft <= 0) return it
+        anyTake = true
+        const price = Math.max(0, Number(it.price) || 0)
+        const cost = Math.max(0, Number(it.cost) || 0)
+        const lineRefund = Math.round(draft * price)
+        revenueSub += lineRefund
+        costSub += Math.round(draft * cost)
+        returnLines.push({
+          code: String(it.code || '').trim(),
+          name: String(it.name || '').trim(),
+          unitLabel: String(it.unitLabel || '').trim() || '—',
+          qtyReturned: draft,
+          unitRefund: Math.round(price),
+          lineRefund,
+          variantId: String(it.variantId || '').trim(),
+        })
+        if (it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + draft)
+        const prevR = Math.max(0, Number(it.returnedQty) || 0)
+        const q = Math.max(0, Number(it.qty) || 0)
+        return { ...it, returnedQty: Math.min(q, prevR + draft) }
       })
-      if (it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + draft)
-      const prevR = Math.max(0, Number(it.returnedQty) || 0)
-      const q = Math.max(0, Number(it.qty) || 0)
-      return { ...it, returnedQty: Math.min(q, prevR + draft) }
-    })
-    if (!anyTake) {
-      alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
-      return
-    }
-    const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
-    const stockRes = await applyInboundStockDeltas(deltas, {
-      documentCode: returnDocCode,
-      inboundOrderId: String(base.id || ''),
-    })
-    if (stockRes && stockRes.ok === false) {
-      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho trên máy chủ.'))
-      return
-    }
-    const nextStatus = computePosOrderStatusFromItems(newItems)
-    const merged = normalizePosOrder(
-      { ...base, items: newItems, status: nextStatus },
-      catalogList,
-      { preferStoredLineFinancials: true }
-    )
-    await persistPosOrderAndReload(merged)
-    const ins = await insertPosReturnLedgerEntry({
-      atMs: Date.now(),
-      orderId: String(base.id || ''),
-      revenueSub,
-      costSub,
-      sourceInvoiceNo: String(base.invoiceNo || '').trim(),
-      lines: returnLines,
-    })
-    if (!ins.ok) {
-      console.error('[confirmPosReturnSubmit] insert pos_return_ledger', ins.error)
-      window.alert(
-        formatPostgrestErrorForUser(ins.error) ||
-          'Đơn và tồn kho đã cập nhật nhưng không ghi được phiếu trả hàng lên Supabase. Kiểm tra migration bảng pos_return_ledger.'
+      if (!anyTake) {
+        alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
+        return
+      }
+      const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
+      const stockRes = await applyInboundStockDeltas(deltas, {
+        documentCode: returnDocCode,
+        inboundOrderId: String(base.id || ''),
+      })
+      if (stockRes && stockRes.ok === false) {
+        throw new Error(String(stockRes.error || 'Không cập nhật được tồn kho trên máy chủ.'))
+      }
+      const nextStatus = computePosOrderStatusFromItems(newItems)
+      const merged = normalizePosOrder(
+        { ...base, items: newItems, status: nextStatus },
+        catalogList,
+        { preferStoredLineFinancials: true }
       )
+      await persistPosOrderAndReload(merged)
+      const ins = await insertPosReturnLedgerEntry({
+        atMs: Date.now(),
+        orderId: String(base.id || ''),
+        revenueSub,
+        costSub,
+        sourceInvoiceNo: String(base.invoiceNo || '').trim(),
+        lines: returnLines,
+      })
+      if (!ins.ok) {
+        console.error('[confirmPosReturnSubmit] insert pos_return_ledger', ins.error)
+        throw new Error(
+          formatPostgrestErrorForUser(ins.error) ||
+            'Đơn và tồn kho đã cập nhật nhưng không ghi được phiếu trả hàng lên Supabase.'
+        )
+      }
+      await refreshPosReturnLedger()
+      setPosReturnModal(null)
+      setPosReturnQtyDraft({})
+      setPosDetailEditDrafts((prev) => {
+        if (!prev[base.id]) return prev
+        const o = { ...prev }
+        delete o[base.id]
+        return o
+      })
+      showHubCameraToast('Hoàn trả đơn hàng thành công!', 'ok')
+    } catch (err) {
+      console.error('[confirmPosReturnSubmit] failed', err)
+      showHubCameraToast('Lỗi: Không thể kết nối tới máy chủ. Vui lòng thử lại!', 'err')
+    } finally {
+      setPosReturnSubmitting(false)
     }
-    await refreshPosReturnLedger()
-    setPosReturnModal(null)
-    setPosReturnQtyDraft({})
-    setPosDetailEditDrafts((prev) => {
-      if (!prev[base.id]) return prev
-      const o = { ...prev }
-      delete o[base.id]
-      return o
-    })
   }, [
     posReturnModal,
     posReturnQtyDraft,
+    posReturnSubmitting,
     catalogList,
     applyInboundStockDeltas,
     persistPosOrderAndReload,
     refreshPosReturnLedger,
     revenueReadOnly,
+    showHubCameraToast,
   ])
 
   const requestPosCancel = useCallback(
@@ -6582,6 +6672,8 @@ export default function AdminHub({
                 onExport={handleExport}
                 onClearAll={handleClearAll}
                 onOpenPosReturnDetail={openPosReturnDetailTab}
+                onDeleteOrder={handleDeleteOrder}
+                deletingOrderId={deletingOrderId}
               />
             )}
 
@@ -9745,9 +9837,12 @@ export default function AdminHub({
                 type="button"
                 className="ah-inbound-float-panel__x"
                 aria-label="Đóng"
+                disabled={posReturnSubmitting}
                 onClick={() => {
+                  if (posReturnSubmitting) return
                   setPosReturnModal(null)
                   setPosReturnQtyDraft({})
+                  setPosReturnSubmitting(false)
                 }}
               >
                 ×
@@ -9818,6 +9913,7 @@ export default function AdminHub({
                                 aria-label={`Số lượng trả ${it.name}`}
                                 placeholder="0"
                                 value={posReturnQtyDraft[lid] ?? ''}
+                                disabled={posReturnSubmitting}
                                 onChange={(e) =>
                                   setPosReturnQtyDraft((m) => ({
                                     ...m,
@@ -9864,9 +9960,12 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--ghost"
+                disabled={posReturnSubmitting}
                 onClick={() => {
+                  if (posReturnSubmitting) return
                   setPosReturnModal(null)
                   setPosReturnQtyDraft({})
+                  setPosReturnSubmitting(false)
                 }}
               >
                 Đóng
@@ -9874,9 +9973,17 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--primary"
+                disabled={posReturnSubmitting}
                 onClick={() => void confirmPosReturnSubmit()}
               >
-                Hoàn thành trả hàng
+                {posReturnSubmitting ? (
+                  <>
+                    <span className="ah-entity-spinner" aria-hidden="true" />
+                    Đang xử lý...
+                  </>
+                ) : (
+                  'Hoàn thành trả hàng'
+                )}
               </button>
             </footer>
           </div>

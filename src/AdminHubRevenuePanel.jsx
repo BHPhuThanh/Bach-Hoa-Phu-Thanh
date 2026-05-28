@@ -46,7 +46,15 @@ function RevenueOrderDetailLink({ orderId }) {
   )
 }
 
-function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }) {
+function RevenueTableRows({
+  rows,
+  selected,
+  setSelected,
+  onOpenPosReturnDetail,
+  revenueReadOnly,
+  onDeleteOrder,
+  deletingOrderId,
+}) {
   try {
     return rows.map((row) => {
       if (row.kind === 'sale') {
@@ -93,6 +101,22 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
             </td>
             <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
               <RevenueOrderDetailLink orderId={o.id} />
+            </td>
+            <td className="ah-revenue-cell-actions" data-label="Thao tác" onClick={(e) => e.stopPropagation()}>
+              {!revenueReadOnly ? (
+                <button
+                  type="button"
+                  className="ah-revenue-delete-btn"
+                  onClick={() => onDeleteOrder?.(o)}
+                  disabled={String(deletingOrderId || '') === String(o.id || '')}
+                  title="Xóa vĩnh viễn đơn hàng"
+                  aria-label={`Xóa đơn ${o.invoiceNo || o.id || ''}`}
+                >
+                  {String(deletingOrderId || '') === String(o.id || '') ? 'Đang xóa...' : '🗑 Xóa đơn'}
+                </button>
+              ) : (
+                <span className="ah-revenue-order-detail-dash">—</span>
+              )}
             </td>
           </tr>
         )
@@ -141,6 +165,9 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
           <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
             <RevenueOrderDetailLink orderId={r.sourceOrderId} />
           </td>
+          <td className="ah-revenue-cell-actions" data-label="Thao tác">
+            <span className="ah-revenue-order-detail-dash">—</span>
+          </td>
         </tr>
       )
     })
@@ -148,7 +175,7 @@ function RevenueTableRows({ rows, selected, setSelected, onOpenPosReturnDetail }
     console.error('[AdminHubRevenuePanel] rows', e)
     return (
       <tr className="ah-responsive-table-empty">
-        <td colSpan={5} className="dash-muted ah-revenue-empty">
+        <td colSpan={6} className="dash-muted ah-revenue-empty">
           Không hiển thị được danh sách đơn (dữ liệu lỗi). Các chỉ số phía trên vẫn có thể dùng được.
         </td>
       </tr>
@@ -180,6 +207,8 @@ export default function AdminHubRevenuePanel({
   onExport,
   onClearAll,
   onOpenPosReturnDetail,
+  onDeleteOrder,
+  deletingOrderId,
 }) {
   let revenue = 0
   let cost = 0
@@ -323,6 +352,7 @@ export default function AdminHubRevenuePanel({
                   <th className="ah-num">Tổng tiền</th>
                   <th className="ah-num">Lợi nhuận</th>
                   <th className="ah-revenue-th-detail">Chi tiết</th>
+                  <th className="ah-revenue-th-actions">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
@@ -331,6 +361,9 @@ export default function AdminHubRevenuePanel({
                   selected={selected}
                   setSelected={setSelected}
                   onOpenPosReturnDetail={onOpenPosReturnDetail}
+                  revenueReadOnly={revenueReadOnly}
+                  onDeleteOrder={onDeleteOrder}
+                  deletingOrderId={deletingOrderId}
                 />
               </tbody>
             </table>

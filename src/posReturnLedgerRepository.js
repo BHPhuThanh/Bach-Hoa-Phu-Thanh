@@ -212,3 +212,48 @@ export async function fetchPosReturnLedgerEntries() {
     return { ok: false, error }
   }
 }
+
+/**
+ * Xóa toàn bộ phiếu hoàn trả theo `order_id` đơn gốc.
+ * @param {string} orderIdRaw
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown }>}
+ */
+export async function deletePosReturnLedgerByOrderId(orderIdRaw) {
+  const orderId = String(orderIdRaw || '').trim()
+  if (!orderId) {
+    return { ok: false, error: new Error('Thiếu orderId khi xóa phiếu hoàn trả.') }
+  }
+
+  if (!isSupabaseConfigured()) {
+    try {
+      const next = loadPosReturnDayLedger().filter((e) => String(e?.orderId || '').trim() !== orderId)
+      savePosReturnDayLedger(next)
+      bumpPosReturnLedgerSync()
+      return { ok: true, skipped: true }
+    } catch (error) {
+      return { ok: false, error }
+    }
+  }
+
+  const sb = getSupabaseClient()
+  if (!sb) {
+    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  }
+
+  try {
+    const { error } = await sb.from(POS_RETURN_LEDGER_TABLE).delete().eq('order_id', orderId)
+    if (error) {
+      return { ok: false, error }
+    }
+    try {
+      const local = loadPosReturnDayLedger().filter((e) => String(e?.orderId || '').trim() !== orderId)
+      savePosReturnDayLedger(local)
+    } catch {
+      /* ignore local mirror errors */
+    }
+    bumpPosReturnLedgerSync()
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error }
+  }
+}

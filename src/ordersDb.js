@@ -95,3 +95,37 @@ export async function clearAllOrders() {
     tx.objectStore(IDB_STORE).clear()
   })
 }
+
+function isMissingTableError(error) {
+  const code = String(error?.code || '').trim()
+  return code === '42P01'
+}
+
+export async function deleteOrderById(orderIdRaw) {
+  const orderId = String(orderIdRaw || '').trim()
+  if (!orderId) throw new Error('Thiếu orderId để xóa đơn hàng.')
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseClient()
+    if (!sb) throw new Error('Supabase chưa khởi tạo')
+
+    // Bảng nguồn hiện tại: sales.
+    const { error: salesErr } = await sb.from(SALES_TABLE).delete().eq('id', orderId)
+    if (salesErr) throw salesErr
+
+    // Hỗ trợ schema mở rộng theo yêu cầu mới: orders + order_items.
+    const { error: orderItemsErr } = await sb.from('order_items').delete().eq('order_id', orderId)
+    if (orderItemsErr && !isMissingTableError(orderItemsErr)) throw orderItemsErr
+
+    const { error: ordersErr } = await sb.from('orders').delete().eq('id', orderId)
+    if (ordersErr && !isMissingTableError(ordersErr)) throw ordersErr
+    return
+  }
+
+  const db = await openIdb()
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite')
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.objectStore(IDB_STORE).delete(orderId)
+  })
+}

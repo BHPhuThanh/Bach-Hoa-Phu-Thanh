@@ -806,9 +806,42 @@
   white-space: nowrap;
 }
 
+.ah-revenue-th-actions {
+  width: 8.5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .ah-revenue-cell-detail {
   text-align: center;
   vertical-align: middle;
+}
+
+.ah-revenue-cell-actions {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ah-revenue-delete-btn {
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 6px;
+  background: rgba(220, 38, 38, 0.14);
+  color: #fecaca;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.22rem 0.45rem;
+  cursor: pointer;
+}
+
+.ah-revenue-delete-btn:hover {
+  background: rgba(220, 38, 38, 0.24);
+  border-color: rgba(248, 113, 113, 0.7);
+}
+
+.ah-revenue-delete-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
 .ah-revenue-order-detail-link {
