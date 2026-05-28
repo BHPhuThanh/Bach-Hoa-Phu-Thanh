@@ -33,9 +33,9 @@ import {
   getAdminOrdersAbsUrl,
   getAdminReturnOrderAbsUrl,
   getDoanhThuAbsUrl,
-  readStoredSellerId,
-  writeStoredSellerId,
 } from './sellerRoleStorage.js'
+import { useSellerRole } from './sellerRoleContext.jsx'
+import AdminRolePinModal from './AdminRolePinModal.jsx'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
@@ -143,6 +143,7 @@ import {
 import { stockQtyMeaningfullyChanged } from './stockCheckStorage.js'
 import {
   fetchCustomersFromSupabase,
+  fetchEmployeesFromSupabase,
   formatPostgrestErrorForUser,
   insertCustomerSupabase,
   mergeCustomerListsDedupe,
@@ -2508,10 +2509,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [initialCatalogLoadPending, setInitialCatalogLoadPending] = useState(
     !catalogBoot.products?.length
   )
-  const [activeSellerId, setActiveSellerId] = useState(
-    () => readStoredSellerId() ?? 'admin'
-  )
+  const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useSellerRole()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
+  const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
@@ -3922,9 +3922,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return () => window.clearInterval(id)
   }, [])
 
-  useEffect(() => {
-    writeStoredSellerId(activeSellerId)
-  }, [activeSellerId])
+  const requestSellerSwitch = useCallback(
+    (accId) => {
+      if (accId !== 'admin' && accId !== 'staff') return
+      if (accId === activeSellerId) {
+        setSellerMenuOpen(false)
+        return
+      }
+      if (accId === 'admin' && activeSellerId === 'staff') {
+        setAdminPinModalOpen(true)
+        setSellerMenuOpen(false)
+        return
+      }
+      setActiveSellerId(accId)
+      setSellerMenuOpen(false)
+    },
+    [activeSellerId, setActiveSellerId]
+  )
 
   useEffect(() => {
     if (!sellerMenuOpen) return
@@ -5158,27 +5172,41 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [])
 
+  const refreshPosEmployees = useCallback(async () => {
+    if (!isSupabaseConfigured()) return
+    try {
+      await fetchEmployeesFromSupabase()
+    } catch (e) {
+      console.warn('[POS] Đồng bộ nhân viên', e)
+    }
+  }, [])
+
   useEffect(() => {
     if (activeView !== 'sell') return
     void refreshPosCustomers()
   }, [activeView, refreshPosCustomers])
 
   useEffect(() => {
-    const bump = () => {
+    const bumpCustomers = () => {
       void refreshPosCustomers()
+    }
+    const bumpEmployees = () => {
+      void refreshPosEmployees()
     }
     const onStorage = (e) => {
       if (e.storageArea !== localStorage) return
       if (e.key !== POS_CUSTOMERS_STORAGE_KEY) return
       void refreshPosCustomers()
     }
-    window.addEventListener('csv-preview-customers-changed', bump)
+    window.addEventListener('csv-preview-customers-changed', bumpCustomers)
+    window.addEventListener('csv-preview-employees-changed', bumpEmployees)
     window.addEventListener('storage', onStorage)
     return () => {
-      window.removeEventListener('csv-preview-customers-changed', bump)
+      window.removeEventListener('csv-preview-customers-changed', bumpCustomers)
+      window.removeEventListener('csv-preview-employees-changed', bumpEmployees)
       window.removeEventListener('storage', onStorage)
     }
-  }, [refreshPosCustomers])
+  }, [refreshPosCustomers, refreshPosEmployees])
 
   const submitNewCustomer = useCallback(async () => {
     const name = newCustomerName.trim()
@@ -5797,10 +5825,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       ? 'pos-sidebar-seller-item pos-sidebar-seller-item--active'
                       : 'pos-sidebar-seller-item'
                   }
-                  onClick={() => {
-                    setActiveSellerId(acc.id)
-                    setSellerMenuOpen(false)
-                  }}
+                  onClick={() => requestSellerSwitch(acc.id)}
                 >
                   {acc.label}
                 </button>
@@ -7245,6 +7270,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           </div>
         </div>
       )}
+
+      <AdminRolePinModal
+        open={adminPinModalOpen}
+        onClose={() => setAdminPinModalOpen(false)}
+        onVerified={() => {
+          setActiveSellerId('admin')
+          setAdminPinModalOpen(false)
+        }}
+      />
 
       {customerAddOpen && activeView === 'sell' && (
         <div

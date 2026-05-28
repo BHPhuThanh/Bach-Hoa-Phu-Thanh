@@ -5,13 +5,17 @@ import AdminHub from './AdminHub.jsx'
 import DoanhThuErrorBoundary from './DoanhThuErrorBoundary.jsx'
 import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { POS_RETURN_LEDGER_BUMP_EVENT } from './posReturnLedgerRepository.js'
-import { readStoredSellerId } from './sellerRoleStorage.js'
+import { useSellerRole } from './sellerRoleContext.jsx'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 
 export default function DoanhThuPage() {
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
-  const isAdmin = readStoredSellerId() === 'admin'
+  const { isAdmin, sellerId } = useSellerRole()
   const [hubRefreshKey, setHubRefreshKey] = useState(0)
+
+  useEffect(() => {
+    setHubRefreshKey((k) => k + 1)
+  }, [isAdmin, sellerId])
 
   useEffect(() => {
     const bump = () => setHubRefreshKey((k) => k + 1)

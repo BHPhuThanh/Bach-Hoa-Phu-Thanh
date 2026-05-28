@@ -16,6 +16,9 @@ export function writeStoredSellerId(id) {
   try {
     if (id === 'admin' || id === 'staff') {
       localStorage.setItem(POS_ACTIVE_SELLER_STORAGE_KEY, id)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('csv-preview-seller-role-changed'))
+      }
     }
   } catch {
     /* ignore */

@@ -29,7 +29,8 @@ import {
   findVariantContext,
   resolveInboundCatalogProductVariant,
 } from './inboundFormUnitHelpers.js'
-import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
+import { getDoanhThuAbsUrl, getInboundCreateAbsUrl } from './sellerRoleStorage.js'
+import { useSellerRole } from './sellerRoleContext.jsx'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
 import { clearAllOrders, getAllOrders, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
@@ -65,6 +66,8 @@ import {
   insertCustomerSupabase,
   insertEmployeeSupabase,
   insertSupplierSupabase,
+  updateCustomerSupabase,
+  updateEmployeeSupabase,
   mergeCustomerListsDedupe,
   mergeSupplierListsDedupe,
 } from './entityContactsRepository.js'
@@ -1144,6 +1147,7 @@ export default function AdminHub({
   const [returnLedgerRemoteLoading, setReturnLedgerRemoteLoading] = useState(false)
 
   const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
+  const { sellerId: hubSellerId } = useSellerRole()
   const isHubMobileLayout = useViewportMaxWidth(768)
   const navigate = useNavigate()
   const location = useLocation()
@@ -1566,8 +1570,8 @@ export default function AdminHub({
   }, [])
 
   const stockCheckCreatedByLabel = useCallback(() => {
-    return readStoredSellerId() === 'staff' ? 'Nhân viên bán hàng' : 'Admin — Chủ cửa hàng'
-  }, [])
+    return hubSellerId === 'staff' ? 'Nhân viên bán hàng' : 'Admin — Chủ cửa hàng'
+  }, [hubSellerId])
 
   const recordManualStockAdjustmentVoucher = useCallback(
     ({ variantId, productName, productCode, unitLabel, beforeQty, afterQty }) => {
@@ -3304,7 +3308,9 @@ export default function AdminHub({
   const [inboundFormDiscRaw, setInboundFormDiscRaw] = useState('')
   const [supplierModalOpen, setSupplierModalOpen] = useState(false)
   const [customerModalOpen, setCustomerModalOpen] = useState(false)
+  const [editingCustomer, setEditingCustomer] = useState(null)
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
+  const [editingEmployee, setEditingEmployee] = useState(null)
   const [supplierSaving, setSupplierSaving] = useState(false)
   const [supplierSavedToastGen, setSupplierSavedToastGen] = useState(0)
   const triggerSupplierSavedToast = useCallback(() => {
@@ -3861,6 +3867,7 @@ export default function AdminHub({
         }
       }
       setCustomerModalOpen(false)
+      setEditingCustomer(null)
       window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
     } catch (e) {
       window.alert(formatPostgrestErrorForUser(e))
@@ -3868,6 +3875,60 @@ export default function AdminHub({
       setCustomerSaving(false)
     }
   }, [])
+
+  const submitUpdateCustomerAdmin = useCallback(
+    async (draft) => {
+      const id = String(editingCustomer?.id ?? '').trim()
+      const name = String(draft?.name || '').trim()
+      if (!name) {
+        alert('Nhập họ tên khách.')
+        return
+      }
+      if (!id) {
+        alert('Không có mã khách trên máy chủ — không sửa được. Thử thêm mới hoặc đồng bộ lại.')
+        return
+      }
+      setCustomerSaving(true)
+      try {
+        const row = {
+          name,
+          phone: String(draft?.phone || '').trim(),
+          address: String(draft?.address || '').trim(),
+          cccd: String(draft?.cccd || '').trim(),
+          mail: String(draft?.mail || '').trim(),
+        }
+        const upd = await updateCustomerSupabase(id, row)
+        if (!upd.ok) {
+          if (!upd.skipped) window.alert(formatPostgrestErrorForUser(upd.error))
+          return
+        }
+        try {
+          const remote = await fetchCustomersFromSupabase()
+          const local = loadCustomersFromStorage()
+          const merged = mergeCustomerListsDedupe(remote, local)
+          setCustomers(merged)
+          try {
+            localStorage.setItem(POS_CUSTOMERS_KEY, JSON.stringify(merged))
+          } catch (err) {
+            console.warn(err)
+          }
+        } catch (e) {
+          window.alert(
+            'Đã cập nhật khách trên máy chủ nhưng không tải lại danh sách.\n' +
+              formatPostgrestErrorForUser(e)
+          )
+        }
+        setCustomerModalOpen(false)
+        setEditingCustomer(null)
+        window.dispatchEvent(new CustomEvent('csv-preview-customers-changed'))
+      } catch (e) {
+        window.alert(formatPostgrestErrorForUser(e))
+      } finally {
+        setCustomerSaving(false)
+      }
+    },
+    [editingCustomer]
+  )
 
   const submitNewEmployeeAdmin = useCallback(async (draft) => {
     const name = String(draft?.name || '').trim()
@@ -3895,6 +3956,7 @@ export default function AdminHub({
           if (remote.length > 0) {
             setStaffRows(
               remote.map((r) => ({
+                id: String(r.id || '').trim(),
                 name: r.name,
                 phone: r.phone || '—',
                 address: r.address || '—',
@@ -3910,11 +3972,90 @@ export default function AdminHub({
         }
       }
       setEmployeeModalOpen(false)
+      setEditingEmployee(null)
+      window.dispatchEvent(new CustomEvent('csv-preview-employees-changed'))
     } catch (e) {
       window.alert(formatPostgrestErrorForUser(e))
     } finally {
       setEmployeeSaving(false)
     }
+  }, [])
+
+  const submitUpdateEmployeeAdmin = useCallback(
+    async (draft) => {
+      const id = String(editingEmployee?.id ?? '').trim()
+      const name = String(draft?.name || '').trim()
+      if (!name) {
+        alert('Nhập họ tên nhân viên.')
+        return
+      }
+      if (!id) {
+        alert('Không có mã nhân viên trên máy chủ — không sửa được.')
+        return
+      }
+      setEmployeeSaving(true)
+      try {
+        const row = {
+          name,
+          phone: String(draft?.phone || '').trim(),
+          address: String(draft?.address || '').trim(),
+          cccd: String(draft?.cccd || '').trim(),
+          mail: String(draft?.mail || '').trim(),
+        }
+        const upd = await updateEmployeeSupabase(id, row)
+        if (!upd.ok) {
+          if (!upd.skipped) window.alert(formatPostgrestErrorForUser(upd.error))
+          return
+        }
+        try {
+          const remote = await fetchEmployeesFromSupabase()
+          if (remote.length > 0) {
+            setStaffRows(
+              remote.map((r) => ({
+                id: String(r.id || '').trim(),
+                name: r.name,
+                phone: r.phone || '—',
+                address: r.address || '—',
+                cccd: r.cccd || '—',
+                mail: r.mail || '—',
+              }))
+            )
+          }
+        } catch (e) {
+          window.alert(
+            'Đã cập nhật nhân viên nhưng không tải lại danh sách.\n' + formatPostgrestErrorForUser(e)
+          )
+        }
+        setEmployeeModalOpen(false)
+        setEditingEmployee(null)
+        window.dispatchEvent(new CustomEvent('csv-preview-employees-changed'))
+      } catch (e) {
+        window.alert(formatPostgrestErrorForUser(e))
+      } finally {
+        setEmployeeSaving(false)
+      }
+    },
+    [editingEmployee]
+  )
+
+  const openAddCustomerModal = useCallback(() => {
+    setEditingCustomer(null)
+    setCustomerModalOpen(true)
+  }, [])
+
+  const openEditCustomerModal = useCallback((row) => {
+    setEditingCustomer(row)
+    setCustomerModalOpen(true)
+  }, [])
+
+  const openAddEmployeeModal = useCallback(() => {
+    setEditingEmployee(null)
+    setEmployeeModalOpen(true)
+  }, [])
+
+  const openEditEmployeeModal = useCallback((row) => {
+    setEditingEmployee(row)
+    setEmployeeModalOpen(true)
   }, [])
 
   const buildInboundOrderPayload = useCallback(
@@ -5780,12 +5921,45 @@ export default function AdminHub({
     )
   }, [customers, custDebounced])
 
+  const customerModalSeed = useMemo(() => {
+    if (!editingCustomer) return null
+    return {
+      name: editingCustomer.name,
+      phone: editingCustomer.phone === '—' ? '' : editingCustomer.phone,
+      address: editingCustomer.address === '—' ? '' : editingCustomer.address,
+      cccd: editingCustomer.cccd === '—' ? '' : editingCustomer.cccd,
+      mail: editingCustomer.mail === '—' ? '' : editingCustomer.mail,
+    }
+  }, [editingCustomer])
+
+  const employeeModalSeed = useMemo(() => {
+    if (!editingEmployee) return null
+    return {
+      name: editingEmployee.name,
+      phone: editingEmployee.phone === '—' ? '' : editingEmployee.phone,
+      address: editingEmployee.address === '—' ? '' : editingEmployee.address,
+      cccd: editingEmployee.cccd === '—' ? '' : editingEmployee.cccd,
+      mail: editingEmployee.mail === '—' ? '' : editingEmployee.mail,
+    }
+  }, [editingEmployee])
+
   const renderCustomerVirtualRow = useCallback(
     (c) => {
       if (isHubMobileLayout) {
         return (
           <div className="ah-hub-entity-mobile-card ah-cust-mobile-card">
-            <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+            <div className="ah-cust-mobile-card-title-row">
+              <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+              <button
+                type="button"
+                className="ah-hub-entity-edit-btn"
+                title="Sửa khách hàng"
+                aria-label={`Sửa ${c.name || 'khách hàng'}`}
+                onClick={() => openEditCustomerModal(c)}
+              >
+                ✎
+              </button>
+            </div>
             <div className="ah-cust-mobile-card-row">
               <span className="ah-cust-mobile-lbl">Số điện thoại</span>
               <span>{c.phone || '—'}</span>
@@ -5812,10 +5986,21 @@ export default function AdminHub({
           <div className="ah-cust-virt-cell ah-cust-virt-addr ah-cust-virt-muted">{c.address || '—'}</div>
           <div className="ah-cust-virt-cell ah-cust-virt-cccd">{c.cccd || '—'}</div>
           <div className="ah-cust-virt-cell ah-cust-virt-mail ah-cust-virt-muted">{c.mail || '—'}</div>
+          <div className="ah-cust-virt-cell ah-cust-virt-actions">
+            <button
+              type="button"
+              className="ah-hub-entity-edit-btn"
+              title="Sửa khách hàng"
+              aria-label={`Sửa ${c.name || 'khách hàng'}`}
+              onClick={() => openEditCustomerModal(c)}
+            >
+              ✎
+            </button>
+          </div>
         </div>
       )
     },
-    [isHubMobileLayout]
+    [isHubMobileLayout, openEditCustomerModal]
   )
 
   const [staffQ, setStaffQ] = useState('')
@@ -7209,7 +7394,7 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-hub-add-entity-btn"
-                onClick={() => setCustomerModalOpen(true)}
+                onClick={openAddCustomerModal}
                 title="Thêm khách hàng mới"
               >
                 + Thêm khách hàng mới
@@ -7241,8 +7426,19 @@ export default function AdminHub({
               ) : isHubMobileLayout ? (
                 <div className="ah-hub-entity-mobile-list">
                   {custFiltered.map((c, i) => (
-                    <div key={`${c.name}-${c.phone}-${i}`} className="ah-hub-entity-mobile-card ah-cust-mobile-card">
-                      <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+                    <div key={`${c.id || c.name}-${c.phone}-${i}`} className="ah-hub-entity-mobile-card ah-cust-mobile-card">
+                      <div className="ah-cust-mobile-card-title-row">
+                        <div className="ah-cust-mobile-card-title">{c.name || '—'}</div>
+                        <button
+                          type="button"
+                          className="ah-hub-entity-edit-btn"
+                          title="Sửa khách hàng"
+                          aria-label={`Sửa ${c.name || 'khách hàng'}`}
+                          onClick={() => openEditCustomerModal(c)}
+                        >
+                          ✎
+                        </button>
+                      </div>
                       <div className="ah-cust-mobile-card-row">
                         <span className="ah-cust-mobile-lbl">Số điện thoại</span>
                         <span>{c.phone || '—'}</span>
@@ -7271,6 +7467,7 @@ export default function AdminHub({
                       <span>Địa chỉ</span>
                       <span>Số CCCD</span>
                       <span>Mail</span>
+                      <span>Thao tác</span>
                     </div>
                   ) : null}
                   <AutoSizer>
@@ -7295,16 +7492,28 @@ export default function AdminHub({
                       <th>Địa chỉ</th>
                       <th>Số CCCD</th>
                       <th>Mail</th>
+                      <th aria-label="Thao tác" />
                     </tr>
                   </thead>
                   <tbody>
                     {custFiltered.map((c, i) => (
-                      <tr key={`${c.name}-${c.phone}-${i}`} className="ah-responsive-table-card-row">
+                      <tr key={`${c.id || c.name}-${c.phone}-${i}`} className="ah-responsive-table-card-row">
                         <td data-label="Họ tên">{c.name}</td>
                         <td data-label="Số điện thoại">{c.phone || '—'}</td>
                         <td data-label="Địa chỉ">{c.address || '—'}</td>
                         <td data-label="Số CCCD">{c.cccd || '—'}</td>
                         <td data-label="Mail">{c.mail || '—'}</td>
+                        <td data-label="Thao tác">
+                          <button
+                            type="button"
+                            className="ah-hub-entity-edit-btn"
+                            title="Sửa khách hàng"
+                            aria-label={`Sửa ${c.name || 'khách hàng'}`}
+                            onClick={() => openEditCustomerModal(c)}
+                          >
+                            ✎
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -7332,7 +7541,7 @@ export default function AdminHub({
               <button
                 type="button"
                 className="ah-hub-add-entity-btn"
-                onClick={() => setEmployeeModalOpen(true)}
+                onClick={openAddEmployeeModal}
                 title="Thêm nhân viên"
               >
                 + Thêm nhân viên
@@ -7347,29 +7556,42 @@ export default function AdminHub({
                     <th>Địa chỉ</th>
                     <th>Số CCCD</th>
                     <th>Mail</th>
+                    <th aria-label="Thao tác" />
                   </tr>
                 </thead>
                 <tbody>
                   {staffRemoteLoading && isSupabaseConfigured() ? (
                     <tr className="ah-hub-voucher-empty-row">
-                      <td colSpan={5} className="admin-hub-muted">
+                      <td colSpan={6} className="admin-hub-muted">
                         Đang tải danh sách từ Supabase (một lần)…
                       </td>
                     </tr>
                   ) : staffFiltered.length === 0 ? (
                     <tr className="ah-hub-voucher-empty-row">
-                      <td colSpan={5} className="admin-hub-muted">
+                      <td colSpan={6} className="admin-hub-muted">
                         Không có dòng khớp tìm kiếm.
                       </td>
                     </tr>
                   ) : (
                     staffFiltered.map((r, i) => (
-                      <tr key={i} className="ah-hub-voucher-summary-row ah-hub-entity-mobile-card-row">
+                      <tr key={r.id || i} className="ah-hub-voucher-summary-row ah-hub-entity-mobile-card-row">
                         <td data-label="Họ tên / Vai trò">{r.name}</td>
                         <td data-label="Số điện thoại">{r.phone}</td>
                         <td data-label="Địa chỉ">{r.address}</td>
                         <td data-label="Số CCCD">{r.cccd}</td>
                         <td data-label="Mail">{r.mail}</td>
+                        <td data-label="Thao tác">
+                          <button
+                            type="button"
+                            className="ah-hub-entity-edit-btn"
+                            title="Sửa nhân viên"
+                            aria-label={`Sửa ${r.name || 'nhân viên'}`}
+                            onClick={() => openEditEmployeeModal(r)}
+                            disabled={!r.id}
+                          >
+                            ✎
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -9138,25 +9360,29 @@ export default function AdminHub({
       />
       <EntityPersonModal
         open={customerModalOpen}
-        title="Thêm khách hàng"
-        saveLabel="Lưu"
+        title={editingCustomer ? 'Sửa khách hàng' : 'Thêm khách hàng'}
+        saveLabel={editingCustomer ? 'Lưu thay đổi' : 'Lưu'}
         isSaving={customerSaving}
+        seedDraft={customerModalSeed}
         onClose={() => {
           if (customerSaving) return
           setCustomerModalOpen(false)
+          setEditingCustomer(null)
         }}
-        onSubmit={submitNewCustomerAdmin}
+        onSubmit={editingCustomer ? submitUpdateCustomerAdmin : submitNewCustomerAdmin}
       />
       <EntityPersonModal
         open={employeeModalOpen}
-        title="Thêm nhân viên"
-        saveLabel="Lưu"
+        title={editingEmployee ? 'Sửa nhân viên' : 'Thêm nhân viên'}
+        saveLabel={editingEmployee ? 'Lưu thay đổi' : 'Lưu'}
         isSaving={employeeSaving}
+        seedDraft={employeeModalSeed}
         onClose={() => {
           if (employeeSaving) return
           setEmployeeModalOpen(false)
+          setEditingEmployee(null)
         }}
-        onSubmit={submitNewEmployeeAdmin}
+        onSubmit={editingEmployee ? submitUpdateEmployeeAdmin : submitNewEmployeeAdmin}
       />
 
       {inboundCostDiffModal && (

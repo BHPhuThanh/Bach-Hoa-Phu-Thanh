@@ -8402,7 +8402,7 @@ li.ah-inbound-suggest-empty {
 
 .ah-cust-virt-header {
   display: grid;
-  grid-template-columns: 1.2fr 0.9fr 1.4fr 0.75fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr 1.3fr 0.75fr 1fr 0.46fr;
   gap: 0.35rem;
   padding: 0.45rem 0.55rem;
   font-size: 0.72rem;
@@ -8416,7 +8416,7 @@ li.ah-inbound-suggest-empty {
 
 .ah-cust-virt-row {
   display: grid;
-  grid-template-columns: 1.2fr 0.9fr 1.4fr 0.75fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr 1.3fr 0.75fr 1fr 0.46fr;
   gap: 0.35rem;
   align-items: center;
   padding: 0 0.55rem;
@@ -9252,6 +9252,61 @@ li.ah-inbound-suggest-empty {
 .ah-hub-entity-delete-btn:hover {
   background: rgba(185, 28, 28, 0.45);
   color: #fff;
+}
+
+.ah-hub-entity-edit-btn {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 6px;
+  padding: 0;
+  background: rgba(14, 116, 144, 0.25);
+  color: #7dd3fc;
+  font-size: 1rem;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ah-hub-entity-edit-btn:hover:not(:disabled) {
+  background: rgba(8, 145, 178, 0.4);
+  color: #e0f2fe;
+}
+
+.ah-hub-entity-edit-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.ah-cust-mobile-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ah-cust-virt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.ah-admin-pin-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.ah-admin-pin-error {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #fca5a5;
+}
+
+.ah-admin-pin-backdrop {
+  z-index: 100110;
 }
 
 .ah-supplier-virt-card-actions {

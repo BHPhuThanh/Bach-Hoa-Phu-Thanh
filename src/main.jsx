@@ -9,6 +9,7 @@ import StockCheckCreatePage from './StockCheckCreatePage.jsx'
 import InboundCreatePage from './InboundCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
 import { registerPwaServiceWorker } from './pwaRegister.js'
+import { SellerRoleProvider } from './sellerRoleContext.jsx'
 
 /** Lớp 1: chặn Chrome Help — chỉ preventDefault, không stopPropagation (React vẫn nhận F1). */
 if (typeof window !== 'undefined') {
@@ -37,6 +38,7 @@ async function boot() {
   createRoot(el).render(
     <StrictMode>
       <BrowserRouter basename={appRouterBasename()}>
+        <SellerRoleProvider>
         <Routes>
           <Route path="admin/goods" element={<PosPage />} />
           <Route path="admin/inventory" element={<PosPage />} />
@@ -46,6 +48,7 @@ async function boot() {
           <Route path="doanh-thu" element={<DoanhThuPage />} />
           <Route path="*" element={<PosPage />} />
         </Routes>
+        </SellerRoleProvider>
       </BrowserRouter>
     </StrictMode>,
   )

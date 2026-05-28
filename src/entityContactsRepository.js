@@ -104,6 +104,14 @@ export async function insertEmployeeSupabase(payload) {
   return insertPerson('employees', payload)
 }
 
+export async function updateCustomerSupabase(id, payload) {
+  return updatePerson('customers', id, payload)
+}
+
+export async function updateEmployeeSupabase(id, payload) {
+  return updatePerson('employees', id, payload)
+}
+
 /** @param {'suppliers'|'customers'|'employees'} table */
 async function updatePerson(table, id, payload) {
   const sb = getSupabaseClient()
@@ -193,6 +201,7 @@ export function mergeCustomerListsDedupe(remote, local) {
     if (!String(r?.name || '').trim() || seen.has(k)) continue
     seen.add(k)
     out.push({
+      id: String(r.id || '').trim() || undefined,
       name: String(r.name || '').trim(),
       phone: String(r.phone || '').trim(),
       address: String(r.address || '').trim(),
@@ -205,6 +214,7 @@ export function mergeCustomerListsDedupe(remote, local) {
     if (!String(l?.name || '').trim() || seen.has(k)) continue
     seen.add(k)
     out.push({
+      id: String(l.id || '').trim() || undefined,
       name: String(l.name || '').trim(),
       phone: String(l.phone || '').trim(),
       address: String(l.address || '').trim(),
