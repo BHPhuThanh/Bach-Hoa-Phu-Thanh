@@ -98,7 +98,8 @@ export async function clearAllOrders() {
 
 function isMissingTableError(error) {
   const code = String(error?.code || '').trim()
-  return code === '42P01'
+  const msg = String(error?.message || '').toLowerCase()
+  return code === '42P01' || code === 'PGRST205' || msg.includes('could not find the table')
 }
 
 export async function deleteOrderById(orderIdRaw) {
@@ -112,10 +113,7 @@ export async function deleteOrderById(orderIdRaw) {
     const { error: salesErr } = await sb.from(SALES_TABLE).delete().eq('id', orderId)
     if (salesErr) throw salesErr
 
-    // Hỗ trợ schema mở rộng theo yêu cầu mới: orders + order_items.
-    const { error: orderItemsErr } = await sb.from('order_items').delete().eq('order_id', orderId)
-    if (orderItemsErr && !isMissingTableError(orderItemsErr)) throw orderItemsErr
-
+    // Chỉ giữ xóa bảng đơn chính (orders) nếu hệ thống có bảng này.
     const { error: ordersErr } = await sb.from('orders').delete().eq('id', orderId)
     if (ordersErr && !isMissingTableError(ordersErr)) throw ordersErr
     return
