@@ -5,28 +5,13 @@ import AdminHub from './AdminHub.jsx'
 import DoanhThuErrorBoundary from './DoanhThuErrorBoundary.jsx'
 import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { POS_RETURN_LEDGER_BUMP_EVENT } from './posReturnLedgerRepository.js'
-import { readStoredSellerId } from './sellerRoleStorage.js'
+import { useRoleStore } from './roleStore.js'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 
 export default function DoanhThuPage() {
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
-  const [isAdmin, setIsAdmin] = useState(() => readStoredSellerId() === 'admin')
+  const { isAdmin } = useRoleStore()
   const [hubRefreshKey, setHubRefreshKey] = useState(0)
-
-  useEffect(() => {
-    const refreshRole = () => setIsAdmin(readStoredSellerId() === 'admin')
-    const onStorage = (e) => {
-      if (e.storageArea !== localStorage) return
-      if (e.key !== 'csv-preview-pos-active-seller-id-v1') return
-      refreshRole()
-    }
-    window.addEventListener('csv-preview-seller-role-changed', refreshRole)
-    window.addEventListener('storage', onStorage)
-    return () => {
-      window.removeEventListener('csv-preview-seller-role-changed', refreshRole)
-      window.removeEventListener('storage', onStorage)
-    }
-  }, [])
 
   useEffect(() => {
     setHubRefreshKey((k) => k + 1)

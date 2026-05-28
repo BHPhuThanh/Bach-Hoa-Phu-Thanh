@@ -34,7 +34,7 @@ import {
   getAdminReturnOrderAbsUrl,
   getDoanhThuAbsUrl,
 } from './sellerRoleStorage.js'
-import { useSellerRole } from './sellerRoleContext.jsx'
+import { useRoleStore } from './roleStore.js'
 import AdminRolePinModal from './AdminRolePinModal.jsx'
 import AdminPinChangeModal from './AdminPinChangeModal.jsx'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
@@ -149,7 +149,7 @@ import {
   insertCustomerSupabase,
   mergeCustomerListsDedupe,
 } from './entityContactsRepository.js'
-import { updateAdminPinSupabase, verifyAdminPinSupabase } from './appSettingsRepository.js'
+import { updateAdminPinSupabase, verifyAdminPinSupabase } from './authServices.js'
 import {
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
@@ -2511,7 +2511,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [initialCatalogLoadPending, setInitialCatalogLoadPending] = useState(
     !catalogBoot.products?.length
   )
-  const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useSellerRole()
+  const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useRoleStore()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
   const [adminPinChecking, setAdminPinChecking] = useState(false)
@@ -5672,7 +5672,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     )
 
     const changeAdminPinBtn =
-      activeView === 'sell' && activeSellerId === 'admin' ? (
+      activeSellerId === 'admin' ? (
         <button
           key="change-admin-pin"
           type="button"
