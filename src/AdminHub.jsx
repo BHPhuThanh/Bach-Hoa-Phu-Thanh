@@ -1319,6 +1319,7 @@ export default function AdminHub({
   const [ovTo, setOvTo] = useState(todayYmd)
   const [selected, setSelected] = useState(null)
   const [deletingOrderId, setDeletingOrderId] = useState('')
+  const isDeletingOrder = String(deletingOrderId || '').trim().length > 0
 
   const ovFiltered = useMemo(
     () => filterOrdersForReport(orders, ovRange, ovFrom, ovTo),
@@ -1419,10 +1420,19 @@ export default function AdminHub({
     }
     if (String(deletingOrderId || '').trim() === orderId) return
 
+    // Đóng preview trước khi xóa để tránh lỗi render khi dữ liệu biến mất đột ngột.
+    setSelected(null)
     setDeletingOrderId(orderId)
     try {
+      const e = base?.items ?? orderRaw
+      const rollbackItems =
+        e && Array.isArray(e)
+          ? e.flatMap((it) => (it ? [it] : []))
+          : e && typeof e === 'object' && Array.isArray(e.order_items)
+            ? e.order_items.flatMap((it) => (it ? [it] : []))
+            : []
       const deltas = new Map()
-      for (const it of base.items || []) {
+      for (const it of rollbackItems) {
         const variantId = String(resolvePosItemVariantId(it) || '').trim()
         if (!variantId) continue
         const qty = Math.max(0, Number(it?.qty) || 0)
@@ -1449,7 +1459,6 @@ export default function AdminHub({
       }
 
       await deleteOrderById(orderId)
-      setSelected((cur) => (String(cur?.id || '').trim() === orderId ? null : cur))
       await Promise.all([refetchOrdersQuiet(), refreshPosReturnLedger()])
       showHubCameraToast('Xóa đơn hàng thành công.', 'ok')
     } catch (err) {
@@ -4123,7 +4132,7 @@ export default function AdminHub({
           if (remote.length > 0) {
             setStaffRows(
               remote.map((r) => ({
-                id: String(r.id || '').trim(),
+              id: String(r.id ?? r.employee_id ?? '').trim(),
                 name: r.name,
                 phone: r.phone || '—',
                 address: r.address || '—',
@@ -4179,7 +4188,7 @@ export default function AdminHub({
           if (remote.length > 0) {
             setStaffRows(
               remote.map((r) => ({
-                id: String(r.id || '').trim(),
+                id: String(r.id ?? r.employee_id ?? '').trim(),
                 name: r.name,
                 phone: r.phone || '—',
                 address: r.address || '—',
@@ -4222,8 +4231,9 @@ export default function AdminHub({
 
   const openEditEmployeeModal = useCallback((row) => {
     const safe = row && typeof row === 'object' ? row : {}
+    console.log('Dữ liệu hàng nhân viên:', safe)
     setEditingEmployee({
-      id: String(safe.id ?? '').trim(),
+      id: String(safe.id ?? safe.employee_id ?? '').trim(),
       name: String(safe.name ?? '').trim(),
       phone: String(safe.phone ?? '').trim() || '—',
       address: String(safe.address ?? '').trim() || '—',
@@ -6215,6 +6225,7 @@ export default function AdminHub({
         if (remote.length > 0) {
           setStaffRows(
             remote.map((r) => ({
+              id: String(r.id ?? r.employee_id ?? '').trim(),
               name: r.name,
               phone: r.phone || '—',
               address: r.address || '—',
@@ -6673,6 +6684,7 @@ export default function AdminHub({
                 onOpenPosReturnDetail={openPosReturnDetailTab}
                 onDeleteOrder={handleDeleteOrder}
                 deletingOrderId={deletingOrderId}
+                isDeletingOrder={isDeletingOrder}
               />
             )}
 
@@ -7766,6 +7778,7 @@ export default function AdminHub({
                   ) : (
                     staffFiltered.map((r, i) => (
                       <tr key={r.id || i} className="ah-hub-voucher-summary-row ah-hub-entity-mobile-card-row">
+                        {console.log('Dữ liệu hàng nhân viên:', r)}
                         <td data-label="Họ tên / Vai trò">{r.name}</td>
                         <td data-label="Số điện thoại">{r.phone}</td>
                         <td data-label="Địa chỉ">{r.address}</td>
@@ -9444,7 +9457,7 @@ export default function AdminHub({
         </AdminHubTabErrorBoundary>
       </main>
 
-      {selected && (
+      {selected && !isDeletingOrder && (
         <div
           className="dash-modal-backdrop"
           role="dialog"

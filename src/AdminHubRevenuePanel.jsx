@@ -54,6 +54,7 @@ function RevenueTableRows({
   revenueReadOnly,
   onDeleteOrder,
   deletingOrderId,
+  isDeletingOrder,
 }) {
   try {
     return rows.map((row) => {
@@ -70,10 +71,14 @@ function RevenueTableRows({
           <tr
             key={`sale-${row.id}`}
             className={`ah-revenue-row ah-responsive-table-card-row${active ? ' is-active' : ''}`}
-            onClick={() => setSelected(o)}
+            onClick={() => {
+              if (isDeletingOrder) return
+              setSelected(o)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
+                if (isDeletingOrder) return
                 setSelected(o)
               }
             }}
@@ -209,6 +214,7 @@ export default function AdminHubRevenuePanel({
   onOpenPosReturnDetail,
   onDeleteOrder,
   deletingOrderId,
+  isDeletingOrder,
 }) {
   let revenue = 0
   let cost = 0
@@ -364,6 +370,7 @@ export default function AdminHubRevenuePanel({
                   revenueReadOnly={revenueReadOnly}
                   onDeleteOrder={onDeleteOrder}
                   deletingOrderId={deletingOrderId}
+                  isDeletingOrder={isDeletingOrder}
                 />
               </tbody>
             </table>
