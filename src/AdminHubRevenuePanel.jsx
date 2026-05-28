@@ -3,11 +3,18 @@ import { orderTotalProfit } from './reportUtils.js'
 
 function safeMoney(n) {
   const x = Number(n)
-  return Number.isFinite(x) ? x : 0
+  return Number.isFinite(x) ? Math.round(x) : 0
 }
 
+const VND_FMT = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+})
+
 function formatVndSafe(n) {
-  return `${safeMoney(n).toLocaleString('vi-VN')} đ`
+  return VND_FMT.format(safeMoney(n))
 }
 
 /** Lợi nhuận dòng trả: luôn có dấu '-' ASCII khi âm (kèm nền đỏ ở class CSS). */

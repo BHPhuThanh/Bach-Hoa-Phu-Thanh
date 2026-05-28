@@ -898,7 +898,9 @@ export function parsePrice(raw) {
 
   const n = parseFloat(normalized)
   if (!Number.isFinite(n)) return 0
-  return negative ? -n : n
+  const signed = negative ? -n : n
+  // VNĐ: luôn chuẩn hóa số nguyên từ tầng parse dữ liệu.
+  return Math.round(signed)
 }
 
 /**

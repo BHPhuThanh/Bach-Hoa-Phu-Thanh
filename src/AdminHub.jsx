@@ -96,7 +96,6 @@ import {
   filterInboundOrdersForReport,
   filterOrdersForReport,
   filterPosReturnLedgerEntriesForReport,
-  getReportTimeWindow,
   mapReturnLedgerToRevenueDisplayRows,
   mergeRevenueTableRows,
   orderLineCostTotal,
@@ -106,7 +105,7 @@ import {
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
-import { clearPosReturnDayLedger, sumPosReturnAdjustmentsInRange } from './posReturnDayLedger.js'
+import { clearPosReturnDayLedger } from './posReturnDayLedger.js'
 import {
   fetchPosReturnLedgerEntries,
   insertPosReturnLedgerEntry,
@@ -1451,32 +1450,30 @@ export default function AdminHub({
 
   const ovStats = useMemo(() => {
     try {
-      let baseRevenue = 0
-      let baseCost = 0
-      for (const o of ovFiltered) {
-        try {
-          baseRevenue += safeMoney(o?.total)
-          baseCost += orderReportCostFromCatalog(o, catalogList)
-        } catch (err) {
-          console.warn('[AdminHub ovStats] bỏ qua đơn lỗi dữ liệu', o?.id, err)
-        }
-      }
-      const ledger = Array.isArray(returnDayLedger) ? returnDayLedger : []
-      const w = getReportTimeWindow(ovRange, ovFrom, ovTo)
-      let revenueSub = 0
-      let costSub = 0
-      if (w) {
-        try {
-          const adj = sumPosReturnAdjustmentsInRange(ledger, w.start.getTime(), w.end.getTime())
-          revenueSub = adj.revenueSub
-          costSub = adj.costSub
-        } catch (err) {
-          console.warn('[AdminHub ovStats] lỗi tổng hoàn trả theo khoảng ngày', err)
-        }
-      }
-      const revenue = baseRevenue - revenueSub
-      const cost = baseCost - costSub
-      const profit = revenue - cost
+      const salesOrders = (ovFiltered || []).filter((o) =>
+        String(o?.invoiceNo ?? '').trim().toUpperCase().startsWith('HD')
+      )
+      const returnOrders = (ovRevenueTableRows || [])
+        .filter((row) => row?.kind === 'return')
+        .map((row) => row?.returnRow)
+        .filter((r) => String(r?.invoiceNo ?? '').trim().toUpperCase().startsWith('TH'))
+
+      const salesRevenue = Math.round(
+        salesOrders.reduce((sum, o) => Math.round(sum + safeMoney(o?.total)), 0)
+      )
+      const returnsRevenue = Math.round(
+        returnOrders.reduce((sum, r) => Math.round(sum + Math.abs(safeMoney(r?.displayTotal))), 0)
+      )
+      const revenue = Math.round(salesRevenue - returnsRevenue)
+
+      // QUAN TRỌNG: Tiền vốn chỉ tính đơn bán HD, không cộng/trừ đơn TH.
+      const cost = Math.round(
+        salesOrders.reduce(
+          (sum, o) => Math.round(sum + Math.round(orderReportCostFromCatalog(o, catalogList))),
+          0
+        )
+      )
+      const profit = Math.round(revenue - cost)
       return { revenue, cost, profit, count: ovFiltered.length, countAll: orders.length }
     } catch (err) {
       console.error('[AdminHub ovStats]', err)
@@ -1488,7 +1485,7 @@ export default function AdminHub({
         countAll: orders.length,
       }
     }
-  }, [ovFiltered, orders.length, ovRange, ovFrom, ovTo, returnDayLedger, catalogList])
+  }, [ovFiltered, ovRevenueTableRows, orders.length, catalogList])
 
   /** Biến thể vừa thêm qua modal «Tạo mới» trên phiếu nhập (chờ `products` từ App kịp cập nhật). Được dọn trong useLayoutEffect khi đã có trong danh mục. */
   const [inboundPendingNewFlatVariants, setInboundPendingNewFlatVariants] = useState([])

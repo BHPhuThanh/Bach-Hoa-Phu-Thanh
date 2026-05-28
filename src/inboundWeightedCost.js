@@ -40,10 +40,8 @@ function parseNumberVi(raw) {
 }
 
 function parseMoneyVi(raw) {
-  const d = String(raw ?? '').replace(/[^\d]/g, '')
-  if (!d) return 0
-  const n = parseInt(d, 10)
-  return Number.isFinite(n) ? n : 0
+  // Hỗ trợ cả chuỗi thập phân legacy (vd: 4883.333) nhưng luôn làm tròn về VNĐ nguyên.
+  return Math.round(parsePrice(raw))
 }
 
 export function normalizeInboundLineForCost(x) {
@@ -100,9 +98,9 @@ export function calculateWeightedAverage(oldQty, oldCost, inboundQty, inboundUni
   const inboundQtyNum = Math.max(0, parseNumberVi(inboundQty))
   const inboundUnitCostNum = Math.max(0, parseNumberVi(inboundUnitCost))
   const totalQty = oldQtyNum + inboundQtyNum
-  if (totalQty <= 0) return fixed4Number(oldCostNum)
+  if (totalQty <= 0) return Math.round(oldCostNum)
   const weighted = (oldQtyNum * oldCostNum + inboundQtyNum * inboundUnitCostNum) / totalQty
-  return fixed4Number(weighted)
+  return Math.round(weighted)
 }
 
 function lineGroupRootOfVariant(v, fallbackCode = '') {
@@ -344,7 +342,7 @@ export function computeInboundFulfillmentPlan(
           // Single source of truth: luôn lưu ton_kho theo đơn vị cơ bản cho mọi SKU cùng nhóm.
           stockQty: fixed4Number(newBaseQty),
           // một giá vốn cơ bản cho họ — gia_von ĐVT = giá vốn cơ bản × quy_doi (không gán đè bằng đơn giá 0đ từng dòng nhập).
-          cost: fixed4Number(newBaseCost * conv),
+          cost: Math.round(newBaseCost * conv),
         },
       })
     }
@@ -354,8 +352,8 @@ export function computeInboundFulfillmentPlan(
 
     const repSrv = serverByMaHang?.get(repCode)
     const repConv = conversionToBaseForVariant(rep, repSrv)
-    const oldRepCost = fixed4Number(oldBaseCost * repConv)
-    const newRepCost = fixed4Number(newBaseCost * repConv)
+    const oldRepCost = Math.round(oldBaseCost * repConv)
+    const newRepCost = Math.round(newBaseCost * repConv)
     if (oldRepCost !== newRepCost) {
       diffs.push({
         variantId: rep.id,
@@ -363,7 +361,7 @@ export function computeInboundFulfillmentPlan(
         code: repCode,
         name: String(rep.name || '').trim() || '—',
         oldCost: oldRepCost,
-        inboundPrice: fixed4Number(displayInboundUnit),
+        inboundPrice: Math.round(displayInboundUnit),
         inboundQuantity: deltaQ,
         currentTonKho: oldBaseQty,
         newCost: newRepCost,
