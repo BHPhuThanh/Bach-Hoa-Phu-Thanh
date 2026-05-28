@@ -1739,6 +1739,7 @@ export default function AdminHub({
   const [inboundQuickEditExpandId, setInboundQuickEditExpandId] = useState(null)
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
+  const [inboundQuickEditSaving, setInboundQuickEditSaving] = useState(false)
   const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
@@ -1858,12 +1859,13 @@ export default function AdminHub({
   }, [goodsRowsAll, goodsSearchFilter, goodsBrandKey, goodsCreatedAtRange, goodsListSort])
 
   const closeInboundProductQuickEdit = useCallback(() => {
+    if (inboundQuickEditSaving) return
     setInboundQuickEditExpandId(null)
     setInboundQuickEditSelectedVid(null)
     setInboundQuickEditDraft(null)
     setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
     setPendingUnitDraft(null)
-  }, [])
+  }, [inboundQuickEditSaving])
 
   const openInboundProductQuickEdit = useCallback(
     (variantIdOrLine, catalogHint) => {
@@ -2290,9 +2292,23 @@ export default function AdminHub({
     ]
   )
 
-  const saveInboundQuickEditDetail = useCallback(() => {
-    saveProductDetailFromDraft(inboundQuickEditVariant, inboundQuickEditDraft)
-  }, [inboundQuickEditVariant, inboundQuickEditDraft, saveProductDetailFromDraft])
+  const saveInboundQuickEditDetail = useCallback(async () => {
+    if (inboundQuickEditSaving) return
+    setInboundQuickEditSaving(true)
+    try {
+      const ok = await Promise.resolve(
+        saveProductDetailFromDraft(inboundQuickEditVariant, inboundQuickEditDraft)
+      )
+      if (ok) {
+        setInboundQuickEditExpandId(null)
+        setInboundQuickEditSelectedVid(null)
+        setInboundQuickEditDraft(null)
+        setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+      }
+    } finally {
+      setInboundQuickEditSaving(false)
+    }
+  }, [inboundQuickEditSaving, inboundQuickEditVariant, inboundQuickEditDraft, saveProductDetailFromDraft])
 
   const copyGoodsDetail = useCallback(() => {
     const v = inboundQuickEditVariant
@@ -9947,9 +9963,15 @@ export default function AdminHub({
               </button>
             </header>
             <div className="ah-inbound-quick-edit-body">
-              {inboundQuickEditSlot ?? (
+              {inboundQuickEditSlot ? (
+                inboundQuickEditSlot
+              ) : inboundQuickEditSaving ? (
                 <p className="admin-hub-muted" style={{ padding: '1rem' }}>
-                  Không tìm thấy sản phẩm trong danh mục.
+                  Đang lưu cập nhật sản phẩm…
+                </p>
+              ) : (
+                <p className="admin-hub-muted" style={{ padding: '1rem' }}>
+                  Đang tải dữ liệu sản phẩm…
                 </p>
               )}
             </div>
@@ -10392,7 +10414,7 @@ export default function AdminHub({
                     setGoodsSaveToastGen(0)
                   }}
                 >
-                  Cập nhật thành công
+                  Cập nhật sản phẩm thành công
                 </div>
               ) : null}
 
