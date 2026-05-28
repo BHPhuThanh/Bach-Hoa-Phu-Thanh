@@ -4,14 +4,12 @@ import { useEffect, useState } from 'react'
  * Xác nhận PIN khi chuyển từ Nhân viên → Admin trên POS.
  * PIN: `VITE_ADMIN_ROLE_PIN` (mặc định 1234 nếu không cấu hình).
  */
-export default function AdminRolePinModal({ open, onClose, onVerified }) {
+export default function AdminRolePinModal({ open, onClose, onVerified, onInvalidPin }) {
   const [pin, setPin] = useState('')
-  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!open) return
     setPin('')
-    setError('')
   }, [open])
 
   if (!open) return null
@@ -19,7 +17,7 @@ export default function AdminRolePinModal({ open, onClose, onVerified }) {
   const submit = () => {
     const expected = String(import.meta.env.VITE_ADMIN_ROLE_PIN ?? '1234').trim()
     if (pin.trim() !== expected) {
-      setError('Mật khẩu không đúng.')
+      onInvalidPin?.()
       return
     }
     onVerified?.()
@@ -53,10 +51,22 @@ export default function AdminRolePinModal({ open, onClose, onVerified }) {
             className="ah-inbound-form-input"
             value={pin}
             onChange={(e) => {
-              setPin(e.target.value)
-              setError('')
+              const digitsOnly = String(e.target.value ?? '').replace(/\D/g, '')
+              setPin(digitsOnly)
             }}
             onKeyDown={(e) => {
+              const allowControl =
+                e.key === 'Backspace' ||
+                e.key === 'Delete' ||
+                e.key === 'Tab' ||
+                e.key === 'ArrowLeft' ||
+                e.key === 'ArrowRight' ||
+                e.key === 'Home' ||
+                e.key === 'End'
+              if (!allowControl && !/^\d$/.test(e.key)) {
+                e.preventDefault()
+                return
+              }
               if (e.key === 'Enter') {
                 e.preventDefault()
                 submit()
@@ -65,13 +75,9 @@ export default function AdminRolePinModal({ open, onClose, onVerified }) {
             autoComplete="off"
             autoFocus
             inputMode="numeric"
+            pattern="[0-9]*"
           />
         </label>
-        {error ? (
-          <p className="ah-admin-pin-error" role="alert">
-            {error}
-          </p>
-        ) : null}
         <div className="ah-inbound-sup-actions">
           <button
             type="button"

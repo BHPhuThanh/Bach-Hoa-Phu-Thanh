@@ -1851,6 +1851,7 @@ export default function AdminHub({
     setInboundQuickEditSelectedVid(null)
     setInboundQuickEditDraft(null)
     setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+    setPendingUnitDraft(null)
   }, [])
 
   const openInboundProductQuickEdit = useCallback(
@@ -1862,7 +1863,7 @@ export default function AdminHub({
         : String(variantIdOrLine || '').trim()
       const vid = rawVid
       if (!vid) return
-      const ctx = findVariantContext(catalogList, vid)
+      const ctx = findVariantContext(catalogListForGoodsEdit, vid)
       const rowVariantId = ctx?.clicked?.id ?? vid
       const baseVid = ctx?.variants?.[0]?.id ?? rowVariantId
       const vOpen = ctx?.variants.find((x) => x.id === baseVid) ?? ctx?.clicked
@@ -1876,7 +1877,7 @@ export default function AdminHub({
       setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
       setInboundQuickEditExpandId(rowVariantId)
     },
-    [catalogList]
+    [catalogListForGoodsEdit]
   )
 
   const openGoodsProductQuickEdit = useCallback(
@@ -1912,18 +1913,18 @@ export default function AdminHub({
 
   useEffect(() => {
     if (!inboundQuickEditExpandId) return
-    const ctx = findVariantContext(catalogList, inboundQuickEditExpandId)
+    const ctx = findVariantContext(catalogListForGoodsEdit, inboundQuickEditExpandId)
     if (ctx?.product && isComboCatalogProduct(ctx.product)) {
       setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_COMBO)
       return
     }
     setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
-  }, [inboundQuickEditExpandId, catalogList])
+  }, [inboundQuickEditExpandId, catalogListForGoodsEdit])
 
   const inboundQuickEditCtx = useMemo(() => {
     if (!inboundQuickEditExpandId) return null
-    return findVariantContext(catalogList, inboundQuickEditExpandId)
-  }, [catalogList, inboundQuickEditExpandId])
+    return findVariantContext(catalogListForGoodsEdit, inboundQuickEditExpandId)
+  }, [catalogListForGoodsEdit, inboundQuickEditExpandId])
 
   const inboundQuickEditVariant = useMemo(() => {
     if (!inboundQuickEditCtx || !inboundQuickEditSelectedVid) return null
@@ -2133,6 +2134,20 @@ export default function AdminHub({
 
   /** Modal thiết lập đa ĐVT + bảng hàng cùng loại (tab Hàng hóa / tab solo). */
   const [unitModal, setUnitModal] = useState(null)
+  /** Local State First: thay đổi ĐVT giữ cục bộ, chỉ ghi API khi bấm Lưu form chi tiết. */
+  const [pendingUnitDraft, setPendingUnitDraft] = useState(null)
+
+  const catalogListForGoodsEdit = useMemo(() => {
+    if (!pendingUnitDraft?.anchorVariantId || !Array.isArray(pendingUnitDraft.replacements)) {
+      return catalogList
+    }
+    const anchorCtx = findVariantContext(catalogList, pendingUnitDraft.anchorVariantId)
+    if (!anchorCtx?.clicked) return catalogList
+    const root = normalizeGroupRoot(anchorCtx.clicked.code, anchorCtx.clicked.linkedMasterCode)
+    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
+    return buildDisplayCatalog([...kept, ...pendingUnitDraft.replacements])
+  }, [catalogList, pendingUnitDraft])
 
   const closeUnitModal = useCallback(() => setUnitModal(null), [])
 
@@ -2150,14 +2165,14 @@ export default function AdminHub({
 
   useEffect(() => {
     if (!unitModal?.anchorVariantId) return
-    if (findVariantContext(catalogList, unitModal.anchorVariantId)) return
+    if (findVariantContext(catalogListForGoodsEdit, unitModal.anchorVariantId)) return
     setUnitModal(null)
-  }, [catalogList, unitModal?.anchorVariantId])
+  }, [catalogListForGoodsEdit, unitModal?.anchorVariantId])
 
   const openInboundGoodsUnitModal = useCallback(() => {
     const anchor = inboundQuickEditSelectedVid || inboundQuickEditExpandId
     if (!anchor) return
-    const ctx = findVariantContext(catalogList, String(anchor))
+    const ctx = findVariantContext(catalogListForGoodsEdit, String(anchor))
     if (!ctx?.variants?.length) return
     setUnitModal({
       anchorVariantId: String(anchor),
@@ -2165,7 +2180,7 @@ export default function AdminHub({
       source: 'inbound',
       deletedVariantIds: [],
     })
-  }, [catalogList, inboundQuickEditSelectedVid, inboundQuickEditExpandId])
+  }, [catalogListForGoodsEdit, inboundQuickEditSelectedVid, inboundQuickEditExpandId])
 
   const saveProductDetailFromDraft = useCallback(
     (variant, draft) => {
@@ -2203,6 +2218,42 @@ export default function AdminHub({
         beforeQty: variant.stockQty,
         afterQty: patch.stockQty,
       })
+      const pendingForVariant =
+        pendingUnitDraft &&
+        findVariantContext(catalogListForGoodsEdit, pendingUnitDraft.anchorVariantId)?.variants?.some(
+          (x) => x.id === variant.id
+        )
+          ? pendingUnitDraft
+          : null
+
+      if (pendingForVariant) {
+        const patchedRows = pendingForVariant.replacements.map((row) => {
+          if (row.id !== variant.id) {
+            return {
+              ...row,
+              name: nameTrim,
+              nameRaw: nameTrim,
+            }
+          }
+          return {
+            ...row,
+            ...patch,
+            name: nameTrim,
+            nameRaw: nameTrim,
+            unitLabel: row.unitLabel,
+            conversion: row.conversion,
+            conversionValue: row.conversionValue,
+            linkedMasterCode: row.linkedMasterCode,
+          }
+        })
+        void replaceCatalogGroupFromModal(pendingForVariant.anchorVariantId, patchedRows, {
+          deletedVariantIds: pendingForVariant.deletedVariantIds || [],
+        })
+        setPendingUnitDraft(null)
+        triggerGoodsSaveSuccessToast()
+        return true
+      }
+
       if (onUpdateCatalogVariant) {
         recordCostAdjustOnSave(variant, patch, nameTrim)
         onUpdateCatalogVariant(variant.id, patch)
@@ -2236,6 +2287,9 @@ export default function AdminHub({
       triggerGoodsSaveSuccessToast,
       recordManualStockAdjustmentVoucher,
       recordCostAdjustOnSave,
+      pendingUnitDraft,
+      catalogListForGoodsEdit,
+      replaceCatalogGroupFromModal,
     ]
   )
 
@@ -2283,6 +2337,7 @@ export default function AdminHub({
   const discardGoodsDetailDraft = useCallback(() => {
     const v = inboundQuickEditVariant
     if (!v) return
+    setPendingUnitDraft(null)
     setInboundQuickEditDraft(buildGoodsDetailDraft(v))
   }, [inboundQuickEditVariant, buildGoodsDetailDraft])
 
@@ -2323,8 +2378,8 @@ export default function AdminHub({
 
   const soloGoodsCtx = useMemo(() => {
     if (!soloActiveVariantId) return null
-    return findVariantContext(catalogList, soloActiveVariantId)
-  }, [catalogList, soloActiveVariantId])
+    return findVariantContext(catalogListForGoodsEdit, soloActiveVariantId)
+  }, [catalogListForGoodsEdit, soloActiveVariantId])
 
   const soloGoodsVariant = useMemo(() => {
     if (!soloGoodsCtx || !soloActiveVariantId) return null
@@ -2611,6 +2666,36 @@ export default function AdminHub({
           ? Number(soloGoodsVariant.stockNormMax)
           : null,
     }
+    const pendingForVariant =
+      pendingUnitDraft &&
+      findVariantContext(catalogListForGoodsEdit, pendingUnitDraft.anchorVariantId)?.variants?.some(
+        (x) => x.id === soloGoodsVariant.id
+      )
+        ? pendingUnitDraft
+        : null
+    if (pendingForVariant) {
+      const patchedRows = pendingForVariant.replacements.map((row) => {
+        if (row.id !== soloGoodsVariant.id) {
+          return { ...row, name: nameTrim, nameRaw: nameTrim }
+        }
+        return {
+          ...row,
+          ...patch,
+          name: nameTrim,
+          nameRaw: nameTrim,
+          unitLabel: row.unitLabel,
+          conversion: row.conversion,
+          conversionValue: row.conversionValue,
+          linkedMasterCode: row.linkedMasterCode,
+        }
+      })
+      await replaceCatalogGroupFromModal(pendingForVariant.anchorVariantId, patchedRows, {
+        deletedVariantIds: pendingForVariant.deletedVariantIds || [],
+      })
+      setPendingUnitDraft(null)
+      triggerGoodsSaveSuccessToast()
+      return
+    }
     recordManualStockAdjustmentVoucher({
       variantId: soloGoodsVariant.id,
       productName: nameTrim || String(soloGoodsVariant.name || '').trim(),
@@ -2668,6 +2753,9 @@ export default function AdminHub({
     triggerGoodsSaveSuccessToast,
     recordManualStockAdjustmentVoucher,
     recordCostAdjustOnSave,
+    pendingUnitDraft,
+    catalogListForGoodsEdit,
+    replaceCatalogGroupFromModal,
   ])
 
   const copySoloGoodsDetail = useCallback(() => {
@@ -2710,6 +2798,7 @@ export default function AdminHub({
   const discardSoloGoodsDraftChanges = useCallback(() => {
     const vid = parseSoloProductTabId(activeTab)
     if (!vid || !soloGoodsVariant) return
+    setPendingUnitDraft(null)
     setSoloGoodsDraftByVariantId((prev) => ({
       ...prev,
       [vid]: buildGoodsDetailDraft(soloGoodsVariant),
@@ -2744,7 +2833,7 @@ export default function AdminHub({
 
   const openSoloGoodsUnitModal = useCallback(() => {
     if (!soloActiveVariantId) return
-    const ctx = findVariantContext(catalogList, soloActiveVariantId)
+    const ctx = findVariantContext(catalogListForGoodsEdit, soloActiveVariantId)
     if (!ctx?.variants?.length) return
     setUnitModal({
       anchorVariantId: String(soloActiveVariantId),
@@ -2752,12 +2841,12 @@ export default function AdminHub({
       source: 'solo',
       deletedVariantIds: [],
     })
-  }, [catalogList, soloActiveVariantId])
+  }, [catalogListForGoodsEdit, soloActiveVariantId])
 
   const commitUnitModal = useCallback(() => {
     if (!unitModal) return
 
-    const ctx = findVariantContext(catalogList, unitModal.anchorVariantId)
+    const ctx = findVariantContext(catalogListForGoodsEdit, unitModal.anchorVariantId)
     if (!ctx?.variants?.length) {
       setUnitModal(null)
       return
@@ -2826,7 +2915,11 @@ export default function AdminHub({
     const anchorForSave = unitModal.anchorVariantId
 
     setUnitModal(null)
-    triggerGoodsSaveSuccessToast()
+    setPendingUnitDraft({
+      anchorVariantId: anchorForSave,
+      replacements,
+      deletedVariantIds,
+    })
 
     if (mainId && src === 'inbound') {
       inboundQuickEditPreserveRef.current = {
@@ -2847,16 +2940,13 @@ export default function AdminHub({
       setActiveTab(toSoloProductTabId(mainId))
     }
 
-    void replaceCatalogGroupFromModal(anchorForSave, replacements, { deletedVariantIds })
   }, [
     unitModal,
-    catalogList,
+    catalogListForGoodsEdit,
     inboundQuickEditDraft,
     inboundQuickEditVariant,
     soloGoodsDraft,
     soloGoodsVariant,
-    replaceCatalogGroupFromModal,
-    triggerGoodsSaveSuccessToast,
   ])
 
   const updateUnitModalConversionAtKey = useCallback((key, raw) => {
@@ -5302,7 +5392,7 @@ export default function AdminHub({
         onInventoryDocumentActivate={handleInventoryLedgerDocActivate}
         getStockLedgerDetailAbsoluteUrl={getStockLedgerDetailAbsoluteUrl}
         openGoodsUnitModal={openInboundGoodsUnitModal}
-        catalogList={catalogList}
+        catalogList={catalogListForGoodsEdit}
         isComboDetail={!!inboundQuickEditCtx?.product && isComboCatalogProduct(inboundQuickEditCtx.product)}
         comboDetailProduct={inboundQuickEditCtx?.product ?? null}
         onEditComboProduct={() => {

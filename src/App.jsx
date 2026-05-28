@@ -2512,6 +2512,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useSellerRole()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
+  const [roleSwitchToast, setRoleSwitchToast] = useState(null)
+  const roleSwitchToastClearRef = useRef(null)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
@@ -2530,6 +2532,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     headerSearchDebounceRef.current?.(headerSearch)
   }, [headerSearch])
   useEffect(() => () => headerSearchDebounceRef.current?.cancel(), [])
+  useEffect(
+    () => () => {
+      if (roleSwitchToastClearRef.current != null) {
+        window.clearTimeout(roleSwitchToastClearRef.current)
+        roleSwitchToastClearRef.current = null
+      }
+    },
+    []
+  )
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
   const lowStockAlertWrapRef = useRef(null)
@@ -3939,6 +3950,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     },
     [activeSellerId, setActiveSellerId]
   )
+
+  const showRoleSwitchToast = useCallback((message, kind = 'success') => {
+    const text = String(message ?? '').trim()
+    if (!text) return
+    if (roleSwitchToastClearRef.current != null) {
+      window.clearTimeout(roleSwitchToastClearRef.current)
+      roleSwitchToastClearRef.current = null
+    }
+    setRoleSwitchToast({ message: text, kind })
+    roleSwitchToastClearRef.current = window.setTimeout(() => {
+      setRoleSwitchToast(null)
+      roleSwitchToastClearRef.current = null
+    }, 2200)
+  }, [])
 
   useEffect(() => {
     if (!sellerMenuOpen) return
@@ -7274,11 +7299,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <AdminRolePinModal
         open={adminPinModalOpen}
         onClose={() => setAdminPinModalOpen(false)}
+        onInvalidPin={() => showRoleSwitchToast('Sai mật khẩu', 'error')}
         onVerified={() => {
           setActiveSellerId('admin')
           setAdminPinModalOpen(false)
+          showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
         }}
       />
+
+      {roleSwitchToast ? (
+        <div
+          className={`pos-scan-toast${roleSwitchToast.kind === 'error' ? ' pos-scan-toast--error' : ''}`}
+          role={roleSwitchToast.kind === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {roleSwitchToast.message}
+        </div>
+      ) : null}
 
       {customerAddOpen && activeView === 'sell' && (
         <div
