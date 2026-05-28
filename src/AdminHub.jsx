@@ -29,8 +29,7 @@ import {
   findVariantContext,
   resolveInboundCatalogProductVariant,
 } from './inboundFormUnitHelpers.js'
-import { getDoanhThuAbsUrl, getInboundCreateAbsUrl } from './sellerRoleStorage.js'
-import { useSellerRole } from './sellerRoleContext.jsx'
+import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
 import { clearAllOrders, getAllOrders, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
@@ -1147,7 +1146,6 @@ export default function AdminHub({
   const [returnLedgerRemoteLoading, setReturnLedgerRemoteLoading] = useState(false)
 
   const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
-  const { sellerId: hubSellerId } = useSellerRole()
   const isHubMobileLayout = useViewportMaxWidth(768)
   const navigate = useNavigate()
   const location = useLocation()
@@ -1570,8 +1568,8 @@ export default function AdminHub({
   }, [])
 
   const stockCheckCreatedByLabel = useCallback(() => {
-    return hubSellerId === 'staff' ? 'Nhân viên bán hàng' : 'Admin — Chủ cửa hàng'
-  }, [hubSellerId])
+    return readStoredSellerId() === 'staff' ? 'Nhân viên bán hàng' : 'Admin — Chủ cửa hàng'
+  }, [])
 
   const recordManualStockAdjustmentVoucher = useCallback(
     ({ variantId, productName, productCode, unitLabel, beforeQty, afterQty }) => {
