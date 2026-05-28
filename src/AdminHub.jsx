@@ -4221,7 +4221,15 @@ export default function AdminHub({
   }, [])
 
   const openEditEmployeeModal = useCallback((row) => {
-    setEditingEmployee(row)
+    const safe = row && typeof row === 'object' ? row : {}
+    setEditingEmployee({
+      id: String(safe.id ?? '').trim(),
+      name: String(safe.name ?? '').trim(),
+      phone: String(safe.phone ?? '').trim() || '—',
+      address: String(safe.address ?? '').trim() || '—',
+      cccd: String(safe.cccd ?? '').trim() || '—',
+      mail: String(safe.mail ?? '').trim() || '—',
+    })
     setEmployeeModalOpen(true)
   }, [])
 
@@ -4342,7 +4350,8 @@ export default function AdminHub({
     async (deltaByVariant, stockMeta) => {
       if (!deltaByVariant || deltaByVariant.size === 0) return { ok: true }
       if (typeof onBulkPatchCatalogVariants === 'function') {
-        const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
+        const srcList = Array.isArray(catalogListForInbound) ? catalogListForInbound : []
+        const flat = srcList.flatMap((p) => p?.groupVariants || [p]).filter(Boolean)
         const patches = []
         for (const [variantId, delta] of deltaByVariant) {
           if (!delta) continue
@@ -4365,7 +4374,8 @@ export default function AdminHub({
         return onBulkPatchCatalogVariants(patches, ib)
       }
       if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
-      let nextFlat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const standaloneProducts = Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []
+      let nextFlat = standaloneProducts.flatMap((p) => p?.groupVariants || [p]).filter(Boolean)
       for (const [variantId, delta] of deltaByVariant) {
         if (!delta) continue
         nextFlat = nextFlat.map((v) => {
@@ -7768,7 +7778,6 @@ export default function AdminHub({
                             title="Sửa nhân viên"
                             aria-label={`Sửa ${r.name || 'nhân viên'}`}
                             onClick={() => openEditEmployeeModal(r)}
-                            disabled={!r.id}
                           >
                             ✎
                           </button>
