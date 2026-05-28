@@ -36,6 +36,7 @@ import {
 } from './sellerRoleStorage.js'
 import { useSellerRole } from './sellerRoleContext.jsx'
 import AdminRolePinModal from './AdminRolePinModal.jsx'
+import AdminPinChangeModal from './AdminPinChangeModal.jsx'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
@@ -148,6 +149,7 @@ import {
   insertCustomerSupabase,
   mergeCustomerListsDedupe,
 } from './entityContactsRepository.js'
+import { updateAdminPinSupabase, verifyAdminPinSupabase } from './appSettingsRepository.js'
 import {
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
@@ -2512,6 +2514,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useSellerRole()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
+  const [adminPinChecking, setAdminPinChecking] = useState(false)
+  const [adminPinChangeOpen, setAdminPinChangeOpen] = useState(false)
+  const [adminPinChangeSaving, setAdminPinChangeSaving] = useState(false)
   const [roleSwitchToast, setRoleSwitchToast] = useState(null)
   const roleSwitchToastClearRef = useRef(null)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
@@ -3964,6 +3969,62 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       roleSwitchToastClearRef.current = null
     }, 2200)
   }, [])
+
+  const verifyAdminPinAndSwitchRole = useCallback(
+    async (pin) => {
+      if (adminPinChecking) return
+      setAdminPinChecking(true)
+      try {
+        const ck = await verifyAdminPinSupabase(pin)
+        if (!ck.ok) {
+          showRoleSwitchToast(formatPostgrestErrorForUser(ck.error), 'error')
+          return
+        }
+        if (!ck.matched) {
+          showRoleSwitchToast('Sai mật khẩu', 'error')
+          return
+        }
+        setActiveSellerId('admin')
+        setAdminPinModalOpen(false)
+        showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
+      } finally {
+        setAdminPinChecking(false)
+      }
+    },
+    [adminPinChecking, setActiveSellerId, showRoleSwitchToast]
+  )
+
+  const submitAdminPinChange = useCallback(
+    async ({ currentPin, newPin, confirmPin }) => {
+      if (adminPinChangeSaving) return
+      if (newPin !== confirmPin) {
+        showRoleSwitchToast('Mật khẩu mới và xác nhận chưa khớp', 'error')
+        return
+      }
+      setAdminPinChangeSaving(true)
+      try {
+        const ck = await verifyAdminPinSupabase(currentPin)
+        if (!ck.ok) {
+          showRoleSwitchToast(formatPostgrestErrorForUser(ck.error), 'error')
+          return
+        }
+        if (!ck.matched) {
+          showRoleSwitchToast('Mật khẩu hiện tại không đúng', 'error')
+          return
+        }
+        const upd = await updateAdminPinSupabase(newPin)
+        if (!upd.ok) {
+          showRoleSwitchToast(formatPostgrestErrorForUser(upd.error), 'error')
+          return
+        }
+        setAdminPinChangeOpen(false)
+        showRoleSwitchToast('Đổi mật khẩu thành công', 'success')
+      } finally {
+        setAdminPinChangeSaving(false)
+      }
+    },
+    [adminPinChangeSaving, showRoleSwitchToast]
+  )
 
   useEffect(() => {
     if (!sellerMenuOpen) return
@@ -5610,6 +5671,34 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       </button>
     )
 
+    const changeAdminPinBtn =
+      activeView === 'sell' && activeSellerId === 'admin' ? (
+        <button
+          key="change-admin-pin"
+          type="button"
+          className="app-header-icon-btn"
+          aria-label="Đổi mật khẩu Admin"
+          title="Đổi mật khẩu Admin"
+          onClick={() => setAdminPinChangeOpen(true)}
+        >
+          <svg
+            className="app-header-icon-svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <rect x="3" y="11" width="18" height="10" rx="2" />
+            <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+          </svg>
+        </button>
+      ) : null
+
     const costNotifyCount = appCostChangeNotifications.length
     const totalNotifyCount = supabaseUnreadCount + costNotifyCount
     const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
@@ -5874,6 +5963,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             {printerBlock}
             {homeBtn}
             {shortcutsBtn}
+            {changeAdminPinBtn}
             {bellBtn}
             {cartBtn}
           </div>
@@ -5889,6 +5979,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <div className={railClass} ref={sellerMenuRef}>
         {homeBtn}
         {shortcutsBtn}
+        {changeAdminPinBtn}
         {bellBtn}
         {cartBtn}
         <div className="app-header-meta-cluster">
@@ -7299,12 +7390,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <AdminRolePinModal
         open={adminPinModalOpen}
         onClose={() => setAdminPinModalOpen(false)}
-        onInvalidPin={() => showRoleSwitchToast('Sai mật khẩu', 'error')}
-        onVerified={() => {
-          setActiveSellerId('admin')
-          setAdminPinModalOpen(false)
-          showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
-        }}
+        isSubmitting={adminPinChecking}
+        onSubmitPin={verifyAdminPinAndSwitchRole}
+      />
+
+      <AdminPinChangeModal
+        open={adminPinChangeOpen}
+        isSubmitting={adminPinChangeSaving}
+        onClose={() => setAdminPinChangeOpen(false)}
+        onSubmit={submitAdminPinChange}
       />
 
       {roleSwitchToast ? (

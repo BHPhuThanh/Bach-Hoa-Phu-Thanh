@@ -9299,6 +9299,38 @@ li.ah-inbound-suggest-empty {
   color: #94a3b8;
 }
 
+.ah-admin-pin-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.ah-admin-pin-input-row .ah-inbound-form-input {
+  flex: 1 1 auto;
+}
+
+.ah-admin-pin-eye-btn {
+  width: 2.35rem;
+  min-width: 2.35rem;
+  border: 1px solid rgba(125, 211, 252, 0.32);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #bae6fd;
+  font-size: 1rem;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.ah-admin-pin-eye-btn:hover:not(:disabled) {
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.ah-admin-pin-eye-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .ah-admin-pin-error {
   margin: 0 0 0.5rem;
   font-size: 0.8rem;

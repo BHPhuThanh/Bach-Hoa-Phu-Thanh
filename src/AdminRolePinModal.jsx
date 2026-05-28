@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
  * Xác nhận PIN khi chuyển từ Nhân viên → Admin trên POS.
  * PIN: `VITE_ADMIN_ROLE_PIN` (mặc định 1234 nếu không cấu hình).
  */
-export default function AdminRolePinModal({ open, onClose, onVerified, onInvalidPin }) {
+export default function AdminRolePinModal({ open, onClose, onSubmitPin, isSubmitting = false }) {
   const [pin, setPin] = useState('')
 
   useEffect(() => {
@@ -15,12 +15,8 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
   if (!open) return null
 
   const submit = () => {
-    const expected = String(import.meta.env.VITE_ADMIN_ROLE_PIN ?? '1234').trim()
-    if (pin.trim() !== expected) {
-      onInvalidPin?.()
-      return
-    }
-    onVerified?.()
+    if (isSubmitting) return
+    onSubmitPin?.(pin)
   }
 
   return (
@@ -28,7 +24,7 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
       className="ah-inbound-sup-backdrop ah-admin-pin-backdrop"
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose?.()
+        if (e.target === e.currentTarget && !isSubmitting) onClose?.()
       }}
     >
       <div
@@ -55,6 +51,11 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
               setPin(digitsOnly)
             }}
             onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                submit()
+                return
+              }
               const allowControl =
                 e.key === 'Backspace' ||
                 e.key === 'Delete' ||
@@ -67,10 +68,6 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
                 e.preventDefault()
                 return
               }
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                submit()
-              }
             }}
             autoComplete="off"
             autoFocus
@@ -82,6 +79,7 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
           <button
             type="button"
             className="ah-inbound-footer-btn ah-inbound-footer-btn--ghost"
+            disabled={isSubmitting}
             onClick={() => onClose?.()}
           >
             Hủy
@@ -89,9 +87,10 @@ export default function AdminRolePinModal({ open, onClose, onVerified, onInvalid
           <button
             type="button"
             className="ah-inbound-footer-btn ah-inbound-footer-btn--done"
+            disabled={isSubmitting}
             onClick={submit}
           >
-            Xác nhận
+            {isSubmitting ? 'Đang kiểm tra…' : 'Xác nhận'}
           </button>
         </div>
       </div>
