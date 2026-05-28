@@ -1399,80 +1399,69 @@ export default function AdminHub({
     printReceiptHtml(html)
   }
 
-  const handleDeleteOrder = useCallback(
-    async (orderRaw) => {
-      if (revenueReadOnly) {
-        alert('Chỉ Admin mới xóa được đơn hàng.')
-        return
+  async function handleDeleteOrder(orderRaw) {
+    if (revenueReadOnly) {
+      alert('Chỉ Admin mới xóa được đơn hàng.')
+      return
+    }
+    const base = normalizePosOrder(orderRaw, catalogList, { preferStoredLineFinancials: true })
+    const orderId = String(base?.id || '').trim()
+    if (!orderId) {
+      alert('Không xác định được mã đơn để xóa.')
+      return
+    }
+    if (
+      !window.confirm(
+        'Sếp có chắc chắn muốn xóa vĩnh viễn đơn hàng này không? Hành động này sẽ hoàn tác cả tồn kho.'
+      )
+    ) {
+      return
+    }
+    if (String(deletingOrderId || '').trim() === orderId) return
+
+    setDeletingOrderId(orderId)
+    try {
+      const deltas = new Map()
+      for (const it of base.items || []) {
+        const variantId = String(resolvePosItemVariantId(it) || '').trim()
+        if (!variantId) continue
+        const qty = Math.max(0, Number(it?.qty) || 0)
+        const returned = Math.max(0, Number(it?.returnedQty) || 0)
+        const rollbackQty = Math.max(0, qty - returned)
+        if (rollbackQty <= 0) continue
+        deltas.set(variantId, (deltas.get(variantId) || 0) + rollbackQty)
       }
-      const base = normalizePosOrder(orderRaw, catalogList, { preferStoredLineFinancials: true })
-      const orderId = String(base?.id || '').trim()
-      if (!orderId) {
-        alert('Không xác định được mã đơn để xóa.')
-        return
+      if (deltas.size > 0) {
+        const stockRes = await applyInboundStockDeltas(deltas, {
+          documentCode: `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`,
+          inboundOrderId: orderId,
+        })
+        if (stockRes?.ok === false) {
+          throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
+        }
       }
-      if (
-        !window.confirm(
-          'Sếp có chắc chắn muốn xóa vĩnh viễn đơn hàng này không? Hành động này sẽ hoàn tác cả tồn kho.'
+
+      const rmLedger = await deletePosReturnLedgerByOrderId(orderId)
+      if (!rmLedger.ok) {
+        throw new Error(
+          formatPostgrestErrorForUser(rmLedger.error) || 'Không thể xóa lịch sử hoàn trả liên quan.'
         )
-      ) {
-        return
       }
-      if (String(deletingOrderId || '').trim() === orderId) return
 
-      setDeletingOrderId(orderId)
-      try {
-        const deltas = new Map()
-        for (const it of base.items || []) {
-          const variantId = String(resolvePosItemVariantId(it) || '').trim()
-          if (!variantId) continue
-          const qty = Math.max(0, Number(it?.qty) || 0)
-          const returned = Math.max(0, Number(it?.returnedQty) || 0)
-          const rollbackQty = Math.max(0, qty - returned)
-          if (rollbackQty <= 0) continue
-          deltas.set(variantId, (deltas.get(variantId) || 0) + rollbackQty)
-        }
-        if (deltas.size > 0) {
-          const stockRes = await applyInboundStockDeltas(deltas, {
-            documentCode: `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`,
-            inboundOrderId: orderId,
-          })
-          if (stockRes?.ok === false) {
-            throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
-          }
-        }
-
-        const rmLedger = await deletePosReturnLedgerByOrderId(orderId)
-        if (!rmLedger.ok) {
-          throw new Error(
-            formatPostgrestErrorForUser(rmLedger.error) || 'Không thể xóa lịch sử hoàn trả liên quan.'
-          )
-        }
-
-        await deleteOrderById(orderId)
-        setSelected((cur) => (String(cur?.id || '').trim() === orderId ? null : cur))
-        await Promise.all([refetchOrdersQuiet(), refreshPosReturnLedger()])
-        showHubCameraToast('Xóa đơn hàng thành công.', 'ok')
-      } catch (err) {
-        console.error('[handleDeleteOrder] failed', err)
-        showHubCameraToast(
-          formatPostgrestErrorForUser(err) || 'Không thể xóa đơn hàng. Vui lòng thử lại.',
-          'err'
-        )
-      } finally {
-        setDeletingOrderId('')
-      }
-    },
-    [
-      revenueReadOnly,
-      catalogList,
-      deletingOrderId,
-      applyInboundStockDeltas,
-      refetchOrdersQuiet,
-      refreshPosReturnLedger,
-      showHubCameraToast,
-    ]
-  )
+      await deleteOrderById(orderId)
+      setSelected((cur) => (String(cur?.id || '').trim() === orderId ? null : cur))
+      await Promise.all([refetchOrdersQuiet(), refreshPosReturnLedger()])
+      showHubCameraToast('Xóa đơn hàng thành công.', 'ok')
+    } catch (err) {
+      console.error('[handleDeleteOrder] failed', err)
+      showHubCameraToast(
+        formatPostgrestErrorForUser(err) || 'Không thể xóa đơn hàng. Vui lòng thử lại.',
+        'err'
+      )
+    } finally {
+      setDeletingOrderId('')
+    }
+  }
 
   /* —— Hàng hóa —— */
   const [standaloneCatalog, setStandaloneCatalog] = useState(null)
