@@ -96,12 +96,6 @@ export async function clearAllOrders() {
   })
 }
 
-function isMissingTableError(error) {
-  const code = String(error?.code || '').trim()
-  const msg = String(error?.message || '').toLowerCase()
-  return code === '42P01' || code === 'PGRST205' || msg.includes('could not find the table')
-}
-
 export async function deleteOrderById(orderIdRaw) {
   const orderId = String(orderIdRaw || '').trim()
   if (!orderId) throw new Error('Thiếu orderId để xóa đơn hàng.')
@@ -109,13 +103,9 @@ export async function deleteOrderById(orderIdRaw) {
     const sb = getSupabaseClient()
     if (!sb) throw new Error('Supabase chưa khởi tạo')
 
-    // Bảng nguồn hiện tại: sales.
+    // Bảng đơn thực tế đang được GET/LOAD ở Doanh thu: sales.
     const { error: salesErr } = await sb.from(SALES_TABLE).delete().eq('id', orderId)
     if (salesErr) throw salesErr
-
-    // Chỉ giữ xóa bảng đơn chính (orders) nếu hệ thống có bảng này.
-    const { error: ordersErr } = await sb.from('orders').delete().eq('id', orderId)
-    if (ordersErr && !isMissingTableError(ordersErr)) throw ordersErr
     return
   }
 
