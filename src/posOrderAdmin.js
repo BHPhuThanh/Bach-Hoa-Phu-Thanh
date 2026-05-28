@@ -3,7 +3,7 @@ import { normalizeCatalogUnitLabel } from './productUnits.js'
 
 export function resolvePosItemVariantId(catalogList, item) {
   if (item?.variantId != null && String(item.variantId).trim()) return String(item.variantId).trim()
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const code = String(item?.code || '').trim()
   const u = normalizeCatalogUnitLabel(item?.unitLabel || '')
   const cand = flat.filter(
@@ -58,7 +58,7 @@ export function computePosOrderStatusFromItems(items) {
 export function normalizePosOrder(o, catalogList, opts = {}) {
   const preferStored = opts.preferStoredLineFinancials === true
   if (!o) return null
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const oid = String(o.id || '')
   const items = (o.items || []).map((raw, idx) => {
     const qty = Math.max(0, Number(raw.qty) || 0)

@@ -205,7 +205,9 @@ function getStockLedgerDetailAbsoluteUrl(link) {
 function catalogHasNormalizedBarcode(catalogProducts, needleNorm) {
   const n = String(needleNorm ?? '').trim()
   if (!n) return false
-  const flat = (catalogProducts || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogProducts) ? catalogProducts : []).flatMap(
+    (p) => p.groupVariants || [p]
+  )
   return flat.some((v) => String(normalizeBarcodeValue(v.barcode ?? '')) === n)
 }
 
@@ -782,7 +784,7 @@ function inboundLineThuongHieuResolved(line, catalogList) {
   if (n.thuong_hieu) return n.thuong_hieu
   const vid = String(n.variantId || '').trim()
   if (!vid || !catalogList?.length) return ''
-  const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const v = flat.find((x) => String(x.id) === vid)
   return String(v?.brand ?? '').trim()
 }
@@ -1824,7 +1826,7 @@ export default function AdminHub({
     const anchorCtx = findVariantContext(catalogList, pendingUnitDraft.anchorVariantId)
     if (!anchorCtx?.clicked) return catalogList
     const root = normalizeGroupRoot(anchorCtx.clicked.code, anchorCtx.clicked.linkedMasterCode)
-    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
     const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
     return buildDisplayCatalog([...kept, ...pendingUnitDraft.replacements])
   }, [catalogList, pendingUnitDraft])
@@ -2097,7 +2099,7 @@ export default function AdminHub({
     (payload) => {
       const { mode, anchorVariantId, flatRow, replaceCatalogId } = payload
       const codeLc = String(flatRow.code || '').trim().toLowerCase()
-      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
       if (mode !== 'edit' && flat.some((r) => String(r.code || '').trim().toLowerCase() === codeLc)) {
         window.alert('Mã hàng đã tồn tại. Vui lòng đổi mã SKU.')
         return
@@ -2171,7 +2173,7 @@ export default function AdminHub({
       const deletedVariantIds = Array.isArray(opts.deletedVariantIds)
         ? opts.deletedVariantIds.map(String).filter(Boolean)
         : []
-      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
       const target = flat.find((v) => v.id === anchorVariantId)
       if (!target) return Promise.resolve({ ok: false })
       const root = normalizeGroupRoot(target.code, target.linkedMasterCode)
@@ -2332,7 +2334,9 @@ export default function AdminHub({
         return true
       }
       if (standaloneCatalog?.products) {
-        const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+        const flat = (Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []).flatMap(
+          (p) => p.groupVariants || [p]
+        )
         const target = flat.find((v) => v.id === variant.id)
         if (!target) return false
         const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
@@ -2813,7 +2817,9 @@ export default function AdminHub({
       return
     }
     if (standaloneCatalog?.products) {
-      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const flat = (Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []).flatMap(
+        (p) => p.groupVariants || [p]
+      )
       const target = flat.find((v) => v.id === soloGoodsVariant.id)
       if (!target) return
       const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)
@@ -4320,7 +4326,9 @@ export default function AdminHub({
       })
       if (valid.length === 0) return
       if (typeof onBulkPatchCatalogVariants === 'function') {
-        const flat = catalogListForInbound.flatMap((p) => p.groupVariants || [p])
+        const flat = (Array.isArray(catalogListForInbound) ? catalogListForInbound : []).flatMap(
+          (p) => p.groupVariants || [p]
+        )
         const patches = []
         for (const l of valid) {
           const n = normalizeInboundLine(l)
@@ -4335,7 +4343,9 @@ export default function AdminHub({
         return
       }
       if (!standaloneCatalog?.products?.length) return
-      const flat = standaloneCatalog.products.flatMap((p) => p.groupVariants || [p])
+      const flat = (Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []).flatMap(
+        (p) => p.groupVariants || [p]
+      )
       const nextFlat = flat.map((v) => {
         const hit = valid.find((l) => normalizeInboundLine(l).variantId === v.id)
         if (!hit) return v
@@ -4361,7 +4371,7 @@ export default function AdminHub({
       if (!deltaByVariant || deltaByVariant.size === 0) return { ok: true }
       if (typeof onBulkPatchCatalogVariants === 'function') {
         const srcList = Array.isArray(catalogListForInbound) ? catalogListForInbound : []
-        const flat = srcList.flatMap((p) => p?.groupVariants || [p]).filter(Boolean)
+        const flat = (Array.isArray(srcList) ? srcList : []).flatMap((p) => p?.groupVariants || [p]).filter(Boolean)
         const patches = []
         for (const [variantId, delta] of deltaByVariant) {
           if (!delta) continue
@@ -4385,7 +4395,9 @@ export default function AdminHub({
       }
       if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
       const standaloneProducts = Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []
-      let nextFlat = standaloneProducts.flatMap((p) => p?.groupVariants || [p]).filter(Boolean)
+      let nextFlat = (Array.isArray(standaloneProducts) ? standaloneProducts : [])
+        .flatMap((p) => p?.groupVariants || [p])
+        .filter(Boolean)
       for (const [variantId, delta] of deltaByVariant) {
         if (!delta) continue
         nextFlat = nextFlat.map((v) => {
@@ -5763,7 +5775,7 @@ export default function AdminHub({
     (orderId, variantIdRaw) => {
       const vid = String(variantIdRaw || '').trim()
       if (!vid) return
-      const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+      const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
       const v = flat.find((x) => x.id === vid)
       if (!v) return
       setPosDetailEditDrafts((prev) => {
@@ -6339,7 +6351,7 @@ export default function AdminHub({
 
   const catalogFlatVariantsForPosAdd = useMemo(
     () =>
-      (catalogList || []).flatMap((p) =>
+      (Array.isArray(catalogList) ? catalogList : []).flatMap((p) =>
         (p.groupVariants || [p]).map((v) => ({
           id: v.id,
           code: String(v.code || '').trim(),
@@ -7778,7 +7790,6 @@ export default function AdminHub({
                   ) : (
                     staffFiltered.map((r, i) => (
                       <tr key={r.id || i} className="ah-hub-voucher-summary-row ah-hub-entity-mobile-card-row">
-                        {console.log('Dữ liệu hàng nhân viên:', r)}
                         <td data-label="Họ tên / Vai trò">{r.name}</td>
                         <td data-label="Số điện thoại">{r.phone}</td>
                         <td data-label="Địa chỉ">{r.address}</td>
@@ -9559,7 +9570,7 @@ export default function AdminHub({
           if (supplierSaving) return
           setSupplierModalOpen(false)
         }}
-        onSubmit={submitNewSupplier}
+        onSubmit={(draft) => submitNewSupplier(draft)}
       />
       <EntityPersonModal
         open={customerModalOpen}
@@ -9572,7 +9583,9 @@ export default function AdminHub({
           setCustomerModalOpen(false)
           setEditingCustomer(null)
         }}
-        onSubmit={editingCustomer ? submitUpdateCustomerAdmin : submitNewCustomerAdmin}
+        onSubmit={(draft) =>
+          editingCustomer ? submitUpdateCustomerAdmin(draft) : submitNewCustomerAdmin(draft)
+        }
       />
       <EntityPersonModal
         open={employeeModalOpen}
@@ -9585,7 +9598,9 @@ export default function AdminHub({
           setEmployeeModalOpen(false)
           setEditingEmployee(null)
         }}
-        onSubmit={editingEmployee ? submitUpdateEmployeeAdmin : submitNewEmployeeAdmin}
+        onSubmit={(draft) =>
+          editingEmployee ? submitUpdateEmployeeAdmin(draft) : submitNewEmployeeAdmin(draft)
+        }
       />
 
       {inboundCostDiffModal && (

@@ -136,7 +136,7 @@ export default function EntityPersonModal({
             type="button"
             className="ah-inbound-footer-btn ah-inbound-footer-btn--done ah-entity-save-btn"
             disabled={isSaving}
-            onClick={submit}
+            onClick={() => submit()}
           >
             {isSaving ? (
               <>

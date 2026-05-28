@@ -38,7 +38,9 @@ function parseMoneyDraftVi(raw) {
 function catalogHasNormalizedBarcode(catalogProducts, needleNorm) {
   const n = String(needleNorm ?? '').trim()
   if (!n) return false
-  const flat = (catalogProducts || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogProducts) ? catalogProducts : []).flatMap(
+    (p) => p.groupVariants || [p]
+  )
   return flat.some((v) => String(normalizeBarcodeValue(v.barcode ?? '')) === n)
 }
 
@@ -224,7 +226,7 @@ export default function AdminHubGoodsCreateModal({
       window.alert('Vui lòng chọn hạn sử dụng hoặc đổi «Quản lý theo hạn sử dụng» sang Không.')
       return
     }
-    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
     const codeSetExisting = new Set(flat.map((v) => String(v.code ?? '').trim().toLowerCase()).filter(Boolean))
     const barcodeSetExisting = new Set(
       flat.map((v) => String(normalizeBarcodeValue(v.barcode ?? ''))).filter(Boolean)
@@ -473,7 +475,7 @@ export default function AdminHubGoodsCreateModal({
       window.alert(err)
       return
     }
-    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
     const templateVariant = {
       id: gcUnitModal.anchorVariantId,
       code: root,

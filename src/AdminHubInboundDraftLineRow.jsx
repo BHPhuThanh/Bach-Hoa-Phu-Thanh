@@ -16,7 +16,7 @@ function inboundLineThuongHieuResolved(line, catalogList) {
   if (n.thuong_hieu) return n.thuong_hieu
   const vid = String(n.variantId || '').trim()
   if (!vid || !catalogList?.length) return ''
-  const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const v = flat.find((x) => String(x.id) === vid)
   return String(v?.brand ?? '').trim()
 }

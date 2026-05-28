@@ -226,7 +226,7 @@ export function parseServerTonAndCost(row) {
  * @returns {{ diffs: Array<object>, patches: Array<{ variantId: string, patch: { stockQty: number, cost: number } }> }}
  */
 export function collectInboundMaHangCodes(catalogList, lines) {
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const byId = new Map(flat.map((v) => [String(v.id), v]))
   const byRoot = new Map()
   for (const v of flat) {
@@ -264,7 +264,7 @@ export function computeInboundFulfillmentPlan(
   serverByMaHang,
   priorOrderLines
 ) {
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const byVid = new Map(flat.map((v) => [String(v.id), v]))
   const groupMembers = new Map()
   for (const v of flat) {

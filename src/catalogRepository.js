@@ -383,7 +383,7 @@ function dedupeRowsByProductCode(rows) {
 
 export function flattenDisplayCatalogToVariants(products) {
   if (!Array.isArray(products) || products.length === 0) return []
-  return products.flatMap((p) =>
+  return (Array.isArray(products) ? products : []).flatMap((p) =>
     Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
   )
 }
@@ -593,7 +593,9 @@ async function upsertRawProductRows(sb, rawRows, opts = {}) {
         written: mul.reduce((s, x) => s + x.written, 0),
         skipped: mul.reduce((s, x) => s + x.skipped, 0),
         lastError: mul.find((x) => x.lastError)?.lastError ?? null,
-        returnedRows: mul.flatMap((x) => (Array.isArray(x.returnedRows) ? x.returnedRows : [])),
+        returnedRows: (Array.isArray(mul) ? mul : []).flatMap((x) =>
+          Array.isArray(x.returnedRows) ? x.returnedRows : []
+        ),
       }
     }
   }
@@ -1338,7 +1340,7 @@ export function applyProductDataToCatalog(products, productData) {
   if (type === 'append_flat_variants') {
     const newRows = productData.variants
     if (!Array.isArray(newRows) || newRows.length === 0) return products
-    const flat = products.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(products) ? products : []).flatMap((p) => p.groupVariants || [p])
     const merged = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...newRows])
     return prepareCatalogForPosSearch(buildDisplayCatalog(merged))
   }
@@ -1350,7 +1352,9 @@ export function applyProductDataToCatalog(products, productData) {
     const ids = productData.variantIds
     if (!Array.isArray(ids) || ids.length === 0) return products
     const idSet = new Set(ids)
-    const flat = products.flatMap((p) => p.groupVariants || [p]).filter((v) => !idSet.has(v.id))
+    const flat = (Array.isArray(products) ? products : [])
+      .flatMap((p) => p.groupVariants || [p])
+      .filter((v) => !idSet.has(v.id))
     if (flat.length === 0) return []
     return prepareCatalogForPosSearch(buildDisplayCatalog(flat))
   }
@@ -1359,7 +1363,7 @@ export function applyProductDataToCatalog(products, productData) {
     if (anchorVariantId == null || !Array.isArray(replacements) || replacements.length === 0) {
       return products
     }
-    const flat = products.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(products) ? products : []).flatMap((p) => p.groupVariants || [p])
     const target = flat.find((v) => v.id === anchorVariantId)
     if (!target) return products
     const root = normalizeGroupRoot(target.code, target.linkedMasterCode)
@@ -1370,7 +1374,7 @@ export function applyProductDataToCatalog(products, productData) {
   if (type === 'patch_variant') {
     const { variantId, patch } = productData
     if (variantId == null || !patch || typeof patch !== 'object') return products
-    const flat = products.flatMap((p) => p.groupVariants || [p])
+    const flat = (Array.isArray(products) ? products : []).flatMap((p) => p.groupVariants || [p])
     const target = flat.find((v) => v.id === variantId)
     if (!target) return products
     const rootBefore = normalizeGroupRoot(target.code, target.linkedMasterCode)

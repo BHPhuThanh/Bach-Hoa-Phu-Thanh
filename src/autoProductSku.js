@@ -30,7 +30,7 @@ export function suggestNextProductCodeFromCatalog(products) {
 export function allocateAutoHhSkuIfEmpty(products, userCodeTrimmed) {
   const trimmed = String(userCodeTrimmed ?? '').trim()
   if (trimmed) return trimmed
-  const flat = (products || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(products) ? products : []).flatMap((p) => p.groupVariants || [p])
   const codeSet = new Set(
     flat.map((v) => String(v.code ?? '').trim().toLowerCase()).filter(Boolean)
   )

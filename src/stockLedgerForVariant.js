@@ -62,7 +62,7 @@ export function buildVariantStockLedgerRows({
   const vid = String(variantId || '').trim()
   if (!vid) return []
 
-  const flat = (catalogList || []).flatMap((p) => p.groupVariants || [p])
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
   const self = flat.find((v) => String(v.id) === vid)
   const myCode = String(self?.code || '').trim()
   const myUnit = normalizeCatalogUnitLabel(self?.unitLabel || '')
