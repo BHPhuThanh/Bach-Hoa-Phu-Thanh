@@ -1742,6 +1742,19 @@ export default function AdminHub({
   const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
+  /** Local State First: thay đổi ĐVT giữ cục bộ, chỉ ghi API khi bấm Lưu form chi tiết. */
+  const [pendingUnitDraft, setPendingUnitDraft] = useState(null)
+  const catalogListForGoodsEdit = useMemo(() => {
+    if (!pendingUnitDraft?.anchorVariantId || !Array.isArray(pendingUnitDraft.replacements)) {
+      return catalogList
+    }
+    const anchorCtx = findVariantContext(catalogList, pendingUnitDraft.anchorVariantId)
+    if (!anchorCtx?.clicked) return catalogList
+    const root = normalizeGroupRoot(anchorCtx.clicked.code, anchorCtx.clicked.linkedMasterCode)
+    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
+    const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
+    return buildDisplayCatalog([...kept, ...pendingUnitDraft.replacements])
+  }, [catalogList, pendingUnitDraft])
   const [goodsSfInventoryRows, setGoodsSfInventoryRows] = useState([])
   const [goodsSfInventoryLoading, setGoodsSfInventoryLoading] = useState(false)
   const [goodsSfInventoryFetchErr, setGoodsSfInventoryFetchErr] = useState(false)
@@ -2132,20 +2145,6 @@ export default function AdminHub({
 
   /** Modal thiết lập đa ĐVT + bảng hàng cùng loại (tab Hàng hóa / tab solo). */
   const [unitModal, setUnitModal] = useState(null)
-  /** Local State First: thay đổi ĐVT giữ cục bộ, chỉ ghi API khi bấm Lưu form chi tiết. */
-  const [pendingUnitDraft, setPendingUnitDraft] = useState(null)
-
-  const catalogListForGoodsEdit = useMemo(() => {
-    if (!pendingUnitDraft?.anchorVariantId || !Array.isArray(pendingUnitDraft.replacements)) {
-      return catalogList
-    }
-    const anchorCtx = findVariantContext(catalogList, pendingUnitDraft.anchorVariantId)
-    if (!anchorCtx?.clicked) return catalogList
-    const root = normalizeGroupRoot(anchorCtx.clicked.code, anchorCtx.clicked.linkedMasterCode)
-    const flat = catalogList.flatMap((p) => p.groupVariants || [p])
-    const kept = flat.filter((v) => normalizeGroupRoot(v.code, v.linkedMasterCode) !== root)
-    return buildDisplayCatalog([...kept, ...pendingUnitDraft.replacements])
-  }, [catalogList, pendingUnitDraft])
 
   const closeUnitModal = useCallback(() => setUnitModal(null), [])
 

@@ -848,6 +848,23 @@
   flex-shrink: 0;
 }
 
+.pos-sidebar-change-pin-btn {
+  margin-top: 0.35rem;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, 0.65);
+  color: #bae6fd;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.32rem 0.55rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pos-sidebar-change-pin-btn:hover {
+  background: rgba(8, 145, 178, 0.35);
+}
+
 .app-header-seller-block .pos-sidebar-seller-menu {
   position: absolute;
   right: 0;

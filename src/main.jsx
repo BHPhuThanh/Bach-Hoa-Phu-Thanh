@@ -2,11 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import './index.css'
-import PosPage from './PosPage.jsx'
+import App from './App.jsx'
 import CostAdjustCreatePage from './CostAdjustCreatePage.jsx'
 import DoanhThuPage from './DoanhThuPage.jsx'
 import StockCheckCreatePage from './StockCheckCreatePage.jsx'
-import InboundCreatePage from './InboundCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
 import { registerPwaServiceWorker } from './pwaRegister.js'
 
@@ -38,13 +37,13 @@ async function boot() {
     <StrictMode>
       <BrowserRouter basename={appRouterBasename()}>
         <Routes>
-          <Route path="admin/goods" element={<PosPage />} />
-          <Route path="admin/inventory" element={<PosPage />} />
+          <Route path="admin/goods" element={<App />} />
+          <Route path="admin/inventory" element={<App />} />
           <Route path="dieu-chinh-gia/tao-moi" element={<CostAdjustCreatePage />} />
           <Route path="kiem-hang/tao-moi" element={<StockCheckCreatePage />} />
-          <Route path="nhap-hang/tao-moi" element={<InboundCreatePage />} />
+          <Route path="nhap-hang/tao-moi" element={<App standaloneInboundCreate />} />
           <Route path="doanh-thu" element={<DoanhThuPage />} />
-          <Route path="*" element={<PosPage />} />
+          <Route path="*" element={<App />} />
         </Routes>
       </BrowserRouter>
     </StrictMode>,

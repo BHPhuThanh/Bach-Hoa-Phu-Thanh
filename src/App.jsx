@@ -149,7 +149,7 @@ import {
   insertCustomerSupabase,
   mergeCustomerListsDedupe,
 } from './entityContactsRepository.js'
-import { updateAdminPinSupabase, verifyAdminPinSupabase } from './authServices.js'
+import { updateAdminPinSupabase, verifyAdminPinSupabase } from './appSettingsRepository.js'
 import {
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
@@ -5914,6 +5914,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const sellerMeta = (
       <div className="app-header-seller-block pos-sidebar-seller" key="seller">
+        {console.log('Current Role in Header:', activeSellerId)}
         <button
           type="button"
           className="pos-sidebar-seller-trigger"
@@ -5947,6 +5948,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             ))}
           </ul>
         )}
+        {activeSellerId === 'admin' ? (
+          <button
+            type="button"
+            className="pos-sidebar-change-pin-btn"
+            onClick={() => setAdminPinChangeOpen(true)}
+            title="Đổi mật khẩu Admin"
+          >
+            🔒 Đổi mật khẩu
+          </button>
+        ) : null}
       </div>
     )
 
