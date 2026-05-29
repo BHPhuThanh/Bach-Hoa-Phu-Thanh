@@ -94,6 +94,7 @@ import {
   posOrderSaleQtyDeltaMap,
   posOrderStatusLabel,
   buildOrderDeleteRestoreCartLines,
+  buildPosReturnRestoreCartLines,
   resolvePosItemVariantId,
 } from './posOrderAdmin.js'
 import {
@@ -148,6 +149,8 @@ import {
   fetchInventoryLogsByProductId,
   INVENTORY_LOG_UPDATED_EVENT,
   mapInventoryLogDbRowToDisplay,
+  buildPosReturnInventoryLogRows,
+  insertInventoryLogRows,
   staffNameForInventoryLog,
 } from './inventoryLogRepository.js'
 import './dashboard.css'
@@ -178,6 +181,7 @@ import {
   computeInboundFulfillmentPlan,
 } from './inboundWeightedCost.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
+import { persistCatalogStockRestoreFromCartLines } from './catalogStockRestore.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
   buildCatalogVariantsFromUnitModal,
@@ -5672,14 +5676,15 @@ export default function AdminHub({
       let revenueSub = 0
       let costSub = 0
       let anyTake = false
-      const deltas = new Map()
       /** @type {Array<{ code: string, name: string, unitLabel: string, qtyReturned: number, unitRefund: number, lineRefund: number }>} */
       const returnLines = []
+      const returnQtyByLineId = new Map()
       const newItems = base.items.map((it) => {
         const ret = posOrderLineReturnableQty(it)
         const draft = parseReturnQtyDraft(posReturnQtyDraft[it.orderLineId], ret)
         if (draft <= 0) return it
         anyTake = true
+        returnQtyByLineId.set(it.orderLineId, draft)
         const price = Math.max(0, Number(it.price) || 0)
         const cost = Math.max(0, Number(it.cost) || 0)
         const lineRefund = Math.round(draft * price)
@@ -5694,7 +5699,6 @@ export default function AdminHub({
           lineRefund,
           variantId: String(it.variantId || '').trim(),
         })
-        if (it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + draft)
         const prevR = Math.max(0, Number(it.returnedQty) || 0)
         const q = Math.max(0, Number(it.qty) || 0)
         return { ...it, returnedQty: Math.min(q, prevR + draft) }
@@ -5704,12 +5708,39 @@ export default function AdminHub({
         return
       }
       const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
-      const stockRes = await applyInboundStockDeltas(deltas, {
-        documentCode: returnDocCode,
-        inboundOrderId: String(base.id || ''),
+      const restoreCartLines = buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
+        returnQtyByLineId.get(it.orderLineId) || 0
+      )
+      if (restoreCartLines.length === 0) {
+        throw new Error(
+          'Không khớp sản phẩm trong danh mục để hoàn tồn kho (kiểm tra combo / mã hàng trên đơn).'
+        )
+      }
+      const stockRestoreResult = await persistCatalogStockRestoreFromCartLines({
+        catalog: catalogList,
+        cartLines: restoreCartLines,
+        catalogFileName: standaloneCatalog?.fileName || catalogFileName || '',
+        onBulkPatchCatalogVariants,
+        setStandaloneCatalog: parentCatalogSupplied ? undefined : setStandaloneCatalog,
       })
-      if (stockRes && stockRes.ok === false) {
-        throw new Error(String(stockRes.error || 'Không cập nhật được tồn kho trên máy chủ.'))
+      if (!stockRestoreResult.ok) {
+        throw new Error(
+          String(stockRestoreResult.error || 'Không cập nhật được tồn kho trên máy chủ.')
+        )
+      }
+      if (isSupabaseConfigured() && stockRestoreResult.nextProducts) {
+        const invRows = buildPosReturnInventoryLogRows(
+          stockRestoreResult.prevProducts,
+          stockRestoreResult.nextProducts,
+          { documentCode: returnDocCode, staffName: staffNameForInventoryLog() },
+          restoreCartLines
+        )
+        await insertInventoryLogRows(invRows)
+        try {
+          window.dispatchEvent(new CustomEvent(INVENTORY_LOG_UPDATED_EVENT))
+        } catch {
+          /* ignore */
+        }
       }
       const nextStatus = computePosOrderStatusFromItems(newItems)
       const merged = normalizePosOrder(
@@ -5754,7 +5785,10 @@ export default function AdminHub({
     posReturnQtyDraft,
     posReturnSubmitting,
     catalogList,
-    applyInboundStockDeltas,
+    catalogFileName,
+    standaloneCatalog?.fileName,
+    parentCatalogSupplied,
+    onBulkPatchCatalogVariants,
     persistPosOrderAndReload,
     refreshPosReturnLedger,
     revenueReadOnly,
@@ -5778,15 +5812,36 @@ export default function AdminHub({
     if (revenueReadOnly) return
     if (!posCancelModal) return
     const base = normalizePosOrder(posCancelModal, catalogList)
-    const deltas = new Map()
-    for (const it of base.items) {
-      const q = posOrderLineReturnableQty(it)
-      if (q > 0 && it.variantId) deltas.set(it.variantId, (deltas.get(it.variantId) || 0) + q)
-    }
-    const stockRes = await applyInboundStockDeltas(deltas)
-    if (stockRes && stockRes.ok === false) {
-      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
-      return
+    const restoreCartLines = buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
+      posOrderLineReturnableQty(it)
+    )
+    if (restoreCartLines.length > 0) {
+      const cancelDocCode = `HUY-${String(base.invoiceNo || base.id || '').trim() || '—'}`
+      const stockRestoreResult = await persistCatalogStockRestoreFromCartLines({
+        catalog: catalogList,
+        cartLines: restoreCartLines,
+        catalogFileName: standaloneCatalog?.fileName || catalogFileName || '',
+        onBulkPatchCatalogVariants,
+        setStandaloneCatalog: parentCatalogSupplied ? undefined : setStandaloneCatalog,
+      })
+      if (!stockRestoreResult.ok) {
+        window.alert(String(stockRestoreResult.error || 'Không cập nhật được tồn kho.'))
+        return
+      }
+      if (isSupabaseConfigured() && stockRestoreResult.nextProducts) {
+        const invRows = buildPosReturnInventoryLogRows(
+          stockRestoreResult.prevProducts,
+          stockRestoreResult.nextProducts,
+          { documentCode: cancelDocCode, staffName: staffNameForInventoryLog() },
+          restoreCartLines
+        )
+        await insertInventoryLogRows(invRows)
+        try {
+          window.dispatchEvent(new CustomEvent(INVENTORY_LOG_UPDATED_EVENT))
+        } catch {
+          /* ignore */
+        }
+      }
     }
     const merged = normalizePosOrder({ ...base, status: 'cancelled' }, catalogList)
     await persistPosOrderAndReload(merged)
@@ -5797,7 +5852,16 @@ export default function AdminHub({
       delete o[base.id]
       return o
     })
-  }, [posCancelModal, catalogList, applyInboundStockDeltas, persistPosOrderAndReload, revenueReadOnly])
+  }, [
+    posCancelModal,
+    catalogList,
+    catalogFileName,
+    standaloneCatalog?.fileName,
+    parentCatalogSupplied,
+    onBulkPatchCatalogVariants,
+    persistPosOrderAndReload,
+    revenueReadOnly,
+  ])
 
   const startPosDetailEdit = useCallback(
     (order) => {

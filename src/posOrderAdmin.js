@@ -1,4 +1,9 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
+import {
+  getComboBom,
+  isComboCatalogProduct,
+  findProductContainingVariantId,
+} from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
 export function resolvePosItemVariantId(catalogList, item) {
@@ -55,6 +60,69 @@ export function buildOrderDeleteRestoreCartLines(catalogList, items) {
     })
   }
   return { cartLines, needRestore, resolvedCount: cartLines.length }
+}
+
+/**
+ * Một dòng đơn trả → dòng giỏ hoàn tồn (combo: tách BOM, SL = SL combo trả × SL thành phần / combo).
+ */
+export function expandPosReturnLineToRestoreCartLines(catalogList, item, returnQty) {
+  const qty = Math.max(0, Number(returnQty) || 0)
+  if (qty <= 0 || !item) return []
+
+  const vid = String(resolvePosItemVariantId(catalogList, item) || item.variantId || '').trim()
+  if (!vid) return []
+
+  const p = findProductContainingVariantId(catalogList, vid)
+  const isCombo =
+    (p && isComboCatalogProduct(p)) ||
+    item.isCombo === true ||
+    item.is_combo === true ||
+    (Array.isArray(item.combo_items) && item.combo_items.length > 0) ||
+    (Array.isArray(item.comboBom) && item.comboBom.length > 0)
+
+  if (isCombo && p) {
+    const bom = getComboBom(p)
+    const lines = []
+    for (const row of bom) {
+      const per = Number(row.qty) || 0
+      if (per <= 0) continue
+      const compVid = String(row.variantId ?? '').trim()
+      if (!compVid) continue
+      lines.push({
+        variantId: compVid,
+        qty: qty * per,
+        code: row.codeSnap || item.code,
+        unitLabel: row.unitLabelSnap || item.unitLabel,
+        barcode: item.barcode,
+        isComboReturnComponent: true,
+      })
+    }
+    return lines
+  }
+
+  return [
+    {
+      variantId: vid,
+      qty,
+      code: item.code,
+      unitLabel: item.unitLabel,
+      barcode: item.barcode,
+      isComboReturnComponent: false,
+    },
+  ]
+}
+
+/** Gom các dòng đơn đang trả thành cartLines cho {@link applyRestoredQtyToCatalog}. */
+export function buildPosReturnRestoreCartLines(catalogList, items, qtyForLine) {
+  const list = Array.isArray(items) ? items : []
+  const cartLines = []
+  for (const it of list) {
+    if (!it) continue
+    const returnQty = typeof qtyForLine === 'function' ? qtyForLine(it) : 0
+    if (returnQty <= 0) continue
+    cartLines.push(...expandPosReturnLineToRestoreCartLines(catalogList, it, returnQty))
+  }
+  return cartLines
 }
 
 export function computePosOrderStatusFromItems(items) {

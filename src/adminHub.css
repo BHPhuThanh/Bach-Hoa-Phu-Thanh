@@ -7610,7 +7610,8 @@ li.ah-inbound-suggest-empty {
 .ah-combo-overlay {
   position: fixed;
   inset: 0;
-  z-index: 12200;
+  /* Cao hơn modal sản phẩm (.ah-inbound-quick-edit-backdrop = 100080) */
+  z-index: 999999;
   display: flex;
   align-items: flex-start;
   justify-content: center;

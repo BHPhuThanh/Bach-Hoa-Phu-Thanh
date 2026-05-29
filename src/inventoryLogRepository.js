@@ -190,6 +190,52 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
   return rows
 }
 
+/**
+ * Sau trả hàng POS — cộng tồn (change_qty dương). Combo: một dòng / thành phần BOM.
+ */
+export function buildPosReturnInventoryLogRows(prevProducts, nextProducts, meta, cartLines) {
+  if (!prevProducts?.length || !nextProducts?.length) return []
+  const doc = String(meta?.documentCode ?? '').trim()
+  if (!doc) return []
+  const staffName = meta?.staffName ?? staffNameForInventoryLog()
+  const rows = []
+
+  for (const line of cartLines || []) {
+    const hit = findCatalogVariantInProducts(prevProducts, line.variantId)
+    if (!hit?.variant) continue
+    const v = hit.variant
+    const qty = Number(line.qty)
+    if (!Number.isFinite(qty) || qty <= 0) continue
+    const ma = String(v.code ?? '').trim()
+    const maGoc = resolveMaGocFromVariant(v)
+    if (!ma || !maGoc) continue
+    const dq = qty * variantQuyDoiNumber(v)
+    const stockAfter = stockTonAfterMaGoc(nextProducts, maGoc)
+    if (stockAfter == null) continue
+    const txnType = line.isComboReturnComponent
+      ? 'Khách trả hàng (Combo)'
+      : 'Khách trả hàng'
+    rows.push(
+      withInventoryLogCatalogMeta(
+        {
+          ma_hang: ma,
+          ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
+          transaction_type: txnType,
+          document_code: doc,
+          change_qty: dq,
+          stock_after: stockAfter,
+          staff_name: staffName,
+        },
+        nextProducts,
+        v,
+        qty
+      )
+    )
+  }
+
+  return rows
+}
+
 /** Nhập hàng sau khi biết patches + catalog trước/sau. */
 export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches, meta) {
   const doc = String(meta?.documentCode ?? '').trim()
