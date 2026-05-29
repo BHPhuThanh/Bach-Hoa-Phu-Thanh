@@ -28,7 +28,11 @@ import {
   getComboBom,
   isComboCatalogProduct,
 } from './comboCatalog.js'
-import { ensureUniqueMaHangAndBarcodeForNewRows } from './autoProductSku.js'
+import {
+  ensureUniqueMaHangAndBarcodeForNewRows,
+  formatHhSkuFromSequence,
+  parseHhNumericSku,
+} from './autoProductSku.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
@@ -1170,6 +1174,197 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
     notifySupabasePersistFailure(error)
     return { ok: false, error, snapshotSaved: false, productsWritten: false }
   }
+}
+
+/**
+ * Đọc mã HH lớn nhất thực tế trên Supabase (trước khi tạo SP mới).
+ * @returns {Promise<number>} số HH (0 nếu chưa có)
+ */
+export async function fetchMaxHhNumericSequenceFromSupabase() {
+  if (!isSupabaseConfigured()) return 0
+  const sb = getSupabaseClient()
+  if (!sb) return 0
+  const { data, error } = await sb
+    .from(PRODUCTS_TABLE)
+    .select(PRODUCT_PK_COLUMN)
+    .order(PRODUCT_PK_COLUMN, { ascending: false })
+    .limit(500)
+  if (error) throw error
+  let max = 0
+  for (const row of data || []) {
+    const n = parseHhNumericSku(row?.[PRODUCT_PK_COLUMN])
+    if (n != null) max = Math.max(max, n)
+  }
+  return max
+}
+
+function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) {
+  const raw = pickProductRowDbColumns(displayVariantToProductsRow(variant))
+  const allow = new Set(
+    omitMaHang
+      ? CATALOG_PRODUCT_DB_COLUMNS.filter((k) => k !== PRODUCT_PK_COLUMN)
+      : CATALOG_PRODUCT_DB_COLUMNS
+  )
+  return finalizeProductRowForSupabase(raw, allow)
+}
+
+/**
+ * UPDATE trực tiếp một dòng `products` theo `ma_hang` (không snapshot, không bulk).
+ */
+export async function updateSingleProductFromDisplayVariant(variant) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const maHang = String(variant?.code ?? '').trim()
+  if (!maHang) {
+    return { ok: false, error: new Error('Thiếu mã hàng (ma_hang) để cập nhật.') }
+  }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  }
+  const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: true })
+  try {
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .update(fin)
+      .eq(PRODUCT_PK_COLUMN, maHang)
+      .select('*')
+    if (error) throw error
+    const rows = Array.isArray(data) ? data : []
+    if (rows.length === 0) {
+      return { ok: true, updated: false, rows: 0 }
+    }
+    mergeBaselineFromUpsertReturnedRows(rows)
+    return {
+      ok: true,
+      updated: true,
+      rows: rows.length,
+      displayVariant: supabaseProductRowToFlatCatalogRow(rows[0], 0),
+    }
+  } catch (e) {
+    notifySupabasePersistFailure(e)
+    return { ok: false, error: e }
+  }
+}
+
+/**
+ * INSERT trực tiếp một dòng `products` (không snapshot, không bulk).
+ */
+export async function insertSingleProductFromDisplayVariant(variant) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true, displayVariant: variant }
+  const maHang = String(variant?.code ?? '').trim()
+  if (!maHang) {
+    return { ok: false, error: new Error('Thiếu mã hàng (ma_hang) để thêm mới.') }
+  }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  }
+  const fin = finalizeDisplayVariantForDbWrite(variant)
+  try {
+    const { data, error } = await sb.from(PRODUCTS_TABLE).insert([fin]).select('*')
+    if (error) throw error
+    const rows = Array.isArray(data) ? data : []
+    if (rows.length === 0) {
+      const err = new Error(`Insert «products» không trả về dòng cho ${PRODUCT_PK_COLUMN}="${maHang}".`)
+      notifySupabasePersistFailure(err)
+      return { ok: false, error: err }
+    }
+    mergeBaselineFromUpsertReturnedRows(rows)
+    return {
+      ok: true,
+      displayVariant: supabaseProductRowToFlatCatalogRow(rows[0], 0),
+    }
+  } catch (e) {
+    notifySupabasePersistFailure(e)
+    return { ok: false, error: e }
+  }
+}
+
+/**
+ * Cập nhật lần lượt từng biến thể — dùng cho sửa giá/tồn/1 vài SP.
+ */
+export async function updateProductDisplayVariantsSequential(flatVariants) {
+  if (!Array.isArray(flatVariants) || flatVariants.length === 0) {
+    return { ok: false, error: new Error('Không có sản phẩm để cập nhật.') }
+  }
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, written: flatVariants.length }
+  }
+  let written = 0
+  for (const v of flatVariants) {
+    const r = await updateSingleProductFromDisplayVariant(v)
+    if (!r.ok) return { ok: false, error: r.error, written }
+    if (r.updated === false) {
+      const ins = await insertSingleProductFromDisplayVariant(v)
+      if (!ins.ok) return { ok: false, error: ins.error, written }
+    }
+    written += 1
+  }
+  return { ok: true, written }
+}
+
+/**
+ * Tạo mới tuần tự: SELECT max HH từ DB → cấp mã tăng dần → INSERT từng dòng.
+ */
+export async function insertProductDisplayVariantsSequential(flatVariants, options = {}) {
+  if (!Array.isArray(flatVariants) || flatVariants.length === 0) {
+    return { ok: false, error: new Error('Không có sản phẩm để thêm.') }
+  }
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, preparedVariants: flatVariants, written: flatVariants.length }
+  }
+
+  let maxHh = Number(options.startMaxHh)
+  if (!Number.isFinite(maxHh)) {
+    maxHh = await fetchMaxHhNumericSequenceFromSupabase()
+  }
+
+  const codeSet = new Set(
+    (Array.isArray(options.existingCatalogProducts) ? options.existingCatalogProducts : [])
+      .flatMap((p) => p.groupVariants || [p])
+      .map((v) => String(v.code ?? '').trim().toLowerCase())
+      .filter(Boolean)
+  )
+  const barcodeSet = new Set(
+    (Array.isArray(options.existingCatalogProducts) ? options.existingCatalogProducts : [])
+      .flatMap((p) => p.groupVariants || [p])
+      .map((v) => String(normalizeBarcodeValue(v.barcode ?? '')).trim())
+      .filter(Boolean)
+  )
+
+  const prepared = []
+  for (const v of flatVariants) {
+    let code = String(v.code ?? '').trim()
+    const codeLc = code.toLowerCase()
+    if (!code || codeSet.has(codeLc)) {
+      maxHh += 1
+      code = formatHhSkuFromSequence(maxHh)
+      let guard = 0
+      while (codeSet.has(code.toLowerCase()) && guard < 100000) {
+        maxHh += 1
+        code = formatHhSkuFromSequence(maxHh)
+        guard += 1
+      }
+    } else {
+      const n = parseHhNumericSku(code)
+      if (n != null) maxHh = Math.max(maxHh, n)
+    }
+    codeSet.add(code.toLowerCase())
+
+    let barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
+    if (barcode && barcodeSet.has(barcode)) barcode = ''
+    if (barcode) barcodeSet.add(barcode)
+
+    const row = { ...v, code, barcode }
+    const r = await insertSingleProductFromDisplayVariant(row)
+    if (!r.ok) {
+      return { ok: false, error: r.error, preparedVariants: prepared, written: prepared.length }
+    }
+    const out = r.displayVariant ? { ...row, ...r.displayVariant, code } : row
+    prepared.push(out)
+  }
+
+  return { ok: true, preparedVariants: prepared, written: prepared.length }
 }
 
 /**

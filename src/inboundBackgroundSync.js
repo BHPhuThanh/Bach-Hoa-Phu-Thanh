@@ -3,7 +3,10 @@
  * Gộp request song song (Promise.all) để tránh kẹt Auth Lock do gọi tuần tự lồng nhau.
  */
 
-import { persistCatalogProductsOnly, describeCatalogPersistError } from './catalogRepository.js'
+import {
+  updateProductDisplayVariantsSequential,
+  describeCatalogPersistError,
+} from './catalogRepository.js'
 import { insertInboundHistoryEntry } from './supabaseInboundHistory.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
@@ -31,10 +34,7 @@ export async function runInboundSupabaseSync({
     return { ok: true, skipped: true, row: orderRow }
   }
 
-  const productsResult = await persistCatalogProductsOnly(upsertOnlyVariants || [], {
-    existingCatalogProducts: catalogProductsNext,
-    useBulkInsert: false,
-  })
+  const productsResult = await updateProductDisplayVariantsSequential(upsertOnlyVariants || [])
 
   if (!productsResult?.ok) {
     throw new Error(

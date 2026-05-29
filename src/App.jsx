@@ -105,7 +105,9 @@ import {
   fetchProducts,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
-  persistCatalogProductsOnly,
+  updateProductDisplayVariantsSequential,
+  insertProductDisplayVariantsSequential,
+  insertSingleProductFromDisplayVariant,
   readCatalogSnapshotSync,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
@@ -3069,15 +3071,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
               }
             }
-            const r = await persistCatalogProductsOnly(replacements, {
-              existingCatalogProducts: prev,
-              useBulkInsert: false,
-            })
+            const r = await updateProductDisplayVariantsSequential(replacements)
             if (!r.ok) {
               throw r.error || new Error(describeCatalogPersistError(r.error))
             }
             startTransition(() => setProducts(next))
-            await applyServerCatalogAfterPersist()
             setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
           } else {
             const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
@@ -3115,9 +3113,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const runPersist = async () => {
         const prev = productsRef.current
         const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
-        const r = await persistCatalogProductsOnly(variants, {
+        const r = await insertProductDisplayVariantsSequential(variants, {
           existingCatalogProducts: prev,
-          useBulkInsert: true,
         })
         if (!r.ok) {
           const msg =
@@ -3132,7 +3129,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           variants: prepared,
         })
         startTransition(() => setProducts(merged))
-        await applyServerCatalogAfterPersist()
         try {
           inboundCatalogUpsertReconcileRef.current?.({
             requested: prepared,
@@ -3163,9 +3159,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: 'Thiếu biến thể để ghi lên Supabase.' }
       }
       const prev = productsRef.current
-      const r = await persistCatalogProductsOnly(upsertOnlyVariants, {
+      const r = await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
         existingCatalogProducts: prev,
-        useBulkInsert: true,
       })
       if (!r.ok) {
         showPosPersistErrorToast(
@@ -3179,7 +3174,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         variants: prepared,
       })
       startTransition(() => setProducts(merged))
-      await applyServerCatalogAfterPersist()
       return { ok: true }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
@@ -3265,27 +3259,36 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       try {
         if (isSupabaseConfigured()) {
-          if (oldCode && newCode && oldCode !== newCode) {
-            const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
-            if (!dr.ok && !dr.skipped) {
-              throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
-            }
-          }
           const flatNext = flattenDisplayCatalogToVariants(next)
           const idSet = new Set(affectedIdsForLog.map(String))
           const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
           if (upsertOnly.length === 0) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
-          const r = await persistCatalogProductsOnly(upsertOnly, {
-            existingCatalogProducts: prev,
-            useBulkInsert: false,
-          })
-          if (!r.ok) {
-            throw r.error || new Error(describeCatalogPersistError(r.error))
+
+          if (oldCode && newCode && oldCode !== newCode) {
+            const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
+            if (!dr.ok && !dr.skipped) {
+              throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
+            }
+            const renamed = upsertOnly.find((v) => String(v.id) === String(variantId))
+            if (renamed) {
+              const ir = await insertSingleProductFromDisplayVariant(renamed)
+              if (!ir.ok) throw ir.error || new Error('Không thêm được mã hàng mới trên Supabase.')
+            }
+            const rest = upsertOnly.filter((v) => String(v.id) !== String(variantId))
+            if (rest.length) {
+              const ur = await updateProductDisplayVariantsSequential(rest)
+              if (!ur.ok) throw ur.error || new Error(describeCatalogPersistError(ur.error))
+            }
+          } else {
+            const r = await updateProductDisplayVariantsSequential(upsertOnly)
+            if (!r.ok) {
+              throw r.error || new Error(describeCatalogPersistError(r.error))
+            }
           }
+
           startTransition(() => setProducts(next))
-          await applyServerCatalogAfterPersist()
           if (inventoryLogMeta) {
             try {
               const rows = buildStockAdjustInventoryLogRows(
@@ -3324,7 +3327,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: e }
       }
     },
-    [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
+    [showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
   const showPosScanToastMessage = useCallback((text) => {
@@ -3393,10 +3396,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const flatNext = flattenDisplayCatalogToVariants(next)
         const touchedIds = new Set(valid.map((e) => String(e.variantId)))
         const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-        const r = await persistCatalogProductsOnly(upsertOnlyVariants, {
-          existingCatalogProducts: snapshotPrev,
-          useBulkInsert: false,
-        })
+        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants)
         if (!r.ok) {
           const msg =
             describeCatalogPersistError(r.error) || 'Không ghi được sản phẩm lên Supabase.'
@@ -3405,7 +3405,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         startTransition(() => setProducts(next))
         setCatalogSupabaseDirty(false)
-        await applyServerCatalogAfterPersist()
         if (ib?.documentCode && isSupabaseConfigured()) {
           const logRows = buildInboundInventoryLogRows(snapshotPrev, next, valid, {
             documentCode: ib.documentCode,

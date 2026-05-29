@@ -166,7 +166,8 @@ import {
   readCatalogSnapshotSync,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
-  persistCatalogProductsOnly,
+  updateProductDisplayVariantsSequential,
+  insertProductDisplayVariantsSequential,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
   deleteProductsForRemovedVariants,
@@ -2117,16 +2118,21 @@ export default function AdminHub({
     const persistResult = persistOpts?.snapshotOnly
       ? await persistCatalogSnapshotAndProducts(nextProducts, fn, { snapshotOnly: true })
       : upsertOnlyVariants?.length
-        ? await persistCatalogProductsOnly(upsertOnlyVariants, {
-            existingCatalogProducts: nextProducts,
-            useBulkInsert: persistOpts.useBulkInsert === true,
-          })
+        ? persistOpts.useBulkInsert === true
+          ? await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
+              existingCatalogProducts: nextProducts,
+            })
+          : await updateProductDisplayVariantsSequential(upsertOnlyVariants)
         : await persistCatalogSnapshotAndProducts(nextProducts, fn)
     if (!persistResult.ok) {
       return {
         ok: false,
         error: describeCatalogPersistError(persistResult.error),
       }
+    }
+    if (upsertOnlyVariants?.length) {
+      setStandaloneCatalog({ products: nextProducts, fileName: fn })
+      return { ok: true, preparedVariants: persistResult.preparedVariants }
     }
     if (isSupabaseConfigured()) {
       const fresh = await revalidateCatalogFromStore()
