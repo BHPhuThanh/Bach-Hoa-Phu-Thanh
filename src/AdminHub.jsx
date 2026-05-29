@@ -2115,7 +2115,9 @@ export default function AdminHub({
     const persistResult = await persistCatalogSnapshotAndProducts(
       nextProducts,
       fn,
-      upsertOnlyVariants?.length ? { upsertOnlyVariants } : undefined
+      upsertOnlyVariants?.length
+        ? { upsertOnlyVariants, useBulkInsert: true }
+        : undefined
     )
     if (!persistResult.ok) {
       return {
@@ -2483,21 +2485,39 @@ export default function AdminHub({
     if (onRemoveCatalogVariants) {
       onRemoveCatalogVariants([v.id])
     } else if (standaloneCatalog?.products) {
-      const idSet = new Set([v.id])
-      const remaining = []
-      for (const p of standaloneCatalog.products) {
-        for (const gv of p.groupVariants || [p]) {
-          if (!idSet.has(gv.id)) remaining.push(gv)
+      void (async () => {
+        if (isSupabaseConfigured()) {
+          const dr = await deleteProductsForRemovedVariants(catalogList, [v.id])
+          if (!dr.ok && !dr.skipped) {
+            window.alert(
+              describeCatalogPersistError(dr.error) || 'Không xóa được sản phẩm trên Supabase.'
+            )
+            return
+          }
         }
-      }
-      const nextProducts = buildDisplayCatalog(remaining)
-      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        const idSet = new Set([v.id])
+        const remaining = []
+        for (const p of standaloneCatalog.products) {
+          for (const gv of p.groupVariants || [p]) {
+            if (!idSet.has(gv.id)) remaining.push(gv)
+          }
+        }
+        const nextProducts = buildDisplayCatalog(remaining)
+        const pr = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        if (!pr?.ok) {
+          window.alert(String(pr?.error || 'Không lưu snapshot sau khi xóa.'))
+          return
+        }
+        closeInboundProductQuickEdit()
+      })()
+      return
     }
     closeInboundProductQuickEdit()
   }, [
     inboundQuickEditVariant,
     onRemoveCatalogVariants,
     standaloneCatalog,
+    catalogList,
     persistStandaloneProducts,
     closeInboundProductQuickEdit,
   ])
@@ -2949,21 +2969,39 @@ export default function AdminHub({
     if (onRemoveCatalogVariants) {
       onRemoveCatalogVariants([v.id])
     } else if (standaloneCatalog?.products) {
-      const idSet = new Set([v.id])
-      const remaining = []
-      for (const p of standaloneCatalog.products) {
-        for (const gv of p.groupVariants || [p]) {
-          if (!idSet.has(gv.id)) remaining.push(gv)
+      void (async () => {
+        if (isSupabaseConfigured()) {
+          const dr = await deleteProductsForRemovedVariants(catalogList, [v.id])
+          if (!dr.ok && !dr.skipped) {
+            window.alert(
+              describeCatalogPersistError(dr.error) || 'Không xóa được sản phẩm trên Supabase.'
+            )
+            return
+          }
         }
-      }
-      const nextProducts = buildDisplayCatalog(remaining)
-      void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        const idSet = new Set([v.id])
+        const remaining = []
+        for (const p of standaloneCatalog.products) {
+          for (const gv of p.groupVariants || [p]) {
+            if (!idSet.has(gv.id)) remaining.push(gv)
+          }
+        }
+        const nextProducts = buildDisplayCatalog(remaining)
+        const pr = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        if (!pr?.ok) {
+          window.alert(String(pr?.error || 'Không lưu snapshot sau khi xóa.'))
+          return
+        }
+        closeSoloProductTab()
+      })()
+      return
     }
     closeSoloProductTab()
   }, [
     soloGoodsVariant,
     onRemoveCatalogVariants,
     standaloneCatalog,
+    catalogList,
     persistStandaloneProducts,
     closeSoloProductTab,
   ])

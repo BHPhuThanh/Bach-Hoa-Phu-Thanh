@@ -23,7 +23,12 @@ import {
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
 import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
-import { CATALOG_PRODUCT_TYPE_COMBO } from './comboCatalog.js'
+import {
+  CATALOG_PRODUCT_TYPE_COMBO,
+  getComboBom,
+  isComboCatalogProduct,
+} from './comboCatalog.js'
+import { ensureUniqueMaHangAndBarcodeForNewRows } from './autoProductSku.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
@@ -623,6 +628,37 @@ async function upsertProductChunkResilient(sb, part) {
 }
 
 /**
+ * Bulk insert một đợt (tạo mới hàng loạt — một request PostgREST).
+ * @returns {Promise<{ written: number, skipped: number, lastError?: object, returnedRows?: Array }>}
+ */
+async function insertProductChunkResilient(sb, part) {
+  const missingCode = part.filter((row) => !String(row[PRODUCT_PK_COLUMN] ?? '').trim())
+  if (missingCode.length > 0) {
+    const err = new Error(
+      `Insert «products»: thiếu «${PRODUCT_PK_COLUMN}» trên ${missingCode.length} dòng.`
+    )
+    return { written: 0, skipped: part.length, lastError: err, returnedRows: [] }
+  }
+  // eslint-disable-next-line no-console
+  console.log('Bulk insert products (một request):', part)
+  const { data: insertedRows, error: bulkError } = await sb
+    .from(PRODUCTS_TABLE)
+    .insert(part)
+    .select('*')
+  if (bulkError) {
+    console.error('[saveProductsToSupabase] Insert lỗi:', formatSupabaseWriteError(bulkError))
+    return { written: 0, skipped: part.length, lastError: bulkError, returnedRows: [] }
+  }
+  if (!Array.isArray(insertedRows) || insertedRows.length !== part.length) {
+    const err = new Error(
+      `Insert «products»: phản hồi không đủ dòng (gửi ${part.length}, nhận ${insertedRows?.length ?? 0}).`
+    )
+    return { written: 0, skipped: part.length, lastError: err, returnedRows: insertedRows ?? [] }
+  }
+  return { written: part.length, skipped: 0, lastError: null, returnedRows: insertedRows }
+}
+
+/**
  * @returns {Promise<{ written: number, skippedUpsert: number }>}
  */
 /** Khớp tên cột Supabase (Unicode) — không gửi `imported_at` nếu bảng không có cột đó. */
@@ -708,6 +744,56 @@ async function upsertRawProductRows(sb, rawRows, opts = {}) {
   }
 }
 
+function isPostgrestUniqueViolation(error) {
+  if (!error || typeof error !== 'object') return false
+  const code = String(error.code ?? '')
+  if (code === '23505') return true
+  const msg = String(error.message ?? '').toLowerCase()
+  return msg.includes('duplicate') || msg.includes('unique')
+}
+
+/**
+ * Insert bulk các dòng `products` mới — một request; fallback upsert nếu trùng khóa (đã tồn tại).
+ */
+async function insertRawProductRows(sb, rawRows) {
+  const withCode = rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
+  const skippedNoCode = rawRows.length - withCode.length
+  if (skippedNoCode > 0) {
+    console.warn(
+      `[saveProductsToSupabase] Insert: loại ${skippedNoCode} dòng không có «${PRODUCT_PK_COLUMN}».`
+    )
+  }
+  const deduped = dedupeRowsByProductCode(withCode)
+  const allow = new Set(CATALOG_PRODUCT_DB_COLUMNS)
+  const rows = deduped.map((row) => finalizeProductRowForSupabase(pickProductRowDbColumns(row), allow))
+  if (rows.length === 0) {
+    return { written: 0, skippedUpsert: 0, lastSupabaseError: null, returnedProductRows: [] }
+  }
+
+  let agg = await insertProductChunkResilient(sb, rows)
+  if (agg.written === 0 && isPostgrestUniqueViolation(agg.lastError)) {
+    console.warn('[saveProductsToSupabase] Insert trùng khóa — fallback upsert cùng batch.')
+    agg = await upsertProductChunkResilient(sb, rows)
+  }
+
+  if (Array.isArray(agg.returnedRows) && agg.returnedRows.length > 0) {
+    mergeBaselineFromUpsertReturnedRows(agg.returnedRows)
+  } else if (agg.written > 0) {
+    for (const fin of rows) {
+      const code = String(fin[PRODUCT_PK_COLUMN] ?? '').trim()
+      if (code) productUpsertBaselineByMaHang.set(code, stableSerializeFinalizedProductRow(fin))
+    }
+  }
+
+  const skippedUpsert = agg.skipped ?? 0
+  return {
+    written: agg.written,
+    skippedUpsert,
+    lastSupabaseError: agg.lastError ?? null,
+    returnedProductRows: agg.returnedRows ?? [],
+  }
+}
+
 async function upsertProductRowsFromDisplayCatalog(sb, products) {
   const flat = flattenDisplayCatalogToVariants(products || [])
   const rawRows = flat.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
@@ -774,18 +860,101 @@ export async function saveProductsToSupabase(products) {
   }
 }
 
+function variantMarkedForDeletionIsCombo(gv) {
+  if (!gv) return false
+  if (gv.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO || gv.isCombo === true) return true
+  return getComboBom({ ...gv, groupVariants: [gv] }).length > 0
+}
+
 /**
  * `ma_hang` không trùng của các biến thể đang xóa khỏi catalog — dùng cho DELETE `public.products`.
  * @param {Array<object>} products — catalog nhóm + groupVariants
  * @param {Array<string|number>} variantIds — `variant.id`
  */
 export function collectMaHangCodesForVariantIds(products, variantIds) {
+  return collectMaHangCodesForVariantDeletion(products, variantIds)
+}
+
+/**
+ * Mã hàng cần xóa khi gỡ biến thể — chỉ mã dòng được chọn, không gồm mã thành phần trong BOM combo.
+ */
+export function collectMaHangCodesForVariantDeletion(products, variantIds) {
+  if (!Array.isArray(products) || !Array.isArray(variantIds) || variantIds.length === 0) return []
+  const idSet = new Set(variantIds.map((x) => String(x)))
+  const bomComponentCodes = new Set()
+  for (const p of products) {
+    for (const gv of p.groupVariants || [p]) {
+      if (!gv || !idSet.has(String(gv.id))) continue
+      if (!variantMarkedForDeletionIsCombo(gv)) continue
+      for (const row of getComboBom({ ...gv, groupVariants: [gv] })) {
+        const snap = String(row.codeSnap ?? '').trim()
+        if (snap) bomComponentCodes.add(snap)
+      }
+    }
+  }
+  const codes = []
+  for (const p of products) {
+    for (const gv of p.groupVariants || [p]) {
+      if (!gv || !idSet.has(String(gv.id))) continue
+      const code = String(gv.code ?? '').trim()
+      if (!code) continue
+      if (bomComponentCodes.has(code) && !variantMarkedForDeletionIsCombo(gv)) continue
+      codes.push(code)
+    }
+  }
+  return [...new Set(codes)]
+}
+
+/** Bước 1 xóa combo: gỡ liên kết BOM trên `products` (jsonb), không đụng dòng thành phần lẻ. */
+export async function clearComboProductLinksOnSupabase(maHangList) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    const err = new Error('[clearComboProductLinksOnSupabase] Không tạo được Supabase client.')
+    notifySupabasePersistFailure(err)
+    return { ok: false, error: err }
+  }
+  const uniq = [...new Set([...maHangList].map((x) => String(x ?? '').trim()).filter(Boolean))]
+  if (uniq.length === 0) return { ok: true, cleared: 0 }
+  try {
+    const chunks = []
+    for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
+      chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
+    }
+    for (const chunk of chunks) {
+      const { error } = await sb
+        .from(PRODUCTS_TABLE)
+        .update({
+          combo_bom: [],
+          is_combo: false,
+          loai_san_pham: '',
+        })
+        .in(PRODUCT_PK_COLUMN, chunk)
+      if (error) {
+        const err = new Error(
+          describeCatalogPersistError(error) ||
+            'Gỡ liên kết combo (combo_bom) trên «products» thất bại.'
+        )
+        err.cause = error
+        notifySupabasePersistFailure(err, error)
+        return { ok: false, error }
+      }
+    }
+    return { ok: true, cleared: uniq.length }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
+  }
+}
+
+function collectComboMaHangForVariantDeletion(products, variantIds) {
   if (!Array.isArray(products) || !Array.isArray(variantIds) || variantIds.length === 0) return []
   const idSet = new Set(variantIds.map((x) => String(x)))
   const codes = []
   for (const p of products) {
     for (const gv of p.groupVariants || [p]) {
       if (!gv || !idSet.has(String(gv.id))) continue
+      if (!variantMarkedForDeletionIsCombo(gv) && !isComboCatalogProduct(p)) continue
       const code = String(gv.code ?? '').trim()
       if (code) codes.push(code)
     }
@@ -794,12 +963,17 @@ export function collectMaHangCodesForVariantIds(products, variantIds) {
 }
 
 /**
- * Xóa biến thể đã gỡ khỏi catalog theo `ma_hang`.
+ * Xóa biến thể đã gỡ khỏi catalog: combo → xóa BOM (jsonb) rồi xóa dòng combo; không cascade thành phần.
  * @param {Array<object>} products — catalog trước khi sửa
  * @param {Array<string|number>} variantIds
  */
 export async function deleteProductsForRemovedVariants(products, variantIds) {
-  const codes = collectMaHangCodesForVariantIds(products, variantIds)
+  const codes = collectMaHangCodesForVariantDeletion(products, variantIds)
+  const comboCodes = collectComboMaHangForVariantDeletion(products, variantIds)
+  if (comboCodes.length > 0) {
+    const clearR = await clearComboProductLinksOnSupabase(comboCodes)
+    if (!clearR.ok && !clearR.skipped) return clearR
+  }
   return deleteProductsFromSupabaseByMaHang(codes)
 }
 
@@ -853,40 +1027,50 @@ export async function deleteProductsFromSupabaseByMaHang(maHangList) {
 }
 
 /**
- * Chỉ upsert các biến thể vừa thêm/sửa — không gửi lại cả danh mục (thousands rows).
+ * Ghi các biến thể mới/sửa lên `products` — mặc định bulk insert một request (tạo hàng loạt).
  * @param {Array<object>} flatDisplayVariants — dòng phẳng POS (giống phần tử trong groupVariants).
+ * @param {object} [options]
+ * @param {Array<object>} [options.existingCatalogProducts] — catalog hiện có (để sinh mã HH/QR duy nhất).
+ * @param {boolean} [options.useBulkInsert=true] — `insert` một lần; `false` → upsert (sửa giá vốn…).
  * @returns {Promise<{ ok: boolean, skipped?: boolean, written?: number, skippedUpsert?: number, error?: unknown }>}
  */
-export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
+export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const sb = getSupabaseClient()
   if (!sb || !flatDisplayVariants?.length) return { ok: true }
-  const rawRows = flatDisplayVariants.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
+  const existingCatalog = Array.isArray(options.existingCatalogProducts)
+    ? options.existingCatalogProducts
+    : []
+  const useBulkInsert = options.useBulkInsert !== false
+  const uniqueVariants = ensureUniqueMaHangAndBarcodeForNewRows(existingCatalog, flatDisplayVariants)
+  const rawRows = uniqueVariants.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
   const eligible = dedupeRowsByProductCode(
     rawRows.filter((r) => String(r[PRODUCT_PK_COLUMN] ?? '').trim().length > 0)
   )
   try {
     if (eligible.length === 0) {
       const err = new Error(
-        'Upsert chỉ các biến thể được chọn: không có «Mã hàng» hợp lệ trong nhóm upsert.'
+        'Ghi «products»: không có «Mã hàng» hợp lệ trong nhóm biến thể.'
       )
       notifySupabasePersistFailure(err)
       return { ok: false, error: err }
     }
     console.log(
-      `[saveProductsToSupabase] Chỉ upsert ${rawRows.length} dòng (incremental), không đồng bộ toàn bộ catalog.`
+      `[saveProductsToSupabase] Ghi ${eligible.length} dòng (${useBulkInsert ? 'bulk insert' : 'upsert'}), không đồng bộ toàn catalog.`
     )
-    const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await upsertRawProductRows(
+    const persistFn = useBulkInsert ? insertRawProductRows : upsertRawProductRows
+    const persistOpts = useBulkInsert ? {} : { bypassBaselineDiff: true }
+    const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await persistFn(
       sb,
       rawRows,
-      { bypassBaselineDiff: true }
+      persistOpts
     )
     if (written === 0 && skippedUpsert > 0) {
       const fromApi =
         lastSupabaseError != null ? describeCatalogPersistError(lastSupabaseError) : null
       const err = new Error(
         fromApi ||
-          `Upsert bảng «products»: không ghi được dòng nào (${skippedUpsert}/${eligible.length} bị bỏ qua).`
+          `Ghi bảng «products»: không ghi được dòng nào (${skippedUpsert}/${eligible.length} bị bỏ qua).`
       )
       if (lastSupabaseError) err.cause = lastSupabaseError
       notifySupabasePersistFailure(err, lastSupabaseError)
@@ -895,7 +1079,13 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants) {
     const returnedDisplayVariants = (returnedProductRows || [])
       .map((row, i) => supabaseProductRowToFlatCatalogRow(row, i))
       .filter(Boolean)
-    return { ok: true, written, skippedUpsert, returnedDisplayVariants }
+    return {
+      ok: true,
+      written,
+      skippedUpsert,
+      returnedDisplayVariants,
+      preparedVariants: uniqueVariants,
+    }
   } catch (error) {
     if (error && typeof error === 'object') {
       const { message: m, details: d, hint: h } = error
@@ -929,9 +1119,17 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
   }
   if (options?.upsertOnlyVariants?.length) {
     await saveCatalogSnapshot(products, fileName)
-    const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants)
+    const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants, {
+      existingCatalogProducts: products,
+      useBulkInsert: options.useBulkInsert === true,
+    })
     return r.ok
-      ? { ok: true, snapshotSaved: true, returnedDisplayVariants: r.returnedDisplayVariants }
+      ? {
+          ok: true,
+          snapshotSaved: true,
+          returnedDisplayVariants: r.returnedDisplayVariants,
+          preparedVariants: r.preparedVariants,
+        }
       : { ok: false, error: r.error, snapshotSaved: true }
   }
   const [_, r] = await Promise.all([

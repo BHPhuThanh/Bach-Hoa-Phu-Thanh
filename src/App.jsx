@@ -2561,6 +2561,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   /** Sau khi đọc xong IndexedDB (lần đầu) mới cho phép auto-save — tránh xóa DB khi state tạm []. */
   const [catalogStoreHydrated, setCatalogStoreHydrated] = useState(false)
   const catalogStoreHydratedRef = useRef(false)
+  /** Xếp hàng persist catalog — tránh tạo nhiều SP song song trùng mã HH. */
+  const catalogPersistQueueRef = useRef(Promise.resolve())
   const initialCatalogLoadPendingRef = useRef(initialCatalogLoadPending)
   const catalogFileNameRef = useRef(fileName)
   catalogFileNameRef.current = fileName
@@ -2989,17 +2991,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     async (variantIds) => {
       if (!variantIds?.length) return
       const prev = productsRef.current
-      const codesToDelete = collectMaHangCodesForVariantIds(prev, variantIds)
-      const uniq = [...new Set(codesToDelete.map((c) => String(c ?? '').trim()).filter(Boolean))]
-
       if (
         isSupabaseConfigured() &&
         catalogStoreHydratedRef.current &&
         !initialCatalogLoadPendingRef.current &&
-        uniq.length > 0
+        variantIds.length > 0
       ) {
         try {
-          const dr = await deleteProductsFromSupabaseByMaHang(uniq)
+          const dr = await deleteProductsForRemovedVariants(prev, variantIds)
           if (!dr.ok && !dr.skipped) {
             showPosPersistErrorToast(
               describeCatalogPersistError(dr.error) || 'Không xóa được sản phẩm trên Supabase.'
@@ -3010,8 +3009,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           showPosPersistErrorToast(describeCatalogPersistError(err))
           return
         }
-      } else if (isSupabaseConfigured() && uniq.length > 0) {
-        for (const m of uniq) pendingDeletedMaHangForSupabaseRef.current.add(m)
+      } else if (isSupabaseConfigured() && variantIds.length > 0) {
+        const pendingCodes = collectMaHangCodesForVariantIds(prev, variantIds)
+        for (const m of pendingCodes) pendingDeletedMaHangForSupabaseRef.current.add(m)
         setCatalogSupabaseDirty(true)
       }
 
@@ -3101,22 +3101,25 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
       queueMicrotask(() => {
         if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        void (async () => {
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-            upsertOnlyVariants: variants,
-          })
-          if (r.ok) {
-            await applyServerCatalogAfterPersist()
-            try {
-              inboundCatalogUpsertReconcileRef.current?.({
-                requested: variants,
-                returned: r.returnedDisplayVariants,
-              })
-            } catch (e) {
-              console.warn('[App] Đồng bộ id nhập hàng sau upsert', e)
+        catalogPersistQueueRef.current = catalogPersistQueueRef.current
+          .then(async () => {
+            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+              upsertOnlyVariants: variants,
+              useBulkInsert: true,
+            })
+            if (r.ok) {
+              await applyServerCatalogAfterPersist()
+              try {
+                inboundCatalogUpsertReconcileRef.current?.({
+                  requested: r.preparedVariants || variants,
+                  returned: r.returnedDisplayVariants,
+                })
+              } catch (e) {
+                console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
+              }
             }
-          }
-        })()
+          })
+          .catch((e) => console.error('[App] append catalog persist', e))
       })
       return next
     })
@@ -3131,7 +3134,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const r = await persistCatalogSnapshotAndProducts(
         nextProducts,
         catalogFileNameRef.current || fileNameHint || '',
-        { upsertOnlyVariants }
+        { upsertOnlyVariants, useBulkInsert: true }
       )
       if (!r.ok) return { ok: false, error: describeCatalogPersistError(r.error) }
       await applyServerCatalogAfterPersist()
