@@ -3140,14 +3140,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: true, preparedVariants: prepared }
       }
 
-      catalogPersistQueueRef.current = catalogPersistQueueRef.current
-        .then(runPersist)
+      const queued = catalogPersistQueueRef.current
+        .then(() => runPersist())
         .catch((e) => {
           console.error('[App] append catalog persist', e)
           showPosPersistErrorToast(describeCatalogPersistError(e))
           return { ok: false, error: e }
         })
-      return catalogPersistQueueRef.current
+      catalogPersistQueueRef.current = queued
+      return await queued
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )

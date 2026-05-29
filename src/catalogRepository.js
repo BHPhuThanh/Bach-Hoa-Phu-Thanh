@@ -1296,10 +1296,11 @@ export async function insertSingleProductFromDisplayVariant(variant) {
     console.error('Lỗi Insert Supabase:', prepErr)
     return { ok: false, error: prepErr }
   }
+  const insertRows = [fin]
   // eslint-disable-next-line no-console
-  console.log('Bắt đầu gửi lên Supabase...', { ma_hang: maHang, payload: fin })
+  console.log('Bắt đầu gửi lên Supabase...', insertRows)
   try {
-    const { data, error } = await sb.from(PRODUCTS_TABLE).insert([fin]).select('*')
+    const { data, error } = await sb.from(PRODUCTS_TABLE).insert(insertRows).select('*')
     if (error) {
       console.error('Lỗi Insert Supabase:', error)
       throw error
@@ -1312,6 +1313,8 @@ export async function insertSingleProductFromDisplayVariant(variant) {
       return { ok: false, error: err }
     }
     mergeBaselineFromUpsertReturnedRows(rows)
+    // eslint-disable-next-line no-console
+    console.log('Insert Supabase thành công:', maHang)
     return {
       ok: true,
       displayVariant: supabaseProductRowToFlatCatalogRow(rows[0], 0),

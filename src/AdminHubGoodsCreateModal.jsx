@@ -423,7 +423,7 @@ export default function AdminHubGoodsCreateModal({
     [goodsNewUseExpiry, goodsNewExpiryYmd]
   )
 
-  const submitGoodsCreateModal = useCallback(() => {
+  const submitGoodsCreateModal = useCallback(async () => {
     if (revenueReadOnly || goodsCreateSaving) return
 
     const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
@@ -435,24 +435,7 @@ export default function AdminHubGoodsCreateModal({
       const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rowsForUpsert])
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
 
-      if (onAppendCatalogVariants) {
-        try {
-          const res = await onAppendCatalogVariants(rowsForUpsert)
-          if (res && res.ok === false) {
-            console.error('Lỗi Insert Supabase:', res.error)
-            setGoodsCreateSaveError(
-              String(res.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
-            )
-            return false
-          }
-          return true
-        } catch (e) {
-          console.error('Lỗi Insert Supabase:', e)
-          setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
-          return false
-        }
-      }
-
+      /** Insert trực tiếp Supabase — tránh hàng đợi append có thể khiến caller unmount trước khi POST xong. */
       if (persistStandaloneProducts) {
         try {
           const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
@@ -471,24 +454,42 @@ export default function AdminHubGoodsCreateModal({
         }
       }
 
+      if (onAppendCatalogVariants) {
+        try {
+          const res = await onAppendCatalogVariants(rowsForUpsert)
+          if (!res || res.ok === false) {
+            console.error('Lỗi Insert Supabase:', res?.error ?? res)
+            setGoodsCreateSaveError(
+              String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
+            )
+            return false
+          }
+          return true
+        } catch (e) {
+          console.error('Lỗi Insert Supabase:', e)
+          setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
+          return false
+        }
+      }
+
       setGoodsCreateSaveError('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
       return false
     }
 
     const finish = async (rowsForUpsert) => {
-      if (goodsCreateSaving) return
       setGoodsCreateSaveError('')
       setGoodsCreateSaving(true)
+      let saved = false
       try {
-        const ok = await flushRows(rowsForUpsert)
-        if (!ok) return
+        saved = await flushRows(rowsForUpsert)
+        if (!saved) return
         resetFormFields()
         resetBatchRowsState()
         goodsCreateScanBufferRef.current = { buf: '', times: [] }
-        onClose()
         onSaved?.()
       } finally {
         setGoodsCreateSaving(false)
+        if (saved) onClose()
       }
     }
 
@@ -507,7 +508,7 @@ export default function AdminHubGoodsCreateModal({
         window.alert('Vui lòng nhập tên hàng cho ít nhất một dòng.')
         return
       }
-      void finish(applyExpiryToVariants(built))
+      await finish(applyExpiryToVariants(built))
       return
     }
 
@@ -572,7 +573,7 @@ export default function AdminHubGoodsCreateModal({
           }
         })
       )
-      void finish(rows)
+      await finish(rows)
       return
     }
 
@@ -632,7 +633,7 @@ export default function AdminHubGoodsCreateModal({
           })()
         : {}),
     }
-    void finish([row])
+    await finish([row])
   }, [
     revenueReadOnly,
     goodsCreateSaving,
