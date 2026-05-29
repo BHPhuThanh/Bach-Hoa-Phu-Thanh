@@ -3104,10 +3104,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
 
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
-        const prev = productsRef.current
-        const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
-        startTransition(() => setProducts(next))
-        return { ok: true }
+        return {
+          ok: false,
+          error: 'Danh mục chưa tải xong. Vui lòng đợi vài giây rồi thử lưu lại.',
+        }
       }
 
       const runPersist = async () => {
@@ -3120,6 +3120,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const msg =
             describeCatalogPersistError(r.error) ||
             'Không lưu được sản phẩm mới (Supabase / snapshot).'
+          console.error('Lỗi Insert Supabase:', r.error)
           showPosPersistErrorToast(msg)
           return { ok: false, error: r.error }
         }
@@ -3137,7 +3138,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         } catch (e) {
           console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
         }
-        return { ok: true }
+        return { ok: true, preparedVariants: prepared }
       }
 
       catalogPersistQueueRef.current = catalogPersistQueueRef.current
@@ -3163,6 +3164,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         existingCatalogProducts: prev,
       })
       if (!r.ok) {
+        console.error('Lỗi Insert Supabase:', r.error)
         showPosPersistErrorToast(
           describeCatalogPersistError(r.error) || 'Không lưu được sản phẩm mới (Supabase).'
         )
@@ -3174,7 +3176,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         variants: prepared,
       })
       startTransition(() => setProducts(merged))
-      return { ok: true }
+      return { ok: true, preparedVariants: prepared }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )

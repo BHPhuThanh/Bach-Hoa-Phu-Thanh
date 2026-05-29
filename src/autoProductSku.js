@@ -14,10 +14,26 @@ export function formatHhSkuFromSequence(n) {
   return `HH${s.length <= 4 ? s.padStart(4, '0') : s}`
 }
 
-/** Trích số từ mã hàng (bỏ mọi ký tự không phải số) — khớp logic đọc max từ DB. */
-export function parseMaHangDigits(code) {
-  const n = parseInt(String(code ?? '').replace(/\D/g, ''), 10)
-  return Number.isFinite(n) ? n : 0
+/** Mã HH hợp lệ cho sinh tự động: HH + 4–6 chữ số (vd. HH0459). */
+export const AUTO_HH_MA_HANG_PATTERN = /^HH\d{4,6}$/i
+
+export function isValidAutoHhMaHang(code) {
+  return AUTO_HH_MA_HANG_PATTERN.test(String(code ?? '').trim())
+}
+
+/** Max số từ danh sách mã — chỉ tính mã đúng chuẩn HH + 4–6 số. */
+export function maxValidHhMaHangNumber(codes) {
+  const valid = (Array.isArray(codes) ? codes : [])
+    .map((c) => String(c ?? '').trim())
+    .filter(isValidAutoHhMaHang)
+  if (valid.length === 0) return 0
+  return Math.max(...valid.map((c) => parseInt(c.replace(/^HH/i, ''), 10)))
+}
+
+/** Mã HH kế tiếp sau maxNumber (pad 4 chữ số). */
+export function nextAutoHhMaHangFromMax(maxNumber) {
+  const n = Math.max(0, Math.floor(Number(maxNumber)) || 0) + 1
+  return `HH${String(n).padStart(4, '0')}`
 }
 
 /**

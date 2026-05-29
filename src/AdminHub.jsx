@@ -2118,21 +2118,29 @@ export default function AdminHub({
     const persistResult = persistOpts?.snapshotOnly
       ? await persistCatalogSnapshotAndProducts(nextProducts, fn, { snapshotOnly: true })
       : upsertOnlyVariants?.length
-        ? persistOpts.useBulkInsert === true
-          ? await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
+        ? persistOpts.useUpdateSequential === true
+          ? await updateProductDisplayVariantsSequential(upsertOnlyVariants)
+          : await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
               existingCatalogProducts: nextProducts,
             })
-          : await updateProductDisplayVariantsSequential(upsertOnlyVariants)
         : await persistCatalogSnapshotAndProducts(nextProducts, fn)
     if (!persistResult.ok) {
+      console.error('Lỗi Insert Supabase:', persistResult.error)
       return {
         ok: false,
         error: describeCatalogPersistError(persistResult.error),
       }
     }
     if (upsertOnlyVariants?.length) {
-      setStandaloneCatalog({ products: nextProducts, fileName: fn })
-      return { ok: true, preparedVariants: persistResult.preparedVariants }
+      const prepared = persistResult.preparedVariants || upsertOnlyVariants
+      const flat = (Array.isArray(nextProducts) ? nextProducts : []).flatMap((p) => p.groupVariants || [p])
+      const withoutNew = flat.filter(
+        (v) => !prepared.some((p) => String(p.id) === String(v.id))
+      )
+      const mergedFlat = mergeFlatCatalogRowsBySmartUomGroups([...withoutNew, ...prepared])
+      const mergedProducts = prepareCatalogForPosSearch(buildDisplayCatalog(mergedFlat))
+      setStandaloneCatalog({ products: mergedProducts, fileName: fn })
+      return { ok: true, preparedVariants: prepared }
     }
     if (isSupabaseConfigured()) {
       const fresh = await revalidateCatalogFromStore()
@@ -2256,7 +2264,9 @@ export default function AdminHub({
               )
             }
           }
-          const pr = await persistStandaloneProducts(nextDisplay, fn, replacements)
+          const pr = await persistStandaloneProducts(nextDisplay, fn, replacements, {
+            useUpdateSequential: true,
+          })
           if (!pr?.ok) {
             throw new Error(pr?.error || 'Không lưu được đơn vị tính.')
           }
@@ -3897,18 +3907,25 @@ export default function AdminHub({
 
   /** Modal «Tạo mới»: đồng bộ staging + một dòng lưới (SL=1); gọi App append — chỉ trong tab nháp nhập hàng. */
   const appendCatalogVariantsFromInboundProductModal = useCallback(
-    (rows) => {
+    async (rows) => {
       const list = Array.isArray(rows) ? rows : []
-      if (
-        activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
-        list.length > 0
-      ) {
-        setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, list))
-        appendInboundDraftLinesFromFlatRows(setInboundFormLines, list)
-      }
       if (typeof onAppendCatalogVariants === 'function') {
-        onAppendCatalogVariants(rows)
+        const res = await onAppendCatalogVariants(list)
+        if (!res || res.ok === false) {
+          console.error('Lỗi Insert Supabase:', res?.error)
+          return res ?? { ok: false, error: 'Không lưu được sản phẩm mới.' }
+        }
+        if (
+          activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
+          list.length > 0
+        ) {
+          const prepared = res.preparedVariants || list
+          setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, prepared))
+          appendInboundDraftLinesFromFlatRows(setInboundFormLines, prepared)
+        }
+        return res
       }
+      return { ok: false, error: 'Thiếu cấu hình lưu danh mục (onAppendCatalogVariants).' }
     },
     [onAppendCatalogVariants]
   )
@@ -3917,14 +3934,15 @@ export default function AdminHub({
   const persistStandaloneProductsForInboundModal = useCallback(
     async (nextProducts, fileNameHint, upsertOnlyVariants) => {
       const result = await persistStandaloneProducts(nextProducts, fileNameHint, upsertOnlyVariants)
-      const extras = upsertOnlyVariants
       if (
+        result?.ok &&
         activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
-        Array.isArray(extras) &&
-        extras.length > 0
+        Array.isArray(upsertOnlyVariants) &&
+        upsertOnlyVariants.length > 0
       ) {
-        setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, extras))
-        appendInboundDraftLinesFromFlatRows(setInboundFormLines, extras)
+        const prepared = result.preparedVariants || upsertOnlyVariants
+        setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, prepared))
+        appendInboundDraftLinesFromFlatRows(setInboundFormLines, prepared)
       }
       return result
     },

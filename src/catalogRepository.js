@@ -31,8 +31,10 @@ import {
 import {
   ensureUniqueMaHangAndBarcodeForNewRows,
   formatHhSkuFromSequence,
+  isValidAutoHhMaHang,
+  maxValidHhMaHangNumber,
+  nextAutoHhMaHangFromMax,
   parseHhNumericSku,
-  parseMaHangDigits,
 } from './autoProductSku.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
@@ -1211,8 +1213,7 @@ export async function fetchAllMaHangCodesFromSupabase() {
  */
 export async function fetchMaxMaHangNumericFromSupabase() {
   const codes = await fetchAllMaHangCodesFromSupabase()
-  if (codes.length === 0) return 0
-  return Math.max(...codes.map((c) => parseMaHangDigits(c)), 0)
+  return maxValidHhMaHangNumber(codes)
 }
 
 /** @deprecated Dùng {@link fetchMaxMaHangNumericFromSupabase} */
@@ -1284,10 +1285,14 @@ export async function insertSingleProductFromDisplayVariant(variant) {
   const fin = finalizeDisplayVariantForDbWrite(variant)
   try {
     const { data, error } = await sb.from(PRODUCTS_TABLE).insert([fin]).select('*')
-    if (error) throw error
+    if (error) {
+      console.error('Lỗi Insert Supabase:', error)
+      throw error
+    }
     const rows = Array.isArray(data) ? data : []
     if (rows.length === 0) {
       const err = new Error(`Insert «products» không trả về dòng cho ${PRODUCT_PK_COLUMN}="${maHang}".`)
+      console.error('Lỗi Insert Supabase:', err)
       notifySupabasePersistFailure(err)
       return { ok: false, error: err }
     }
@@ -1297,6 +1302,7 @@ export async function insertSingleProductFromDisplayVariant(variant) {
       displayVariant: supabaseProductRowToFlatCatalogRow(rows[0], 0),
     }
   } catch (e) {
+    console.error('Lỗi Insert Supabase:', e)
     notifySupabasePersistFailure(e)
     return { ok: false, error: e }
   }
@@ -1341,9 +1347,7 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   let currentMax =
     Number.isFinite(Number(options.startMaxHh)) && Number(options.startMaxHh) > 0
       ? Number(options.startMaxHh)
-      : allDbCodes.length > 0
-        ? Math.max(...allDbCodes.map((c) => parseMaHangDigits(c)), 0)
-        : 0
+      : maxValidHhMaHangNumber(allDbCodes)
 
   const batchAssigned = new Set()
   for (const c of allDbCodes) {
@@ -1360,21 +1364,25 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   for (const v of flatVariants) {
     let code = String(v.code ?? '').trim()
     const codeLc = code.toLowerCase()
-    const mustAutoAssign = !code || dbCodeSet.has(codeLc) || batchAssigned.has(codeLc)
+    const mustAutoAssign =
+      !code ||
+      !isValidAutoHhMaHang(code) ||
+      dbCodeSet.has(codeLc) ||
+      batchAssigned.has(codeLc)
 
     if (mustAutoAssign) {
       let guard = 0
       do {
         currentMax += 1
-        code = formatHhSkuFromSequence(currentMax)
+        code = nextAutoHhMaHangFromMax(currentMax - 1)
         guard += 1
       } while (
         (dbCodeSet.has(code.toLowerCase()) || batchAssigned.has(code.toLowerCase())) &&
         guard < 100000
       )
     } else {
-      const n = parseMaHangDigits(code)
-      if (n > 0) currentMax = Math.max(currentMax, n)
+      const n = parseInt(code.replace(/^HH/i, ''), 10)
+      if (Number.isFinite(n)) currentMax = Math.max(currentMax, n)
     }
 
     // eslint-disable-next-line no-console
@@ -1390,6 +1398,7 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     const row = { ...v, code, barcode }
     const r = await insertSingleProductFromDisplayVariant(row)
     if (!r.ok) {
+      console.error('Lỗi Insert Supabase:', r.error)
       return { ok: false, error: r.error, preparedVariants: prepared, written: prepared.length }
     }
     const out = r.displayVariant ? { ...row, ...r.displayVariant, code } : row

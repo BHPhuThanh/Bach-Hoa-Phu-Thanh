@@ -439,6 +439,7 @@ export default function AdminHubGoodsCreateModal({
         try {
           const res = await onAppendCatalogVariants(rowsForUpsert)
           if (res && res.ok === false) {
+            console.error('Lỗi Insert Supabase:', res.error)
             setGoodsCreateSaveError(
               String(res.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
             )
@@ -446,7 +447,7 @@ export default function AdminHubGoodsCreateModal({
           }
           return true
         } catch (e) {
-          console.error(e)
+          console.error('Lỗi Insert Supabase:', e)
           setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
           return false
         }
@@ -456,6 +457,7 @@ export default function AdminHubGoodsCreateModal({
         try {
           const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
           if (!res || res.ok === false) {
+            console.error('Lỗi Insert Supabase:', res?.error)
             setGoodsCreateSaveError(
               String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
             )
@@ -463,7 +465,7 @@ export default function AdminHubGoodsCreateModal({
           }
           return true
         } catch (e) {
-          console.error(e)
+          console.error('Lỗi Insert Supabase:', e)
           setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
           return false
         }
