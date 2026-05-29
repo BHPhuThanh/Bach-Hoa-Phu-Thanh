@@ -23,6 +23,7 @@ import {
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
 import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
+import { CATALOG_PRODUCT_TYPE_COMBO } from './comboCatalog.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
 export const CATALOG_SNAPSHOT_STORAGE_KEY = 'csv-preview-admin-catalog-snapshot-v1'
@@ -46,6 +47,9 @@ const PRODUCTS_UPSERT_FALLBACK_CHUNK = 1500
 
 /** `ma_hang` → payload đã finalize — chỉ upsert dòng thay đổi thật sự. */
 const productUpsertBaselineByMaHang = new Map()
+
+const PRODUCT_BOOLEAN_COLUMNS = new Set(['is_combo'])
+const PRODUCT_JSONB_COLUMNS = new Set(['combo_bom'])
 
 /** Thông báo toast đỏ chuẩn khi ghi DB thất bại. */
 export function catalogDbErrorToastMessage(err) {
@@ -296,6 +300,60 @@ function notifySupabasePersistFailure(error, supabaseRowError) {
  * Một biến thể POS → dòng logic trước khi {@link finalizeProductRowForSupabase} ép toàn bộ thành chuỗi gửi API.
  * @param {object} v
  */
+function variantIsComboForPersist(v) {
+  if (!v) return false
+  if (v.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) return true
+  if (v.isCombo === true) return true
+  const bom = v.comboBom
+  return Array.isArray(bom) && bom.length > 0
+}
+
+/** BOM từ cột `combo_bom` (jsonb / chuỗi JSON). */
+export function parseComboBomFromProductsDbRow(row) {
+  const raw = row?.combo_bom
+  if (raw == null || raw === '') return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'object') return Array.isArray(raw) ? raw : []
+  if (typeof raw === 'string') {
+    try {
+      const j = JSON.parse(raw)
+      return Array.isArray(j) ? j : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+function readIsComboFromProductsDbRow(row) {
+  if (!row) return false
+  if (row.is_combo === true || row.is_combo === 'true' || row.is_combo === 't' || row.is_combo === 1) {
+    return true
+  }
+  if (String(row.loai_san_pham ?? '').trim().toLowerCase() === CATALOG_PRODUCT_TYPE_COMBO) {
+    return true
+  }
+  return parseComboBomFromProductsDbRow(row).length > 0
+}
+
+/** Gắn metadata combo lên biến thể display (sau đọc `products` hoặc snapshot). */
+export function applyComboMetadataToDisplayVariant(v, comboSource) {
+  if (!v || !comboSource) return v
+  const isCombo =
+    comboSource.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO ||
+    comboSource.isCombo === true ||
+    (Array.isArray(comboSource.comboBom) && comboSource.comboBom.length > 0)
+  if (!isCombo) return v
+  const bom = Array.isArray(comboSource.comboBom) ? comboSource.comboBom : []
+  return {
+    ...v,
+    catalogProductType: CATALOG_PRODUCT_TYPE_COMBO,
+    isCombo: true,
+    comboBom: bom,
+    ...(comboSource.comboCostOverride != null ? { comboCostOverride: comboSource.comboCostOverride } : {}),
+  }
+}
+
 function displayVariantToProductsRow(v) {
   const conv =
     v?.conversion != null && Number.isFinite(Number(v.conversion)) && Number(v.conversion) > 0
@@ -307,6 +365,8 @@ function displayVariantToProductsRow(v) {
   const sqNum = Number(sqRaw)
   const tonKho =
     sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0
+  const isCombo = variantIsComboForPersist(v)
+  const comboBom = isCombo && Array.isArray(v?.comboBom) ? v.comboBom : []
   return {
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
@@ -323,6 +383,9 @@ function displayVariantToProductsRow(v) {
     ma_hh_lien_quan: dbTextCell(v?.linkedMasterCode),
     trong_luong: v?.weightRaw,
     gia_si: v?.wholesalePrice,
+    is_combo: isCombo,
+    loai_san_pham: isCombo ? CATALOG_PRODUCT_TYPE_COMBO : '',
+    combo_bom: comboBom,
   }
 }
 
@@ -356,6 +419,24 @@ function finalizeProductRowForSupabase(row, allow) {
       let n = dec === '' ? NaN : Number(dec)
       if (!Number.isFinite(n)) n = defaultNumberForProductPayloadColumn(k)
       o[k] = Number(parseFloat(String(n)).toFixed(4))
+      continue
+    }
+
+    if (PRODUCT_BOOLEAN_COLUMNS.has(k)) {
+      o[k] = raw === true || raw === 'true' || raw === 't' || raw === 1 || raw === '1'
+      continue
+    }
+
+    if (PRODUCT_JSONB_COLUMNS.has(k)) {
+      let val = raw
+      if (typeof val === 'string') {
+        try {
+          val = JSON.parse(val)
+        } catch {
+          val = []
+        }
+      }
+      o[k] = Array.isArray(val) ? val : []
       continue
     }
 
@@ -853,8 +934,10 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
       ? { ok: true, snapshotSaved: true, returnedDisplayVariants: r.returnedDisplayVariants }
       : { ok: false, error: r.error, snapshotSaved: true }
   }
-  await saveCatalogSnapshot(products, fileName)
-  const r = await saveProductsToSupabase(products)
+  const [_, r] = await Promise.all([
+    saveCatalogSnapshot(products, fileName),
+    saveProductsToSupabase(products),
+  ])
   return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
 }
 
@@ -928,9 +1011,28 @@ function normalizeDisplayVariantNumbers(v) {
   }
 }
 
-function normalizeDisplayCatalogNumericFields(products) {
+function normalizeDisplayCatalogComboFields(products) {
   if (!Array.isArray(products) || products.length === 0) return []
   return products.map((p) => {
+    if (Array.isArray(p.groupVariants) && p.groupVariants.length > 0) {
+      const groupVariants = p.groupVariants.map((v) =>
+        applyComboMetadataToDisplayVariant(normalizeDisplayVariantNumbers(v), v)
+      )
+      const rep =
+        groupVariants.find((v) => variantIsComboForPersist(v)) ?? groupVariants[0] ?? p
+      return applyComboMetadataToDisplayVariant(
+        { ...normalizeDisplayVariantNumbers(p), groupVariants },
+        rep
+      )
+    }
+    const v = normalizeDisplayVariantNumbers(p)
+    return applyComboMetadataToDisplayVariant(v, v)
+  })
+}
+
+function normalizeDisplayCatalogNumericFields(products) {
+  if (!Array.isArray(products) || products.length === 0) return []
+  const nums = products.map((p) => {
     if (Array.isArray(p.groupVariants) && p.groupVariants.length > 0) {
       return {
         ...normalizeDisplayVariantNumbers(p),
@@ -939,6 +1041,7 @@ function normalizeDisplayCatalogNumericFields(products) {
     }
     return normalizeDisplayVariantNumbers(p)
   })
+  return normalizeDisplayCatalogComboFields(nums)
 }
 
 /**
@@ -1079,7 +1182,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
   const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
-  return {
+  const flat = {
     id: `sb-${rowIndex}-${code}`,
     code,
     barcode,
@@ -1107,6 +1210,92 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
     stockNormMax,
     createdAtMs: createdAtMsFromSupabaseProductRow(row, rowIndex),
     raw: row,
+  }
+  if (readIsComboFromProductsDbRow(row)) {
+    return applyComboMetadataToDisplayVariant(flat, {
+      catalogProductType: CATALOG_PRODUCT_TYPE_COMBO,
+      isCombo: true,
+      comboBom: parseComboBomFromProductsDbRow(row),
+    })
+  }
+  return flat
+}
+
+/**
+ * Snapshot JSON (đủ combo) + dòng `products` (giá/tồn/combo cột DB) → catalog hiển thị.
+ * @param {{ products: Array, fileName: string, csvRowCount: number }} snapshotCatalog
+ * @param {{ products: Array, fileName: string, csvRowCount: number }} productsCatalog
+ */
+function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog) {
+  const liveByCode = new Map()
+  for (const p of productsCatalog.products || []) {
+    for (const v of p.groupVariants || [p]) {
+      const code = String(v.code ?? '').trim()
+      if (code) liveByCode.set(code, v)
+    }
+  }
+
+  const snapCodes = new Set()
+  const mergedProducts = (snapshotCatalog.products || []).map((p) => {
+    const gvs = (p.groupVariants || [p]).map((v) => {
+      const code = String(v.code ?? '').trim()
+      if (code) snapCodes.add(code)
+      const live = liveByCode.get(code)
+      if (!live) return v
+      return applyComboMetadataToDisplayVariant(
+        {
+          ...v,
+          price: live.price,
+          wholesalePrice: live.wholesalePrice,
+          cost: live.cost,
+          stockQty: live.stockQty,
+          brand: live.brand ?? v.brand,
+          barcode: live.barcode ?? v.barcode,
+          name: live.name ?? v.name,
+          nameRaw: live.nameRaw ?? v.nameRaw,
+          weightRaw: live.weightRaw ?? v.weightRaw,
+        },
+        live
+      )
+    })
+    const rep = gvs[0] ?? p
+    const comboRep = gvs.find((x) => x.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) ?? rep
+    return applyComboMetadataToDisplayVariant(
+      {
+        ...p,
+        ...comboRep,
+        groupVariants: gvs,
+      },
+      comboRep
+    )
+  })
+
+  for (const p of productsCatalog.products || []) {
+    for (const v of p.groupVariants || [p]) {
+      const code = String(v.code ?? '').trim()
+      if (!code || snapCodes.has(code)) continue
+      if (!variantIsComboForPersist(v)) continue
+      mergedProducts.push(
+        applyComboMetadataToDisplayVariant(
+          {
+            ...v,
+            groupVariants: [v],
+            multiUnit: false,
+          },
+          v
+        )
+      )
+      snapCodes.add(code)
+    }
+  }
+
+  const products = normalizeDisplayCatalogNumericFields(
+    prepareCatalogForPosSearch(mergedProducts)
+  )
+  return {
+    products,
+    fileName: snapshotCatalog.fileName || productsCatalog.fileName,
+    csvRowCount: countVariantRowsInProducts(products),
   }
 }
 
@@ -1181,10 +1370,20 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
  */
 export async function fetchCatalogSnapshotFromPersistentStore() {
   if (isSupabaseConfigured()) {
-    const fromProducts = await fetchDisplayCatalogFromSupabaseProductsTable()
+    const [fromSnap, fromProducts] = await Promise.all([
+      fetchCatalogSnapshotFromSupabase(),
+      fetchDisplayCatalogFromSupabaseProductsTable(),
+    ])
+    if (fromSnap?.products?.length && fromProducts?.products?.length) {
+      return mergeSnapshotCatalogWithProductsTable(fromSnap, fromProducts)
+    }
+    if (fromSnap?.products?.length) {
+      return {
+        ...fromSnap,
+        products: normalizeDisplayCatalogNumericFields(fromSnap.products),
+      }
+    }
     if (fromProducts?.products?.length) return fromProducts
-    const fromSnap = await fetchCatalogSnapshotFromSupabase()
-    if (fromSnap) return fromSnap
     return null
   }
   if (isCatalogRemoteEnabled()) {

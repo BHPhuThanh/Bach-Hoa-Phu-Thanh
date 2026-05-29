@@ -26,4 +26,8 @@ export const CATALOG_PRODUCT_DB_COLUMNS = [
   'ma_hh_lien_quan',
   'trong_luong',
   'gia_si',
+  /** Combo — đồng bộ cùng lúc snapshot JSON (không bảng product_combo_items riêng). */
+  'is_combo',
+  'loai_san_pham',
+  'combo_bom',
 ]
