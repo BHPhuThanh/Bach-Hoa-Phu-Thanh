@@ -1848,11 +1848,11 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
     )
   })
 
+  /** Dòng chỉ có trên bảng `products` (chưa có trong snapshot JSON) — phải hiện cả hàng thường, không chỉ combo. */
   for (const p of productsCatalog.products || []) {
     for (const v of p.groupVariants || [p]) {
       const code = String(v.code ?? '').trim()
       if (!code || snapCodes.has(code)) continue
-      if (!variantIsComboForPersist(v)) continue
       mergedProducts.push(
         applyComboMetadataToDisplayVariant(
           {

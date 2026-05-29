@@ -1159,6 +1159,8 @@ export default function AdminHub({
   /** App: từ thông báo tồn thấp — mở phiếu nhập + thêm dòng sẵn. */
   inboundLowStockPrefillRequest = null,
   onInboundLowStockPrefillConsumed,
+  /** App: sau tạo/sửa SP — `fetchProducts` / revalidate và cập nhật `products` cha. */
+  onRevalidateCatalog,
 }) {
   /** Ledger hoàn trả POS — nguồn chính Supabase (`pos_return_ledger`), không cache báo cáo localStorage. */
   const [returnDayLedger, setReturnDayLedger] = useState([])
@@ -2112,6 +2114,28 @@ export default function AdminHub({
     setGoodsSaveToastGen((g) => g + 1)
   }, [])
 
+  const handleGoodsCreateSaved = useCallback(async () => {
+    triggerGoodsSaveSuccessToast()
+    if (typeof onRevalidateCatalog === 'function') {
+      await onRevalidateCatalog()
+      return
+    }
+    if (!parentCatalogSupplied && isSupabaseConfigured()) {
+      const fresh = await revalidateCatalogFromStore()
+      if (fresh?.products?.length) {
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(fresh.products),
+          fileName: fresh.fileName || catalogFileName || '',
+        })
+      }
+    }
+  }, [
+    triggerGoodsSaveSuccessToast,
+    onRevalidateCatalog,
+    parentCatalogSupplied,
+    catalogFileName,
+  ])
+
   const persistStandaloneProducts = useCallback(
     async (nextProducts, fileNameHint, upsertOnlyVariants, persistOpts = {}) => {
     const fn = String(fileNameHint || '')
@@ -2133,6 +2157,19 @@ export default function AdminHub({
     }
     if (upsertOnlyVariants?.length) {
       const prepared = persistResult.preparedVariants || upsertOnlyVariants
+      if (isSupabaseConfigured()) {
+        const fresh = await revalidateCatalogFromStore()
+        if (fresh?.products?.length) {
+          setStandaloneCatalog({
+            products: refreshCatalogSearchTexts(fresh.products),
+            fileName: fresh.fileName || fn,
+          })
+          if (typeof onRevalidateCatalog === 'function') {
+            await onRevalidateCatalog()
+          }
+          return { ok: true, preparedVariants: prepared }
+        }
+      }
       const flat = (Array.isArray(nextProducts) ? nextProducts : []).flatMap((p) => p.groupVariants || [p])
       const withoutNew = flat.filter(
         (v) => !prepared.some((p) => String(p.id) === String(v.id))
@@ -2140,6 +2177,9 @@ export default function AdminHub({
       const mergedFlat = mergeFlatCatalogRowsBySmartUomGroups([...withoutNew, ...prepared])
       const mergedProducts = prepareCatalogForPosSearch(buildDisplayCatalog(mergedFlat))
       setStandaloneCatalog({ products: mergedProducts, fileName: fn })
+      if (typeof onRevalidateCatalog === 'function') {
+        await onRevalidateCatalog()
+      }
       return { ok: true, preparedVariants: prepared }
     }
     if (isSupabaseConfigured()) {
@@ -2158,7 +2198,7 @@ export default function AdminHub({
     }
     setStandaloneCatalog({ products: nextProducts, fileName: fn })
     return { ok: true }
-  }, [])
+  }, [onRevalidateCatalog])
 
   const handleComboSaveDisplay = useCallback(
     (payload) => {
@@ -10234,7 +10274,7 @@ export default function AdminHub({
         onAppendCatalogVariants={appendCatalogVariantsFromInboundProductModal}
         persistStandaloneProducts={persistStandaloneProductsForInboundModal}
         fileNameHint={standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'}
-        onSaved={triggerGoodsSaveSuccessToast}
+        onSaved={handleGoodsCreateSaved}
         disableEnforceFocus={supplierModalOpen}
       />
 

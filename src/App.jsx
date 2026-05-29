@@ -2911,7 +2911,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const applyServerCatalogAfterPersist = useCallback(async () => {
     if (!isSupabaseConfigured()) return
     const fresh = await revalidateCatalogFromStore()
-    if (!fresh?.products?.length) return
+    if (!fresh?.products?.length) {
+      console.warn('[App] revalidateCatalogFromStore: không có sản phẩm sau khi đồng bộ.')
+      return
+    }
     startTransition(() => {
       setProducts(prepareCatalogForPosSearch(fresh.products))
       setFileName(fresh.fileName)
@@ -3124,11 +3127,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           return { ok: false, error: r.error }
         }
         const prepared = r.preparedVariants || variants
-        const merged = applyProductDataToCatalog(prev, {
-          type: 'append_flat_variants',
-          variants: prepared,
-        })
-        startTransition(() => setProducts(merged))
         try {
           inboundCatalogUpsertReconcileRef.current?.({
             requested: prepared,
@@ -3137,6 +3135,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         } catch (e) {
           console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
         }
+        await applyServerCatalogAfterPersist()
         return { ok: true, preparedVariants: prepared }
       }
 
@@ -3171,11 +3170,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: describeCatalogPersistError(r.error) }
       }
       const prepared = r.preparedVariants || upsertOnlyVariants
-      const merged = applyProductDataToCatalog(prev, {
-        type: 'append_flat_variants',
-        variants: prepared,
-      })
-      startTransition(() => setProducts(merged))
+      await applyServerCatalogAfterPersist()
       return { ok: true, preparedVariants: prepared }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
@@ -6607,6 +6602,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           onConfirmInboundComplete={handleConfirmInboundComplete}
           inboundLowStockPrefillRequest={pendingInboundLowStockPrefill}
           onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
+          onRevalidateCatalog={applyServerCatalogAfterPersist}
         />
       )}
 
