@@ -6,7 +6,8 @@
  * không trừ riêng trên từng dòng (tránh lệch Thùng/Bịch). Frontend vẫn chia `quy_doi` khi hiển thị.
  */
 import { findVariantContext } from './inboundFormUnitHelpers.js'
-import { catalogQuyDoiFactorToBase } from './productUnits.js'
+import { prepareCatalogForPosSearch } from './catalogSearchSimple.js'
+import { buildDisplayCatalog, catalogQuyDoiFactorToBase } from './productUnits.js'
 
 export const CATALOG_PRODUCT_TYPE_COMBO = 'combo'
 
@@ -278,4 +279,58 @@ export function salableComboPackCount(products, bom) {
   }
   if (!Number.isFinite(cap) || cap === Infinity) return 0
   return Math.max(0, cap)
+}
+
+/**
+ * Hoàn tồn khi xóa đơn POS — đối xứng `applySoldQtyToCatalog` (App.jsx): cộng lại theo `ma_goc` / combo BOM.
+ * @param {{
+ *   precomputedDeductByMaGoc?: Map<string, number>
+ *   precomputedComboDelta?: Map<string, number>
+ * }} [options]
+ */
+export function applyRestoredQtyToCatalog(products, cartLines, options) {
+  if (!products?.length || !cartLines?.length) return products
+  const deductByMaGoc =
+    options?.precomputedDeductByMaGoc ?? buildNonComboDeductionByMaGoc(products, cartLines)
+  const comboDelta =
+    options?.precomputedComboDelta ?? buildComboCartSaleDeltaByVariantId(products, cartLines)
+
+  if (deductByMaGoc.size === 0 && comboDelta.size === 0) return products
+
+  /** @type {Map<string, number>} */
+  const canonicalTonKhoByVid = new Map()
+  for (const [ma_goc, D] of deductByMaGoc) {
+    const sids = collectSiblingVariantIds(products, ma_goc)
+    if (sids.length === 0) continue
+    let cur = findRootStockTonKhoForMaGoc(products, ma_goc)
+    if (cur == null || !Number.isFinite(cur)) {
+      const root = findCanonicalStockRootVariant(products, sids)
+      if (!root) continue
+      cur =
+        root.stockQty != null && Number.isFinite(Number(root.stockQty)) ? Number(root.stockQty) : 0
+    }
+    const ton_kho_moi_chuan = cur + D
+    for (const sid of sids) {
+      canonicalTonKhoByVid.set(String(sid), ton_kho_moi_chuan)
+    }
+  }
+
+  const flat = []
+  for (const p of products) {
+    for (const v of p.groupVariants || [p]) {
+      const vid = String(v.id)
+      let nextStock = v.stockQty
+      if (canonicalTonKhoByVid.has(vid)) {
+        nextStock = canonicalTonKhoByVid.get(vid)
+      } else {
+        const restore = comboDelta.get(v.id) ?? comboDelta.get(vid) ?? 0
+        if (restore > 0) {
+          const cur = nextStock != null && Number.isFinite(Number(nextStock)) ? Number(nextStock) : 0
+          nextStock = cur + restore
+        }
+      }
+      flat.push({ ...v, stockQty: nextStock })
+    }
+  }
+  return prepareCatalogForPosSearch(buildDisplayCatalog(flat))
 }

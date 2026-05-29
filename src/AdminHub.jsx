@@ -45,7 +45,14 @@ import {
   prepareCatalogForPosSearch,
   suggestCatalogVariantPairsV9,
 } from './catalogSearchSimple.js'
-import { getComboBom, isComboCatalogProduct } from './comboCatalog.js'
+import {
+  applyRestoredQtyToCatalog,
+  buildComboCartSaleDeltaByVariantId,
+  buildNonComboDeductionByMaGoc,
+  collectCartSaleTouchedVariantIds,
+  getComboBom,
+  isComboCatalogProduct,
+} from './comboCatalog.js'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import AdminHubInboundDraftLineRow from './AdminHubInboundDraftLineRow.jsx'
@@ -84,6 +91,7 @@ import {
   posOrderLineReturnableQty,
   posOrderSaleQtyDeltaMap,
   posOrderStatusLabel,
+  buildOrderDeleteRestoreCartLines,
   resolvePosItemVariantId,
 } from './posOrderAdmin.js'
 import {
@@ -151,6 +159,7 @@ import {
   fetchProducts,
   fetchProductsCostAndStockByMaHang,
   readCatalogSnapshotSync,
+  flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
@@ -1426,30 +1435,113 @@ export default function AdminHub({
     setSelected(null)
     setDeletingOrderId(orderId)
     try {
-      const e = base?.items ?? orderRaw
-      const rollbackItems =
-        e && Array.isArray(e)
-          ? e.flatMap((it) => (it ? [it] : []))
-          : e && typeof e === 'object' && Array.isArray(e.order_items)
-            ? e.order_items.flatMap((it) => (it ? [it] : []))
-            : []
-      const deltas = new Map()
-      for (const it of rollbackItems) {
-        const variantId = String(resolvePosItemVariantId(it) || '').trim()
-        if (!variantId) continue
-        const qty = Math.max(0, Number(it?.qty) || 0)
-        const returned = Math.max(0, Number(it?.returnedQty) || 0)
-        const rollbackQty = Math.max(0, qty - returned)
-        if (rollbackQty <= 0) continue
-        deltas.set(variantId, (deltas.get(variantId) || 0) + rollbackQty)
+      let catalog = catalogList
+      let catalogFileName = standaloneCatalog?.fileName || ''
+      if (!catalog?.length) {
+        const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
+        if (!snap?.products?.length) {
+          throw new Error('Chưa tải được danh mục hàng — không thể hoàn tồn kho.')
+        }
+        catalog = refreshCatalogSearchTexts(snap.products)
+        catalogFileName = snap.fileName || catalogFileName
+        if (!parentCatalogSupplied) {
+          setStandaloneCatalog({
+            products: catalog,
+            fileName: catalogFileName,
+          })
+        }
       }
-      if (deltas.size > 0) {
-        const stockRes = await applyInboundStockDeltas(deltas, {
+
+      const orderItems = Array.isArray(base?.items) ? base.items : []
+      const { cartLines, needRestore, resolvedCount } = buildOrderDeleteRestoreCartLines(
+        catalog,
+        orderItems
+      )
+      if (needRestore > 0 && resolvedCount === 0) {
+        throw new Error(
+          'Không khớp sản phẩm trong danh mục để hoàn tồn kho. Kiểm tra mã hàng / ĐVT trên đơn.'
+        )
+      }
+
+      if (cartLines.length > 0) {
+        const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, cartLines)
+        const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, cartLines)
+        const touchedIds = collectCartSaleTouchedVariantIds(catalog, cartLines)
+        const nextProducts = applyRestoredQtyToCatalog(catalog, cartLines, {
+          precomputedDeductByMaGoc: deductByMaGoc,
+          precomputedComboDelta: comboDelta,
+        })
+        if (
+          deductByMaGoc.size === 0 &&
+          comboDelta.size === 0 &&
+          touchedIds.size === 0
+        ) {
+          throw new Error('Không tính được lượng hoàn tồn cho các dòng trên đơn.')
+        }
+
+        const delMeta = {
           documentCode: `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`,
           inboundOrderId: orderId,
-        })
-        if (stockRes?.ok === false) {
-          throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
+        }
+        const flatNext = flattenDisplayCatalogToVariants(nextProducts)
+        const tonKhoOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
+
+        if (typeof onBulkPatchCatalogVariants === 'function') {
+          const flatPrev = flattenDisplayCatalogToVariants(catalog)
+          const patches = []
+          for (const id of touchedIds) {
+            const prev = flatPrev.find((v) => String(v.id) === String(id))
+            const next = flatNext.find((v) => String(v.id) === String(id))
+            if (!next) continue
+            const prevStock =
+              prev?.stockQty != null && Number.isFinite(Number(prev.stockQty))
+                ? Number(prev.stockQty)
+                : 0
+            const nextStock =
+              next.stockQty != null && Number.isFinite(Number(next.stockQty))
+                ? Number(next.stockQty)
+                : 0
+            if (prevStock === nextStock) continue
+            patches.push({
+              variantId: String(id),
+              patch: { stockQty: nextStock, stockBatches: next.stockBatches },
+            })
+          }
+          if (patches.length === 0) {
+            throw new Error('Không có thay đổi tồn kho để ghi lên máy chủ.')
+          }
+          const stockRes = await onBulkPatchCatalogVariants(patches, {
+            inboundInventoryMeta: delMeta,
+          })
+          if (stockRes?.ok === false) {
+            throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
+          }
+        } else {
+          if (!tonKhoOnlyVariants.length) {
+            throw new Error('Không tìm thấy biến thể để cập nhật tồn kho.')
+          }
+          const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, catalogFileName, {
+            tonKhoOnlyVariants,
+          })
+          if (!persistResult.ok) {
+            throw new Error(
+              describeCatalogPersistError(persistResult.error) ||
+                'Không ghi được tồn kho lên máy chủ.'
+            )
+          }
+          if (isSupabaseConfigured()) {
+            const fresh = await revalidateCatalogFromStore()
+            if (fresh?.products?.length) {
+              setStandaloneCatalog({
+                products: refreshCatalogSearchTexts(fresh.products),
+                fileName: fresh.fileName || catalogFileName,
+              })
+            } else {
+              setStandaloneCatalog({ products: nextProducts, fileName: catalogFileName })
+            }
+          } else {
+            setStandaloneCatalog({ products: nextProducts, fileName: catalogFileName })
+          }
         }
       }
 

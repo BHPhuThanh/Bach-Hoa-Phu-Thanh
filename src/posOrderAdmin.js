@@ -33,6 +33,30 @@ export function posOrderLineReturnableQty(it) {
   return Math.max(0, qty - returnedQty)
 }
 
+/** Dòng giỏ để hoàn tồn khi xóa đơn (số lượng = đã bán − đã trả). */
+export function buildOrderDeleteRestoreCartLines(catalogList, items) {
+  const list = Array.isArray(items) ? items : []
+  const cartLines = []
+  let needRestore = 0
+  for (const it of list) {
+    if (!it) continue
+    const restoreQty = posOrderLineReturnableQty(it)
+    if (restoreQty <= 0) continue
+    needRestore++
+    const variantId = String(resolvePosItemVariantId(catalogList, it) || '').trim()
+    if (!variantId) continue
+    cartLines.push({
+      variantId,
+      qty: restoreQty,
+      code: it.code,
+      unitLabel: it.unitLabel,
+      barcode: it.barcode,
+      selectedBatchId: it.selectedBatchId,
+    })
+  }
+  return { cartLines, needRestore, resolvedCount: cartLines.length }
+}
+
 export function computePosOrderStatusFromItems(items) {
   const lines = items || []
   if (lines.length === 0) return 'completed'
