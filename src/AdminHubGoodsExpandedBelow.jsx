@@ -1,4 +1,4 @@
-﻿import { getComboBom } from './comboCatalog.js'
+﻿import { AdminHubComboBomPanel, shouldShowComboBomTab } from './AdminHubComboBomPanel.jsx'
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 import { sortVariantsSmallestUnitFirst } from './goodsUnitSetupModalLogic.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
@@ -110,7 +110,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                           >
                                             Lịch sử kho
                                           </button>
-                                          {isComboDetail ? (
+                                          {shouldShowComboBomTab(comboDetailProduct) ? (
                                             <button
                                               type="button"
                                               role="tab"
@@ -804,89 +804,14 @@ export function AdminHubGoodsExpandedBelow(props) {
                                         </div>
                                       </div>
                                     )}
-                                    {goodsDetailShelfTab === GOODS_DETAIL_VIEW_COMBO && isComboDetail ? (
-                                      <div className="ah-goods-card-stock-wrap ah-goods-combo-detail-wrap">
-                                        <div className="ah-goods-combo-detail-head">
-                                          <span className="admin-hub-muted ah-goods-combo-detail-lead">
-                                            Khi bán combo, tồn kho trừ theo từng thành phần (POS).
-                                          </span>
-                                          <button
-                                            type="button"
-                                            className="ah-goods-combo-edit-btn"
-                                            onClick={(e) => {
-                                              e.stopPropagation()
-                                              onEditComboProduct?.()
-                                            }}
-                                            title="Chỉnh sửa thành phần / giá combo"
-                                          >
-                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                              <path
-                                                d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
-                                                stroke="currentColor"
-                                                strokeWidth="1.85"
-                                                strokeLinecap="round"
-                                                strokeLinejoin="round"
-                                              />
-                                            </svg>
-                                            Chỉnh sửa
-                                          </button>
-                                        </div>
-                                        <div className="admin-hub-table-wrap">
-                                          <table className="admin-hub-table ah-goods-combo-bom-table">
-                                            <thead>
-                                              <tr>
-                                                <th>STT</th>
-                                                <th>Tên sản phẩm</th>
-                                                <th>ĐƠN VỊ TÍNH</th>
-                                                <th className="ah-num">Số lượng</th>
-                                                <th className="ah-num">Giá bán lẻ</th>
-                                                <th className="ah-num">Thành tiền</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody>
-                                              {(() => {
-                                                const bom = getComboBom(comboDetailProduct)
-                                                let sum = 0
-                                                const rows = bom.map((row, idx) => {
-                                                  const ctx = findVariantContext(catalogList || [], row.variantId)
-                                                  const vv = ctx?.clicked
-                                                  const name =
-                                                    String(vv?.name || row.nameSnap || '').trim() || '—'
-                                                  const u = normalizeCatalogUnitLabel(
-                                                    vv?.unitLabel || row.unitLabelSnap || 'Cái'
-                                                  )
-                                                  const pr = Number(vv?.price) || 0
-                                                  const q = Number(row.qty) || 0
-                                                  const line = Math.round(pr * q)
-                                                  sum += line
-                                                  return (
-                                                    <tr key={`${row.variantId}-${idx}`}>
-                                                      <td>{idx + 1}</td>
-                                                      <td>{name}</td>
-                                                      <td>{u}</td>
-                                                      <td className="ah-num">{q.toLocaleString('vi-VN')}</td>
-                                                      <td className="ah-num">{pr.toLocaleString('vi-VN')}</td>
-                                                      <td className="ah-num">{line.toLocaleString('vi-VN')}</td>
-                                                    </tr>
-                                                  )
-                                                })
-                                                return (
-                                                  <>
-                                                    {rows}
-                                                    <tr className="ah-goods-combo-bom-tfoot">
-                                                      <td colSpan={5} className="ah-goods-combo-bom-tfoot-lbl">
-                                                        Tổng tiền thành phần
-                                                      </td>
-                                                      <td className="ah-num ah-goods-combo-bom-tfoot-sum">
-                                                        {sum.toLocaleString('vi-VN')}
-                                                      </td>
-                                                    </tr>
-                                                  </>
-                                                )
-                                              })()}
-                                            </tbody>
-                                          </table>
-                                        </div>
+                                    {goodsDetailShelfTab === GOODS_DETAIL_VIEW_COMBO &&
+                                    shouldShowComboBomTab(comboDetailProduct) ? (
+                                      <div className="ah-goods-card-stock-wrap">
+                                        <AdminHubComboBomPanel
+                                          catalogList={catalogList}
+                                          comboProduct={comboDetailProduct}
+                                          onEditComboProduct={onEditComboProduct}
+                                        />
                                       </div>
                                     ) : null}
                                     {onCloseGoodsDetail ? (

@@ -8016,6 +8016,7 @@ li.ah-inbound-suggest-empty {
 
 .ah-goods-combo-bom-table {
   font-size: 0.82rem;
+  min-width: 720px;
 }
 
 .ah-goods-combo-bom-tfoot td {
@@ -8029,9 +8030,122 @@ li.ah-inbound-suggest-empty {
   color: #e2e8f8;
 }
 
+.ah-goods-combo-bom-tfoot-lbl-sub {
+  text-align: right;
+  font-weight: 600;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
 .ah-goods-combo-bom-tfoot-sum {
   font-weight: 700;
   color: #f8fafc;
+}
+
+.ah-goods-combo-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+.ah-goods-combo-code-link {
+  color: #38bdf8;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.ah-goods-combo-code-link:hover {
+  color: #7dd3fc;
+  text-decoration: underline;
+}
+
+.ah-goods-combo-empty {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.ah-goods-combo-mobile-cards {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 0.55rem;
+}
+
+.ah-goods-combo-mobile-card {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 0.55rem 0.65rem;
+}
+
+.ah-goods-combo-mobile-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.25rem;
+}
+
+.ah-goods-combo-mobile-card__stt {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.ah-goods-combo-mobile-card__name {
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 0.35rem;
+  font-size: 0.88rem;
+}
+
+.ah-goods-combo-mobile-card__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 0.65rem;
+  margin: 0;
+}
+
+.ah-goods-combo-mobile-card__grid dt {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.ah-goods-combo-mobile-card__grid dd {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.ah-goods-combo-mobile-card--total {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.ah-goods-combo-mobile-card__total-lbl {
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 0.35rem;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 768px) {
+  .ah-goods-combo-table-scroll .ah-goods-combo-bom-table {
+    display: none;
+  }
+
+  .ah-goods-combo-mobile-cards {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 769px) {
+  .ah-goods-combo-mobile-cards {
+    display: none !important;
+  }
 }
 
 /* Nhập hàng — chờ ghi danh mục (Supabase / file) */

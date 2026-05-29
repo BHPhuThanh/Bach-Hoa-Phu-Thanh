@@ -121,9 +121,18 @@ export function findCanonicalStockRootVariant(products, siblingIds) {
 export function isComboCatalogProduct(p) {
   if (!p) return false
   if (p.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) return true
+  if (p.isCombo === true) return true
   const gv = p.groupVariants
   if (Array.isArray(gv) && gv[0]?.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) return true
+  if (Array.isArray(gv) && gv[0]?.isCombo === true) return true
   return false
+}
+
+/** Tab «Thành phần combo» — combo đánh dấu hoặc đã có BOM. */
+export function shouldShowComboBomTab(p) {
+  if (!p) return false
+  if (isComboCatalogProduct(p)) return true
+  return getComboBom(p).length > 0
 }
 
 export function getComboBom(p) {
