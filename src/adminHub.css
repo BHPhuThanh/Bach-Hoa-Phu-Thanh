@@ -6913,6 +6913,19 @@ li.ah-inbound-suggest-empty {
   color: #f87171;
 }
 
+.ah-goods-create-save-err {
+  flex: 1 1 100%;
+  margin: 0 0 0.35rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.45);
+  border: 1px solid #f87171;
+  border-radius: 8px;
+}
+
 .ah-goods-create-expiry-row {
   gap: 0.35rem;
 }

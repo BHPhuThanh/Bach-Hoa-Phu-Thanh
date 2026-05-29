@@ -3095,35 +3095,62 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
-  const handleAppendCatalogVariants = useCallback((variants) => {
-    if (!Array.isArray(variants) || variants.length === 0) return
-    setProducts((prev) => {
-      const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
-      queueMicrotask(() => {
-        if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-        catalogPersistQueueRef.current = catalogPersistQueueRef.current
-          .then(async () => {
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-              upsertOnlyVariants: variants,
-              useBulkInsert: true,
-            })
-            if (r.ok) {
-              await applyServerCatalogAfterPersist()
-              try {
-                inboundCatalogUpsertReconcileRef.current?.({
-                  requested: r.preparedVariants || variants,
-                  returned: r.returnedDisplayVariants,
-                })
-              } catch (e) {
-                console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
-              }
-            }
+  const handleAppendCatalogVariants = useCallback(
+    async (variants) => {
+      if (!Array.isArray(variants) || variants.length === 0) {
+        return { ok: false, error: 'Không có biến thể để thêm.' }
+      }
+
+      if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
+        const prev = productsRef.current
+        const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
+        startTransition(() => setProducts(next))
+        return { ok: true }
+      }
+
+      const runPersist = async () => {
+        const prev = productsRef.current
+        const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
+        const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+          upsertOnlyVariants: variants,
+          useBulkInsert: true,
+        })
+        if (!r.ok) {
+          const msg =
+            describeCatalogPersistError(r.error) ||
+            'Không lưu được sản phẩm mới (Supabase / snapshot).'
+          showPosPersistErrorToast(msg)
+          return { ok: false, error: r.error }
+        }
+        const prepared = r.preparedVariants || variants
+        const merged = applyProductDataToCatalog(prev, {
+          type: 'append_flat_variants',
+          variants: prepared,
+        })
+        startTransition(() => setProducts(merged))
+        await applyServerCatalogAfterPersist()
+        try {
+          inboundCatalogUpsertReconcileRef.current?.({
+            requested: prepared,
+            returned: r.returnedDisplayVariants,
           })
-          .catch((e) => console.error('[App] append catalog persist', e))
-      })
-      return next
-    })
-  }, [applyServerCatalogAfterPersist])
+        } catch (e) {
+          console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
+        }
+        return { ok: true }
+      }
+
+      catalogPersistQueueRef.current = catalogPersistQueueRef.current
+        .then(runPersist)
+        .catch((e) => {
+          console.error('[App] append catalog persist', e)
+          showPosPersistErrorToast(describeCatalogPersistError(e))
+          return { ok: false, error: e }
+        })
+      return catalogPersistQueueRef.current
+    },
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
+  )
 
   /** Modal tạo SP (POS): lưu Supabase trước, rồi append — đồng bộ tab Hàng hóa AdminHub. */
   const persistCatalogForModalNewVariants = useCallback(
@@ -3131,16 +3158,28 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (!upsertOnlyVariants?.length) {
         return { ok: false, error: 'Thiếu biến thể để ghi lên Supabase.' }
       }
+      const prev = productsRef.current
       const r = await persistCatalogSnapshotAndProducts(
         nextProducts,
         catalogFileNameRef.current || fileNameHint || '',
         { upsertOnlyVariants, useBulkInsert: true }
       )
-      if (!r.ok) return { ok: false, error: describeCatalogPersistError(r.error) }
+      if (!r.ok) {
+        showPosPersistErrorToast(
+          describeCatalogPersistError(r.error) || 'Không lưu được sản phẩm mới (Supabase / snapshot).'
+        )
+        return { ok: false, error: describeCatalogPersistError(r.error) }
+      }
+      const prepared = r.preparedVariants || upsertOnlyVariants
+      const merged = applyProductDataToCatalog(prev, {
+        type: 'append_flat_variants',
+        variants: prepared,
+      })
+      startTransition(() => setProducts(merged))
       await applyServerCatalogAfterPersist()
       return { ok: true }
     },
-    [applyServerCatalogAfterPersist]
+    [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
 
   const handleUpdateCatalogVariant = useCallback((variantId, patch) => {

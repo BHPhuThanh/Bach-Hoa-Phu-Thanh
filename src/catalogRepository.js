@@ -175,9 +175,9 @@ function defaultNumberForProductPayloadColumn(column) {
   return 0
 }
 
-/** Tránh gọi upsert chồng chéo (vòng lặp / double effect). */
-let saveCatalogSnapshotInFlight = false
-/** Bỏ qua lưu trùng cùng nội dung ngay sau lần trước (giảm 500 / spam). */
+/** Xếp hàng ghi snapshot — không bỏ qua lệnh khi đang ghi. */
+let saveCatalogSnapshotQueue = Promise.resolve()
+/** Bỏ qua lưu trùng cùng nội dung ngay sau lần trước (giảm spam). */
 let saveCatalogSnapshotLastOkKey = ''
 
 /** Bảng Supabase lưu snapshot JSON cho POS (mỗi dòng = một id, thường dùng `catalog`). */
@@ -1041,7 +1041,7 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants, opti
   const existingCatalog = Array.isArray(options.existingCatalogProducts)
     ? options.existingCatalogProducts
     : []
-  const useBulkInsert = options.useBulkInsert !== false
+  const useBulkInsert = options.useBulkInsert === true
   const uniqueVariants = ensureUniqueMaHangAndBarcodeForNewRows(existingCatalog, flatDisplayVariants)
   const rawRows = uniqueVariants.map((v) => pickProductRowDbColumns(displayVariantToProductsRow(v)))
   const eligible = dedupeRowsByProductCode(
@@ -1060,9 +1060,12 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants, opti
     )
     const persistFn = useBulkInsert ? insertRawProductRows : upsertRawProductRows
     const persistOpts = useBulkInsert ? {} : { bypassBaselineDiff: true }
+    const rowsForDb = uniqueVariants.map((v) =>
+      pickProductRowDbColumns(displayVariantToProductsRow(v))
+    )
     const { written, skippedUpsert, lastSupabaseError, returnedProductRows } = await persistFn(
       sb,
-      rawRows,
+      rowsForDb,
       persistOpts
     )
     if (written === 0 && skippedUpsert > 0) {
@@ -1118,19 +1121,36 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
     return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
   }
   if (options?.upsertOnlyVariants?.length) {
-    await saveCatalogSnapshot(products, fileName)
-    const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants, {
-      existingCatalogProducts: products,
-      useBulkInsert: options.useBulkInsert === true,
-    })
-    return r.ok
-      ? {
-          ok: true,
-          snapshotSaved: true,
-          returnedDisplayVariants: r.returnedDisplayVariants,
-          preparedVariants: r.preparedVariants,
+    try {
+      const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants, {
+        existingCatalogProducts: products,
+        useBulkInsert: options.useBulkInsert === true,
+      })
+      if (!r.ok) {
+        return {
+          ok: false,
+          error: r.error,
+          snapshotSaved: false,
+          productsWritten: false,
         }
-      : { ok: false, error: r.error, snapshotSaved: true }
+      }
+      await saveCatalogSnapshot(products, fileName)
+      return {
+        ok: true,
+        snapshotSaved: true,
+        productsWritten: true,
+        returnedDisplayVariants: r.returnedDisplayVariants,
+        preparedVariants: r.preparedVariants,
+      }
+    } catch (error) {
+      notifySupabasePersistFailure(error)
+      return {
+        ok: false,
+        error,
+        snapshotSaved: false,
+        productsWritten: false,
+      }
+    }
   }
   const [_, r] = await Promise.all([
     saveCatalogSnapshot(products, fileName),
@@ -1662,67 +1682,70 @@ export async function revalidateCatalogFromStore() {
 /**
  * Ghi snapshot: IndexedDB (+ API nếu bật). Không ghi JSON lớn vào localStorage.
  */
-export async function saveCatalogSnapshot(products, fileName) {
+async function saveCatalogSnapshotInner(products, fileName) {
   const normalizedFileName = normalizeCatalogFileName(fileName)
   const dedupeKey = catalogSnapshotDedupeKey(products, normalizedFileName)
   if (dedupeKey === saveCatalogSnapshotLastOkKey) return
-  if (saveCatalogSnapshotInFlight) return
-  saveCatalogSnapshotInFlight = true
-  try {
-    if (isSupabaseConfigured()) {
-      await saveCatalogSnapshotToSupabase(products, normalizedFileName)
-      try {
-        localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
-      } catch {
-        /* ignore */
-      }
-      bumpCrossTabSync()
-      saveCatalogSnapshotLastOkKey = dedupeKey
-      return
-    }
-    if (!products?.length) {
-      await idbPutCatalogSnapshot(null)
-      try {
-        localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
-      } catch {
-        /* ignore */
-      }
-      bumpCrossTabSync()
-      saveCatalogSnapshotLastOkKey = dedupeKey
-      return
-    }
-    const payload = {
-      v: CATALOG_SNAPSHOT_VERSION,
-      fileName: normalizedFileName,
-      savedAt: new Date().toISOString(),
-      products,
-    }
-    await idbPutCatalogSnapshot(payload)
+
+  if (isSupabaseConfigured()) {
+    await saveCatalogSnapshotToSupabase(products, normalizedFileName)
     try {
       localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
     } catch {
       /* ignore */
     }
     bumpCrossTabSync()
-    if (isCatalogRemoteEnabled()) {
-      try {
-        const base = String(import.meta.env.VITE_CATALOG_API_URL).replace(/\/$/, '')
-        await fetch(`${base}/products`, {
-          method: 'PUT',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      } catch (e) {
-        console.warn('[catalogRepository] saveCatalogSnapshot remote (bỏ qua)', e)
-      }
-    }
     saveCatalogSnapshotLastOkKey = dedupeKey
-  } catch (e) {
-    console.warn('[catalogRepository] saveCatalogSnapshot', e)
-  } finally {
-    saveCatalogSnapshotInFlight = false
+    return
   }
+  if (!products?.length) {
+    await idbPutCatalogSnapshot(null)
+    try {
+      localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
+    } catch {
+      /* ignore */
+    }
+    bumpCrossTabSync()
+    saveCatalogSnapshotLastOkKey = dedupeKey
+    return
+  }
+  const payload = {
+    v: CATALOG_SNAPSHOT_VERSION,
+    fileName: normalizedFileName,
+    savedAt: new Date().toISOString(),
+    products,
+  }
+  await idbPutCatalogSnapshot(payload)
+  try {
+    localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+  bumpCrossTabSync()
+  if (isCatalogRemoteEnabled()) {
+    try {
+      const base = String(import.meta.env.VITE_CATALOG_API_URL).replace(/\/$/, '')
+      await fetch(`${base}/products`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    } catch (e) {
+      console.warn('[catalogRepository] saveCatalogSnapshot remote (bỏ qua)', e)
+    }
+  }
+  saveCatalogSnapshotLastOkKey = dedupeKey
+}
+
+/**
+ * Ghi snapshot: IndexedDB (+ Supabase upsert một dòng). Lỗi Supabase được ném ra cho caller xử lý.
+ */
+export async function saveCatalogSnapshot(products, fileName) {
+  const run = () => saveCatalogSnapshotInner(products, fileName)
+  const task = saveCatalogSnapshotQueue.then(run, run)
+  saveCatalogSnapshotQueue = task.catch(() => {})
+  return task
 }
 
 /**

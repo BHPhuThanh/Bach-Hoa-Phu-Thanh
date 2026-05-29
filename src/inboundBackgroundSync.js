@@ -40,7 +40,10 @@ export async function runInboundSupabaseSync({
       () => ({ ok: true }),
       (error) => ({ ok: false, error })
     ),
-    saveProductsToSupabaseUpsertOnly(upsertOnlyVariants || []),
+    saveProductsToSupabaseUpsertOnly(upsertOnlyVariants || [], {
+      existingCatalogProducts: catalogProductsNext,
+      useBulkInsert: false,
+    }),
     insertInboundHistoryEntry(orderRow),
   ])
 

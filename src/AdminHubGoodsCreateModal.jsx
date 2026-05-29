@@ -128,6 +128,7 @@ export default function AdminHubGoodsCreateModal({
   const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
   const [goodsCreateBarcodeScanOpen, setGoodsCreateBarcodeScanOpen] = useState(false)
   const [goodsCreateSaving, setGoodsCreateSaving] = useState(false)
+  const [goodsCreateSaveError, setGoodsCreateSaveError] = useState('')
   const [gcUnitModal, setGcUnitModal] = useState(null)
 
   const resetFormFields = useCallback(() => {
@@ -143,6 +144,7 @@ export default function AdminHubGoodsCreateModal({
     setGoodsNewExpiryYmd('')
     setGoodsNewMultiVariants(null)
     setGoodsNewBarcodeDupMsg('')
+    setGoodsCreateSaveError('')
     setGcUnitModal(null)
   }, [])
 
@@ -238,46 +240,55 @@ export default function AdminHubGoodsCreateModal({
       return
     }
 
-    const flushRows = (rowsForUpsert) => {
+    const flushRows = async (rowsForUpsert) => {
       if (!Array.isArray(rowsForUpsert) || rowsForUpsert.length === 0) return false
       const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rowsForUpsert])
       const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
 
       if (onAppendCatalogVariants) {
         try {
-          onAppendCatalogVariants(rowsForUpsert)
+          const res = await onAppendCatalogVariants(rowsForUpsert)
+          if (res && res.ok === false) {
+            setGoodsCreateSaveError(
+              String(res.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
+            )
+            return false
+          }
+          return true
         } catch (e) {
           console.error(e)
-          window.alert(formatPostgrestErrorForUser(e))
+          setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
           return false
         }
-        return true
       }
 
       if (persistStandaloneProducts) {
-        void (async () => {
-          try {
-            const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
-            if (!res || res.ok === false) {
-              window.alert(String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).'))
-            }
-          } catch (e) {
-            console.error(e)
-            window.alert(formatPostgrestErrorForUser(e))
+        try {
+          const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
+          if (!res || res.ok === false) {
+            setGoodsCreateSaveError(
+              String(res?.error || 'Không lưu được lên máy chủ (Supabase / snapshot).')
+            )
+            return false
           }
-        })()
-        return true
+          return true
+        } catch (e) {
+          console.error(e)
+          setGoodsCreateSaveError(formatPostgrestErrorForUser(e))
+          return false
+        }
       }
 
-      window.alert('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
+      setGoodsCreateSaveError('Thiếu cấu hình lưu danh mục (Supabase / đồng bộ).')
       return false
     }
 
-    const finish = (rowsForUpsert) => {
+    const finish = async (rowsForUpsert) => {
       if (goodsCreateSaving) return
+      setGoodsCreateSaveError('')
       setGoodsCreateSaving(true)
       try {
-        const ok = flushRows(rowsForUpsert)
+        const ok = await flushRows(rowsForUpsert)
         if (!ok) return
         resetFormFields()
         goodsCreateScanBufferRef.current = { buf: '', times: [] }
@@ -289,16 +300,24 @@ export default function AdminHubGoodsCreateModal({
     }
 
     if (goodsNewMultiVariants?.length) {
+      const batchCodes = new Set()
+      const batchBarcodes = new Set()
       for (const v of goodsNewMultiVariants) {
         const c = String(v.code ?? '').trim().toLowerCase()
-        if (c && codeSetExisting.has(c)) {
-          window.alert(`Mã hàng «${v.code}» đã tồn tại. Vui lòng chỉnh lại trong thiết lập ĐVT.`)
-          return
+        if (c) {
+          if (codeSetExisting.has(c) || batchCodes.has(c)) {
+            window.alert(`Mã hàng «${v.code}» bị trùng. Vui lòng chỉnh lại trong thiết lập ĐVT.`)
+            return
+          }
+          batchCodes.add(c)
         }
         const b = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
-        if (b && barcodeSetExisting.has(b)) {
-          window.alert(`Mã vạch/QR «${b}» đã có trên hàng khác. Vui lòng chỉnh trong thiết lập ĐVT.`)
-          return
+        if (b) {
+          if (barcodeSetExisting.has(b) || batchBarcodes.has(b)) {
+            window.alert(`Mã vạch/QR «${b}» bị trùng. Vui lòng chỉnh trong thiết lập ĐVT.`)
+            return
+          }
+          batchBarcodes.add(b)
         }
       }
       const brandTrim = String(goodsNewBrand ?? '').trim()
@@ -609,8 +628,8 @@ export default function AdminHubGoodsCreateModal({
           barcode: '',
           cost: '',
           price: '',
-          costManual: false,
-          priceManual: false,
+          costManual: true,
+          priceManual: true,
         },
       ]
       lines = sortUnitModalLinesByConversion(lines)
@@ -938,6 +957,11 @@ export default function AdminHubGoodsCreateModal({
               </div>
             </div>
             <footer className="ah-goods-create-foot">
+              {goodsCreateSaveError ? (
+                <p className="ah-goods-create-save-err" role="alert">
+                  {goodsCreateSaveError}
+                </p>
+              ) : null}
               <button type="button" className="ah-goods-create-btn ah-goods-create-btn--ghost" onClick={handleClose}>
                 Bỏ qua
               </button>

@@ -130,10 +130,27 @@ export function buildCatalogVariantsFromUnitModal({
     const cost = parseMoneyDigitsVi(row.cost)
     const price = parseMoneyDigitsVi(row.price)
     const prev = vid && prevByVariantId?.get(vid) ? prevByVariantId.get(vid) : null
-    const base = prev || templateVariant
+    const rootCode = String(finalCodes[0] ?? '').trim()
+
+    if (prev) {
+      out.push({
+        ...prev,
+        id,
+        code,
+        barcode: String(row.barcode ?? '').trim(),
+        name: nameTrim,
+        nameRaw: nameTrim,
+        unitLabel: normalizeCatalogUnitLabel(row.unitLabel),
+        conversion: conv,
+        conversionValue: conv,
+        cost,
+        price,
+        linkedMasterCode: String(prev.linkedMasterCode ?? '').trim(),
+      })
+      continue
+    }
 
     out.push({
-      ...base,
       id,
       code,
       barcode: String(row.barcode ?? '').trim(),
@@ -144,7 +161,17 @@ export function buildCatalogVariantsFromUnitModal({
       conversionValue: conv,
       cost,
       price,
-      linkedMasterCode: String(base?.linkedMasterCode ?? '').trim(),
+      wholesalePrice: Number(templateVariant?.wholesalePrice) || 0,
+      stockQty: i === 0 ? templateVariant?.stockQty : 0,
+      supplier: String(templateVariant?.supplier ?? '').trim(),
+      brand: String(templateVariant?.brand ?? '').trim(),
+      linkedMasterCode: i === 0 ? '' : rootCode,
+      baseGroupCode: '',
+      stockNormMin: null,
+      stockNormMax: null,
+      weightRaw: String(templateVariant?.weightRaw ?? '').trim(),
+      createdAtMs: Date.now(),
+      raw: [],
     })
   }
   return out
