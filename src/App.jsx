@@ -3112,7 +3112,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       const runPersist = async () => {
         const prev = productsRef.current
-        const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
         const r = await insertProductDisplayVariantsSequential(variants, {
           existingCatalogProducts: prev,
         })
@@ -5931,7 +5930,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const sellerMeta = (
       <div className="app-header-seller-block pos-sidebar-seller" key="seller">
-        {console.log('Current Role in Header:', activeSellerId)}
         <button
           type="button"
           className="pos-sidebar-seller-trigger"

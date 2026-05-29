@@ -1273,16 +1273,31 @@ export async function updateSingleProductFromDisplayVariant(variant) {
  * INSERT trực tiếp một dòng `products` (không snapshot, không bulk).
  */
 export async function insertSingleProductFromDisplayVariant(variant) {
-  if (!isSupabaseConfigured()) return { ok: true, skipped: true, displayVariant: variant }
+  if (!isSupabaseConfigured()) {
+    console.error('Lỗi Insert Supabase:', new Error('Supabase chưa cấu hình (VITE_SUPABASE_URL / ANON_KEY).'))
+    return { ok: false, error: new Error('Supabase chưa cấu hình.') }
+  }
   const maHang = String(variant?.code ?? '').trim()
   if (!maHang) {
-    return { ok: false, error: new Error('Thiếu mã hàng (ma_hang) để thêm mới.') }
+    const err = new Error('Thiếu mã hàng (ma_hang) để thêm mới.')
+    console.error('Lỗi Insert Supabase:', err)
+    return { ok: false, error: err }
   }
   const sb = getSupabaseClient()
   if (!sb) {
-    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+    const err = new Error('Không tạo được Supabase client.')
+    console.error('Lỗi Insert Supabase:', err)
+    return { ok: false, error: err }
   }
-  const fin = finalizeDisplayVariantForDbWrite(variant)
+  let fin
+  try {
+    fin = finalizeDisplayVariantForDbWrite(variant)
+  } catch (prepErr) {
+    console.error('Lỗi Insert Supabase:', prepErr)
+    return { ok: false, error: prepErr }
+  }
+  // eslint-disable-next-line no-console
+  console.log('Bắt đầu gửi lên Supabase...', { ma_hang: maHang, payload: fin })
   try {
     const { data, error } = await sb.from(PRODUCTS_TABLE).insert([fin]).select('*')
     if (error) {
@@ -1339,7 +1354,9 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     return { ok: false, error: new Error('Không có sản phẩm để thêm.') }
   }
   if (!isSupabaseConfigured()) {
-    return { ok: true, skipped: true, preparedVariants: flatVariants, written: flatVariants.length }
+    const err = new Error('Supabase chưa cấu hình — không thể tạo sản phẩm mới.')
+    console.error('Lỗi Insert Supabase:', err)
+    return { ok: false, error: err }
   }
 
   const allDbCodes = await fetchAllMaHangCodesFromSupabase()
@@ -1396,6 +1413,8 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     if (barcode) barcodeSet.add(barcode)
 
     const row = { ...v, code, barcode }
+    // eslint-disable-next-line no-console
+    console.log('Bắt đầu gọi insertSingleProductFromDisplayVariant:', code)
     const r = await insertSingleProductFromDisplayVariant(row)
     if (!r.ok) {
       console.error('Lỗi Insert Supabase:', r.error)

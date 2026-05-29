@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { POS_ACTIVE_SELLER_STORAGE_KEY } from './sellerRoleStorage.js'
 
 function normalizeRole(v) {
@@ -61,9 +61,12 @@ export function subscribeRoleStore(cb) {
 
 export function useRoleStore() {
   const role = useSyncExternalStore(subscribeRoleStore, getRoleSnapshot, getRoleSnapshot)
-  return {
-    sellerId: role,
-    isAdmin: role === 'admin',
-    setSellerId: setRole,
-  }
+  return useMemo(
+    () => ({
+      sellerId: role,
+      isAdmin: role === 'admin',
+      setSellerId: setRole,
+    }),
+    [role]
+  )
 }
