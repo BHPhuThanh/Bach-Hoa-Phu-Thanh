@@ -43,6 +43,63 @@ function parseMoneyDigitsVi(raw) {
   return Number.isFinite(n) ? n : 0
 }
 
+function catalogBarcodeSet(catalogList) {
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+  return new Set(
+    flat.map((v) => String(normalizeBarcodeValue(v.barcode ?? '')).trim()).filter(Boolean)
+  )
+}
+
+/**
+ * Bước 1: trùng trong batch. Bước 2: trùng danh mục hiện có.
+ * @returns {{ ok: true } | { ok: false, message: string, badRowIds: string[], highlightBarcode: string }}
+ */
+export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
+  const existing = catalogBarcodeSet(catalogList)
+  const seenInBatch = new Map()
+  const badRowIds = new Set()
+  let highlightBarcode = ''
+  let hasInternal = false
+  let hasCatalog = false
+
+  for (const r of batchRows || []) {
+    const norm = String(normalizeBarcodeValue(r.barcode ?? '')).trim()
+    if (!norm) continue
+
+    if (seenInBatch.has(norm)) {
+      badRowIds.add(r.rowId)
+      badRowIds.add(seenInBatch.get(norm))
+      if (!highlightBarcode) highlightBarcode = norm
+      hasInternal = true
+    } else {
+      seenInBatch.set(norm, r.rowId)
+    }
+
+    if (existing.has(norm)) {
+      badRowIds.add(r.rowId)
+      if (!highlightBarcode) highlightBarcode = norm
+      hasCatalog = true
+    }
+  }
+
+  if (badRowIds.size === 0) {
+    return { ok: true }
+  }
+
+  const display =
+    highlightBarcode.length > 16 ? `${highlightBarcode.slice(0, 16)}…` : highlightBarcode
+  let detail = 'đã tồn tại trong hệ thống hoặc bị nhập trùng'
+  if (hasInternal && !hasCatalog) detail = 'bị nhập trùng giữa các dòng'
+  else if (hasCatalog && !hasInternal) detail = 'đã tồn tại trong hệ thống'
+
+  return {
+    ok: false,
+    message: `Mã vạch ${display} ${detail}.`,
+    badRowIds: [...badRowIds],
+    highlightBarcode,
+  }
+}
+
 /**
  * Mỗi phần tử batch → một biến thể catalog riêng (tên/mã/giá không dùng chung).
  * @param {Array<object>} batchRows

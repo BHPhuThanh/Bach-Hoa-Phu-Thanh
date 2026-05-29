@@ -18,10 +18,12 @@ import {
 import InboundThuongHieuAutocomplete from './InboundThuongHieuAutocomplete.jsx'
 import BarcodeScanModal from './BarcodeScanModal.jsx'
 import { formatPostgrestErrorForUser } from './entityContactsRepository.js'
+import AdminHubGoodsCreateBatchRow from './AdminHubGoodsCreateBatchRow.jsx'
 import {
   buildCatalogVariantsFromGoodsCreateBatchRows,
   newGoodsCreateBatchRow,
   patchGoodsCreateBatchRow,
+  validateGoodsCreateBatchBarcodes,
 } from './goodsCreateBatch.js'
 import './adminHub.css'
 import './barcodeScan.css'
@@ -137,6 +139,10 @@ export default function AdminHubGoodsCreateModal({
   /** `single` = một SP; `batch` = nhiều dòng, mỗi dòng state độc lập (tên/mã/giá riêng). */
   const [goodsCreateEntryMode, setGoodsCreateEntryMode] = useState('single')
   const [goodsCreateBatchRows, setGoodsCreateBatchRows] = useState(() => [newGoodsCreateBatchRow()])
+  /** rowId → true — viền đỏ ô mã vạch bị trùng. */
+  const [goodsCreateBatchBarcodeErrorIds, setGoodsCreateBatchBarcodeErrorIds] = useState({})
+  const [goodsCreateBatchToast, setGoodsCreateBatchToast] = useState(null)
+  const goodsCreateBatchToastTimerRef = useRef(null)
   const [gcUnitModal, setGcUnitModal] = useState(null)
 
   const resetFormFields = useCallback(() => {
@@ -155,7 +161,65 @@ export default function AdminHubGoodsCreateModal({
     setGoodsCreateSaveError('')
     setGoodsCreateEntryMode('single')
     setGoodsCreateBatchRows([newGoodsCreateBatchRow()])
+    setGoodsCreateBatchBarcodeErrorIds({})
+    setGoodsCreateBatchToast(null)
     setGcUnitModal(null)
+  }, [])
+
+  const showGoodsCreateBatchToast = useCallback((message) => {
+    const t = String(message ?? '').trim()
+    if (!t) return
+    if (goodsCreateBatchToastTimerRef.current != null) {
+      window.clearTimeout(goodsCreateBatchToastTimerRef.current)
+      goodsCreateBatchToastTimerRef.current = null
+    }
+    setGoodsCreateBatchToast(t)
+    goodsCreateBatchToastTimerRef.current = window.setTimeout(() => {
+      setGoodsCreateBatchToast(null)
+      goodsCreateBatchToastTimerRef.current = null
+    }, 5500)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (goodsCreateBatchToastTimerRef.current != null) {
+        window.clearTimeout(goodsCreateBatchToastTimerRef.current)
+      }
+    },
+    []
+  )
+
+  const patchGoodsCreateBatchRowField = useCallback((index, field, value) => {
+    setGoodsCreateBatchRows((prev) => {
+      if (field === 'barcode') {
+        const rowId = prev[index]?.rowId
+        if (rowId) {
+          setGoodsCreateBatchBarcodeErrorIds((errs) => {
+            if (!errs[rowId]) return errs
+            const next = { ...errs }
+            delete next[rowId]
+            return next
+          })
+        }
+      }
+      return patchGoodsCreateBatchRow(prev, index, field, value)
+    })
+  }, [])
+
+  const removeGoodsCreateBatchRow = useCallback((index) => {
+    setGoodsCreateBatchRows((prev) => {
+      if (prev.length <= 1) return prev
+      const removedId = prev[index]?.rowId
+      if (removedId) {
+        setGoodsCreateBatchBarcodeErrorIds((errs) => {
+          if (!errs[removedId]) return errs
+          const next = { ...errs }
+          delete next[removedId]
+          return next
+        })
+      }
+      return prev.filter((_, i) => i !== index)
+    })
   }, [])
 
   useEffect(() => {
@@ -291,6 +355,14 @@ export default function AdminHubGoodsCreateModal({
     }
 
     if (goodsCreateEntryMode === 'batch') {
+      const barcodeCheck = validateGoodsCreateBatchBarcodes(goodsCreateBatchRows, catalogList)
+      if (!barcodeCheck.ok) {
+        const errMap = Object.fromEntries(barcodeCheck.badRowIds.map((id) => [id, true]))
+        setGoodsCreateBatchBarcodeErrorIds(errMap)
+        showGoodsCreateBatchToast(barcodeCheck.message)
+        return
+      }
+      setGoodsCreateBatchBarcodeErrorIds({})
       const built = buildCatalogVariantsFromGoodsCreateBatchRows(goodsCreateBatchRows, catalogList)
       if (built.length === 0) {
         window.alert('Vui lòng nhập tên hàng cho ít nhất một dòng.')
@@ -444,6 +516,7 @@ export default function AdminHubGoodsCreateModal({
     applyExpiryToVariants,
     onClose,
     resetFormFields,
+    showGoodsCreateBatchToast,
   ])
 
   const openGoodsCreateUnitModal = useCallback(() => {
@@ -768,7 +841,9 @@ export default function AdminHubGoodsCreateModal({
           role="presentation"
         >
           <div
-            className="ah-goods-create-dialog"
+            className={`ah-goods-create-dialog${
+              goodsCreateEntryMode === 'batch' ? ' ah-goods-create-dialog--batch' : ''
+            }`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="ah-goods-create-title"
@@ -794,7 +869,11 @@ export default function AdminHubGoodsCreateModal({
                   role="tab"
                   aria-selected={goodsCreateEntryMode === 'single'}
                   className={`ah-goods-create-mode-tab${goodsCreateEntryMode === 'single' ? ' is-active' : ''}`}
-                  onClick={() => setGoodsCreateEntryMode('single')}
+                  onClick={() => {
+                    setGoodsCreateEntryMode('single')
+                    setGoodsCreateBatchBarcodeErrorIds({})
+                    setGoodsCreateBatchToast(null)
+                  }}
                 >
                   Một sản phẩm
                 </button>
@@ -803,7 +882,11 @@ export default function AdminHubGoodsCreateModal({
                   role="tab"
                   aria-selected={goodsCreateEntryMode === 'batch'}
                   className={`ah-goods-create-mode-tab${goodsCreateEntryMode === 'batch' ? ' is-active' : ''}`}
-                  onClick={() => setGoodsCreateEntryMode('batch')}
+                  onClick={() => {
+                    setGoodsCreateEntryMode('batch')
+                    setGoodsCreateBatchBarcodeErrorIds({})
+                    setGoodsCreateBatchToast(null)
+                  }}
                 >
                   Nhiều sản phẩm
                 </button>
@@ -814,154 +897,59 @@ export default function AdminHubGoodsCreateModal({
                   <p className="ah-goods-create-batch-hint">
                     Mỗi dòng là một sản phẩm riêng — tên, mã và giá không dùng chung giữa các dòng.
                   </p>
-                  <div className="ah-goods-create-batch-table-wrap">
-                    <table className="ah-goods-create-batch-table">
-                      <thead>
-                        <tr>
-                          <th>Tên hàng *</th>
-                          <th>Mã hàng</th>
-                          <th>Mã vạch</th>
-                          <th>ĐVT</th>
-                          <th>Giá bán</th>
-                          <th>Giá vốn</th>
-                          <th>Tồn</th>
-                          <th aria-label="Xóa dòng" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {goodsCreateBatchRows.map((row, index) => (
-                          <tr key={row.rowId}>
-                            <td>
-                              <input
-                                className="ah-goods-create-input"
-                                type="text"
-                                value={row.name}
-                                placeholder="Tên hàng"
-                                autoComplete="off"
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(prev, index, 'name', e.target.value)
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input"
-                                type="text"
-                                value={row.code}
-                                placeholder="Tự HH"
-                                autoComplete="off"
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(prev, index, 'code', e.target.value)
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input"
-                                type="text"
-                                value={row.barcode}
-                                placeholder="QR"
-                                autoComplete="off"
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(prev, index, 'barcode', e.target.value)
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input"
-                                type="text"
-                                value={row.unitLabel}
-                                placeholder="Cái"
-                                autoComplete="off"
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(prev, index, 'unitLabel', e.target.value)
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input ah-goods-create-input--num"
-                                type="text"
-                                inputMode="numeric"
-                                value={row.price}
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(
-                                      prev,
-                                      index,
-                                      'price',
-                                      formatMoneyThousandsTyping(e.target.value)
-                                    )
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input ah-goods-create-input--num"
-                                type="text"
-                                inputMode="numeric"
-                                value={row.cost}
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(
-                                      prev,
-                                      index,
-                                      'cost',
-                                      formatMoneyThousandsTyping(e.target.value)
-                                    )
-                                  )
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                className="ah-goods-create-input ah-goods-create-input--num"
-                                type="text"
-                                inputMode="numeric"
-                                value={row.stock}
-                                onChange={(e) =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    patchGoodsCreateBatchRow(prev, index, 'stock', e.target.value)
-                                  )
-                                }
-                              />
-                            </td>
-                            <td className="ah-goods-create-batch-del">
-                              <button
-                                type="button"
-                                className="ah-goods-create-batch-del-btn"
-                                aria-label="Xóa dòng"
-                                disabled={goodsCreateBatchRows.length <= 1}
-                                onClick={() =>
-                                  setGoodsCreateBatchRows((prev) =>
-                                    prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)
-                                  )
-                                }
-                              >
-                                ×
-                              </button>
-                            </td>
+                  <div className="ah-goods-create-batch-desktop">
+                    <div className="ah-goods-create-batch-table-wrap">
+                      <table className="ah-goods-create-batch-table">
+                        <thead>
+                          <tr>
+                            <th className="ah-goods-create-batch-th-name">Tên hàng *</th>
+                            <th className="ah-goods-create-batch-th-code">Mã hàng</th>
+                            <th className="ah-goods-create-batch-th-barcode">Mã vạch</th>
+                            <th>ĐVT</th>
+                            <th>Giá bán</th>
+                            <th>Giá vốn</th>
+                            <th>Tồn</th>
+                            <th aria-label="Xóa dòng" />
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {goodsCreateBatchRows.map((row, index) => (
+                            <AdminHubGoodsCreateBatchRow
+                              key={row.rowId}
+                              row={row}
+                              index={index}
+                              layout="table"
+                              barcodeError={!!goodsCreateBatchBarcodeErrorIds[row.rowId]}
+                              onPatch={patchGoodsCreateBatchRowField}
+                              onRemove={removeGoodsCreateBatchRow}
+                              canRemove={goodsCreateBatchRows.length > 1}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="ah-goods-create-batch-mobile" aria-label="Danh sách sản phẩm">
+                    {goodsCreateBatchRows.map((row, index) => (
+                      <AdminHubGoodsCreateBatchRow
+                        key={row.rowId}
+                        row={row}
+                        index={index}
+                        layout="card"
+                        rowLabel={`Sản phẩm ${index + 1}`}
+                        barcodeError={!!goodsCreateBatchBarcodeErrorIds[row.rowId]}
+                        onPatch={patchGoodsCreateBatchRowField}
+                        onRemove={removeGoodsCreateBatchRow}
+                        canRemove={goodsCreateBatchRows.length > 1}
+                      />
+                    ))}
                   </div>
                   <button
                     type="button"
                     className="ah-goods-create-batch-add"
-                    onClick={() =>
+                    onClick={() => {
                       setGoodsCreateBatchRows((prev) => [...prev, newGoodsCreateBatchRow()])
-                    }
+                    }}
                   >
                     + Thêm sản phẩm
                   </button>
@@ -1190,6 +1178,12 @@ export default function AdminHubGoodsCreateModal({
             </footer>
           </div>
         </div>
+
+      {goodsCreateBatchToast ? (
+        <div className="ah-goods-create-toast ah-goods-create-toast--error" role="alert">
+          {goodsCreateBatchToast}
+        </div>
+      ) : null}
 
       {gcUnitModal && (
         <div

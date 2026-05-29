@@ -6706,6 +6706,11 @@ li.ah-inbound-suggest-empty {
   overflow: hidden;
 }
 
+.ah-goods-create-dialog--batch {
+  width: min(980px, calc(100vw - 1.25rem));
+  max-height: min(94vh, 820px);
+}
+
 .ah-goods-create-head {
   display: flex;
   align-items: center;
@@ -6785,49 +6790,191 @@ li.ah-inbound-suggest-empty {
 }
 
 .ah-goods-create-batch-hint {
-  margin: 0 0 0.65rem;
-  font-size: 0.78rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
   color: #94a3b8;
-  line-height: 1.4;
+  line-height: 1.45;
+}
+
+/* Desktop: bảng — Mobile: ẩn bảng, hiện thẻ */
+.ah-goods-create-batch-desktop {
+  display: none;
+}
+
+.ah-goods-create-batch-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+@media (min-width: 768px) {
+  .ah-goods-create-batch-desktop {
+    display: block;
+  }
+
+  .ah-goods-create-batch-mobile {
+    display: none;
+  }
 }
 
 .ah-goods-create-batch-table-wrap {
   overflow-x: auto;
   border: 1px solid #30363d;
-  border-radius: 8px;
+  border-radius: 10px;
   margin-bottom: 0.65rem;
+  background: rgba(13, 17, 23, 0.45);
 }
 
 .ah-goods-create-batch-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
 }
 
 .ah-goods-create-batch-table th {
   text-align: left;
-  padding: 0.45rem 0.4rem;
+  padding: 0.65rem 0.55rem;
   background: #0d1117;
   color: #94a3b8;
   font-weight: 600;
   white-space: nowrap;
   border-bottom: 1px solid #30363d;
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+}
+
+.ah-goods-create-batch-th-name {
+  min-width: 11.5rem;
+}
+
+.ah-goods-create-batch-th-code {
+  min-width: 6.5rem;
+}
+
+.ah-goods-create-batch-th-barcode {
+  min-width: 9.5rem;
 }
 
 .ah-goods-create-batch-table td {
-  padding: 0.35rem 0.3rem;
-  vertical-align: middle;
-  border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+  padding: 0.5rem 0.45rem;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.55);
 }
 
 .ah-goods-create-batch-table tr:last-child td {
   border-bottom: none;
 }
 
+.ah-goods-create-batch-td-name {
+  min-width: 11.5rem;
+}
+
+.ah-goods-create-batch-td-code {
+  min-width: 6.5rem;
+}
+
+.ah-goods-create-batch-td-barcode {
+  min-width: 9.5rem;
+}
+
 .ah-goods-create-batch-table .ah-goods-create-input {
-  min-width: 4.5rem;
-  padding: 0.35rem 0.4rem;
-  font-size: 0.8rem;
+  min-width: 0;
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.ah-goods-create-batch-table .ah-goods-create-input--barcode {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.ah-goods-create-batch-field-err {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fca5a5;
+}
+
+/* Card layout — mobile */
+.ah-goods-create-batch-card {
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  background: rgba(13, 17, 23, 0.55);
+  overflow: hidden;
+}
+
+.ah-goods-create-batch-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #0d1117;
+  border-bottom: 1px solid #30363d;
+}
+
+.ah-goods-create-batch-card-num {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #7dd3fc;
+}
+
+.ah-goods-create-batch-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.75rem;
+}
+
+.ah-goods-create-batch-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.ah-goods-create-batch-card-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.ah-goods-create-batch-card-row3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.ah-goods-create-batch-card .ah-goods-create-input {
+  padding: 0.55rem 0.6rem;
+  font-size: 1rem;
+  min-height: 2.75rem;
+}
+
+.ah-goods-create-toast {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200001 !important;
+  max-width: min(92vw, 26rem);
+  padding: 0.65rem 1rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.ah-goods-create-toast--error {
+  color: #fecaca;
+  background: linear-gradient(145deg, #450a0a, #1c1917);
+  border: 1px solid rgba(248, 113, 113, 0.55);
 }
 
 .ah-goods-create-batch-del {
@@ -6945,6 +7092,17 @@ li.ah-inbound-suggest-empty {
   outline: none;
   border-color: #38bdf8;
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+.ah-goods-create-input--err {
+  border-color: #f87171 !important;
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.28);
+  background: rgba(69, 10, 10, 0.22);
+}
+
+.ah-goods-create-input--err:focus {
+  border-color: #fca5a5 !important;
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35);
 }
 
 .ah-goods-create-input--num {
