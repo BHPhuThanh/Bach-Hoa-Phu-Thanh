@@ -14,6 +14,12 @@ export function formatHhSkuFromSequence(n) {
   return `HH${s.length <= 4 ? s.padStart(4, '0') : s}`
 }
 
+/** Trích số từ mã hàng (bỏ mọi ký tự không phải số) — khớp logic đọc max từ DB. */
+export function parseMaHangDigits(code) {
+  const n = parseInt(String(code ?? '').replace(/\D/g, ''), 10)
+  return Number.isFinite(n) ? n : 0
+}
+
 /**
  * Gợi ý mã tiếp theo HH0001… — mã khớp toàn chuỗi ^HH\\d+$.
  */

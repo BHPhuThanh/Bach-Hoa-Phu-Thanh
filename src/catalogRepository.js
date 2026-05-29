@@ -32,6 +32,7 @@ import {
   ensureUniqueMaHangAndBarcodeForNewRows,
   formatHhSkuFromSequence,
   parseHhNumericSku,
+  parseMaHangDigits,
 } from './autoProductSku.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
@@ -1177,25 +1178,46 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
 }
 
 /**
- * Đọc mã HH lớn nhất thực tế trên Supabase (trước khi tạo SP mới).
- * @returns {Promise<number>} số HH (0 nếu chưa có)
+ * Lấy toàn bộ `ma_hang` từ Supabase (phân trang) — không dùng state local.
+ * @returns {Promise<string[]>}
  */
-export async function fetchMaxHhNumericSequenceFromSupabase() {
-  if (!isSupabaseConfigured()) return 0
+export async function fetchAllMaHangCodesFromSupabase() {
+  if (!isSupabaseConfigured()) return []
   const sb = getSupabaseClient()
-  if (!sb) return 0
-  const { data, error } = await sb
-    .from(PRODUCTS_TABLE)
-    .select(PRODUCT_PK_COLUMN)
-    .order(PRODUCT_PK_COLUMN, { ascending: false })
-    .limit(500)
-  if (error) throw error
-  let max = 0
-  for (const row of data || []) {
-    const n = parseHhNumericSku(row?.[PRODUCT_PK_COLUMN])
-    if (n != null) max = Math.max(max, n)
+  if (!sb) return []
+  const pageSize = 1000
+  let from = 0
+  const all = []
+  for (;;) {
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .select(PRODUCT_PK_COLUMN)
+      .range(from, from + pageSize - 1)
+    if (error) throw error
+    const chunk = data || []
+    for (const row of chunk) {
+      const c = String(row?.[PRODUCT_PK_COLUMN] ?? '').trim()
+      if (c) all.push(c)
+    }
+    if (chunk.length < pageSize) break
+    from += pageSize
   }
-  return max
+  return all
+}
+
+/**
+ * Max số trong `ma_hang` trên Supabase (parseInt sau khi bỏ ký tự không phải số).
+ * @returns {Promise<number>}
+ */
+export async function fetchMaxMaHangNumericFromSupabase() {
+  const codes = await fetchAllMaHangCodesFromSupabase()
+  if (codes.length === 0) return 0
+  return Math.max(...codes.map((c) => parseMaHangDigits(c)), 0)
+}
+
+/** @deprecated Dùng {@link fetchMaxMaHangNumericFromSupabase} */
+export async function fetchMaxHhNumericSequenceFromSupabase() {
+  return fetchMaxMaHangNumericFromSupabase()
 }
 
 function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) {
@@ -1304,7 +1326,7 @@ export async function updateProductDisplayVariantsSequential(flatVariants) {
 }
 
 /**
- * Tạo mới tuần tự: SELECT max HH từ DB → cấp mã tăng dần → INSERT từng dòng.
+ * Tạo mới tuần tự: SELECT toàn bộ ma_hang từ DB → cấp mã tăng dần → INSERT từng dòng.
  */
 export async function insertProductDisplayVariantsSequential(flatVariants, options = {}) {
   if (!Array.isArray(flatVariants) || flatVariants.length === 0) {
@@ -1314,17 +1336,19 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     return { ok: true, skipped: true, preparedVariants: flatVariants, written: flatVariants.length }
   }
 
-  let maxHh = Number(options.startMaxHh)
-  if (!Number.isFinite(maxHh)) {
-    maxHh = await fetchMaxHhNumericSequenceFromSupabase()
-  }
+  const allDbCodes = await fetchAllMaHangCodesFromSupabase()
+  const dbCodeSet = new Set(allDbCodes.map((c) => c.toLowerCase()))
+  let currentMax =
+    Number.isFinite(Number(options.startMaxHh)) && Number(options.startMaxHh) > 0
+      ? Number(options.startMaxHh)
+      : allDbCodes.length > 0
+        ? Math.max(...allDbCodes.map((c) => parseMaHangDigits(c)), 0)
+        : 0
 
-  const codeSet = new Set(
-    (Array.isArray(options.existingCatalogProducts) ? options.existingCatalogProducts : [])
-      .flatMap((p) => p.groupVariants || [p])
-      .map((v) => String(v.code ?? '').trim().toLowerCase())
-      .filter(Boolean)
-  )
+  const batchAssigned = new Set()
+  for (const c of allDbCodes) {
+    batchAssigned.add(c.toLowerCase())
+  }
   const barcodeSet = new Set(
     (Array.isArray(options.existingCatalogProducts) ? options.existingCatalogProducts : [])
       .flatMap((p) => p.groupVariants || [p])
@@ -1336,20 +1360,28 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   for (const v of flatVariants) {
     let code = String(v.code ?? '').trim()
     const codeLc = code.toLowerCase()
-    if (!code || codeSet.has(codeLc)) {
-      maxHh += 1
-      code = formatHhSkuFromSequence(maxHh)
+    const mustAutoAssign = !code || dbCodeSet.has(codeLc) || batchAssigned.has(codeLc)
+
+    if (mustAutoAssign) {
       let guard = 0
-      while (codeSet.has(code.toLowerCase()) && guard < 100000) {
-        maxHh += 1
-        code = formatHhSkuFromSequence(maxHh)
+      do {
+        currentMax += 1
+        code = formatHhSkuFromSequence(currentMax)
         guard += 1
-      }
+      } while (
+        (dbCodeSet.has(code.toLowerCase()) || batchAssigned.has(code.toLowerCase())) &&
+        guard < 100000
+      )
     } else {
-      const n = parseHhNumericSku(code)
-      if (n != null) maxHh = Math.max(maxHh, n)
+      const n = parseMaHangDigits(code)
+      if (n > 0) currentMax = Math.max(currentMax, n)
     }
-    codeSet.add(code.toLowerCase())
+
+    // eslint-disable-next-line no-console
+    console.log('Mã chuẩn bị tạo:', code)
+
+    batchAssigned.add(code.toLowerCase())
+    dbCodeSet.add(code.toLowerCase())
 
     let barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
     if (barcode && barcodeSet.has(barcode)) barcode = ''

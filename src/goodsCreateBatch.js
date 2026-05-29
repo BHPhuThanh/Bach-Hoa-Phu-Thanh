@@ -1,5 +1,4 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
-import { allocateNextHhSkuInCodeSet } from './autoProductSku.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 import {
   buildCatalogVariantsFromUnitModal,
@@ -191,7 +190,7 @@ export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
   }
 }
 
-function ensureUniqueVariantCodes(variants, codeSetExisting, syntheticCatalog) {
+function ensureUniqueVariantCodes(variants, codeSetExisting) {
   const out = []
   for (const v of variants) {
     let code = String(v.code ?? '').trim()
@@ -201,13 +200,11 @@ function ensureUniqueVariantCodes(variants, codeSetExisting, syntheticCatalog) {
       codeSetExisting.has(codeLc) ||
       out.some((x) => String(x.code).toLowerCase() === codeLc)
     ) {
-      code = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+      code = ''
     } else {
       codeSetExisting.add(codeLc)
     }
-    const variant = { ...v, code }
-    out.push(variant)
-    syntheticCatalog.push({ groupVariants: [variant] })
+    out.push({ ...v, code })
   }
   return out
 }
@@ -255,7 +252,6 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     flat.map((v) => String(normalizeBarcodeValue(v.barcode ?? ''))).filter(Boolean)
   )
 
-  const syntheticCatalog = Array.isArray(catalogList) ? [...catalogList] : []
   const out = []
 
   for (const r of batchRows || []) {
@@ -271,7 +267,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       const linesSorted = batchRowToUnitLines(r)
       let rootCode = String(linesSorted[0]?.code ?? '').trim()
       if (!rootCode || codeSetExisting.has(rootCode.toLowerCase())) {
-        rootCode = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+        rootCode = ''
       } else {
         codeSetExisting.add(rootCode.toLowerCase())
       }
@@ -311,7 +307,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
         }
       }
 
-      const unique = ensureUniqueVariantCodes(groupVariants, codeSetExisting, syntheticCatalog)
+      const unique = ensureUniqueVariantCodes(groupVariants, codeSetExisting)
       out.push(...unique)
       continue
     }
@@ -323,7 +319,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       codeSetExisting.has(codeLc) ||
       out.some((x) => String(x.code).toLowerCase() === codeLc)
     ) {
-      code = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+      code = ''
     } else {
       codeSetExisting.add(codeLc)
     }
@@ -362,7 +358,6 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     }
 
     out.push(variant)
-    syntheticCatalog.push({ groupVariants: [variant] })
   }
 
   return out
