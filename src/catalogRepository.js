@@ -1107,19 +1107,40 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants, opti
  * Khi có Supabase: `ok` chỉ là `true` nếu bước upsert `products` thành công — tránh đọc lại từ server rồi đè UI bằng dữ liệu cũ (snapshot có thể mới nhưng `products` đọc ưu tiên không khớp).
  * @param {object} [options]
  * @param {Array<object>} [options.upsertOnlyVariants] — nếu có: chỉ upsert các biến thể này lên `products`, vẫn ghi snapshot đầy đủ `products`.
+ * @param {boolean} [options.snapshotOnly] — chỉ ghi `catalog_snapshots` (sau khi đã xóa/sửa `products` riêng).
  * @param {Array<object>} [options.tonKhoOnlyVariants] — nếu truyền (kể cả mảng rỗng): chỉ **PATCH** cột `ton_kho` — không đụng `gia_ban`.
- * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean }>}
+ * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean, productsWritten?: boolean }>}
  */
 export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
   if (!isSupabaseConfigured()) {
     await saveCatalogSnapshot(products, fileName)
-    return { ok: true }
+    return { ok: true, snapshotSaved: true, productsWritten: true }
   }
+
+  if (options?.snapshotOnly) {
+    try {
+      await saveCatalogSnapshot(products, fileName)
+      return { ok: true, snapshotSaved: true, productsWritten: true }
+    } catch (error) {
+      notifySupabasePersistFailure(error)
+      return { ok: false, error, snapshotSaved: false, productsWritten: false }
+    }
+  }
+
   if (options?.tonKhoOnlyVariants != null) {
-    await saveCatalogSnapshot(products, fileName)
-    const r = await saveProductsTonKhoPatchToSupabase(options.tonKhoOnlyVariants)
-    return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
+    try {
+      const r = await saveProductsTonKhoPatchToSupabase(options.tonKhoOnlyVariants)
+      if (!r.ok) {
+        return { ok: false, error: r.error, snapshotSaved: false, productsWritten: false }
+      }
+      await saveCatalogSnapshot(products, fileName)
+      return { ok: true, snapshotSaved: true, productsWritten: true }
+    } catch (error) {
+      notifySupabasePersistFailure(error)
+      return { ok: false, error, snapshotSaved: false, productsWritten: false }
+    }
   }
+
   if (options?.upsertOnlyVariants?.length) {
     try {
       const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants, {
@@ -1152,11 +1173,58 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
       }
     }
   }
-  const [_, r] = await Promise.all([
-    saveCatalogSnapshot(products, fileName),
-    saveProductsToSupabase(products),
-  ])
-  return r.ok ? { ok: true, snapshotSaved: true } : { ok: false, error: r.error, snapshotSaved: true }
+
+  try {
+    const r = await saveProductsToSupabase(products)
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: r.error,
+        snapshotSaved: false,
+        productsWritten: false,
+      }
+    }
+    await saveCatalogSnapshot(products, fileName)
+    return { ok: true, snapshotSaved: true, productsWritten: true }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error, snapshotSaved: false, productsWritten: false }
+  }
+}
+
+/**
+ * Xóa biến thể khỏi DB rồi ghi snapshot — chỉ cập nhật UI sau khi gọi hàm này thành công.
+ * Combo: gỡ BOM → xóa dòng `products` → snapshot (một object JSON, không phải mảng thô).
+ */
+export async function persistCatalogDeleteVariants(products, fileName, variantIds) {
+  if (!Array.isArray(variantIds) || variantIds.length === 0) {
+    return { ok: false, error: new Error('Thiếu biến thể cần xóa.') }
+  }
+  const prev = Array.isArray(products) ? products : []
+  if (!isSupabaseConfigured()) {
+    return { ok: true, snapshotSaved: true, productsWritten: true }
+  }
+  try {
+    const dr = await deleteProductsForRemovedVariants(prev, variantIds)
+    if (!dr.ok && !dr.skipped) {
+      return { ok: false, error: dr.error, snapshotSaved: false, productsWritten: false }
+    }
+    const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
+    const sr = await persistCatalogSnapshotAndProducts(next, fileName, { snapshotOnly: true })
+    if (!sr.ok) {
+      return {
+        ok: false,
+        error: sr.error,
+        snapshotSaved: false,
+        productsWritten: true,
+        catalogNext: next,
+      }
+    }
+    return { ok: true, snapshotSaved: true, productsWritten: true, catalogNext: next }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error, snapshotSaved: false, productsWritten: false }
+  }
 }
 
 /**
@@ -1546,36 +1614,81 @@ async function fetchDisplayCatalogFromSupabaseProductsTable() {
 }
 
 /**
+ * Chuẩn hóa catalog display → JSON an toàn cho cột `snapshot` (jsonb).
+ * Không gửi mảng thô làm giá trị cột `snapshot` — luôn bọc trong object có `products`.
+ */
+export function sanitizeDisplayCatalogForSnapshot(products) {
+  const list = Array.isArray(products) ? products : []
+  try {
+    return JSON.parse(
+      JSON.stringify(list, (_key, value) => {
+        if (typeof value === 'function') return undefined
+        return value
+      })
+    )
+  } catch (e) {
+    console.warn('[catalogRepository] sanitizeDisplayCatalogForSnapshot fallback', e)
+    return list.map((p) => {
+      if (!p || typeof p !== 'object') return p
+      const { groupVariants, ...rest } = p
+      const gvs = Array.isArray(groupVariants)
+        ? groupVariants.map((v) => {
+            if (!v || typeof v !== 'object') return v
+            const { raw, ...vr } = v
+            return { ...vr, ...(raw && typeof raw === 'object' ? { raw } : {}) }
+          })
+        : undefined
+      return gvs ? { ...rest, groupVariants: gvs } : rest
+    })
+  }
+}
+
+/**
+ * Payload JSON lưu trong cột `snapshot` (bảng catalog_snapshots).
+ * @param {Array} products — display catalog
+ * @param {string} fileName
+ */
+export function buildCatalogSnapshotPayload(products, fileName) {
+  const normalizedFileName = normalizeCatalogFileName(fileName)
+  const safeProducts = sanitizeDisplayCatalogForSnapshot(products)
+  return {
+    v: CATALOG_SNAPSHOT_VERSION,
+    fileName: normalizedFileName,
+    savedAt: new Date().toISOString(),
+    products: Array.isArray(safeProducts) ? safeProducts : [],
+  }
+}
+
+/**
+ * Một dòng PostgREST cho `catalog_snapshots` — luôn là mảng `[{ id, snapshot, updated_at }]`.
+ */
+export function buildCatalogSnapshotSupabaseRow(products, fileName) {
+  const now = new Date().toISOString()
+  const snapshot = buildCatalogSnapshotPayload(products, fileName)
+  if (Array.isArray(snapshot)) {
+    throw new Error(
+      'Cấu trúc snapshot sai: phải là object { v, fileName, products }, không phải mảng catalog.'
+    )
+  }
+  if (!Array.isArray(snapshot.products)) {
+    throw new Error('Cấu trúc snapshot sai: thiếu mảng snapshot.products.')
+  }
+  return {
+    id: CATALOG_SUPABASE_ROW_ID,
+    snapshot,
+    updated_at: now,
+  }
+}
+
+/**
  * @param {Array} products
  * @param {string} fileName
  */
 async function saveCatalogSnapshotToSupabase(products, fileName) {
   const sb = getSupabaseClient()
   if (!sb) return
-  const now = new Date().toISOString()
-  const normalizedFileName = normalizeCatalogFileName(fileName)
-  const snapshot =
-    !products?.length
-      ? {
-          v: CATALOG_SNAPSHOT_VERSION,
-          fileName: normalizedFileName,
-          savedAt: now,
-          products: [],
-        }
-      : {
-          v: CATALOG_SNAPSHOT_VERSION,
-          fileName: normalizedFileName,
-          savedAt: now,
-          products,
-        }
-  const { error } = await sb.from(CATALOG_SNAPSHOT_TABLE).upsert(
-    {
-      id: CATALOG_SUPABASE_ROW_ID,
-      snapshot,
-      updated_at: now,
-    },
-    { onConflict: 'id' }
-  )
+  const row = buildCatalogSnapshotSupabaseRow(products, fileName)
+  const { error } = await sb.from(CATALOG_SNAPSHOT_TABLE).upsert([row], { onConflict: 'id' })
   if (error) throw error
 }
 
@@ -1709,12 +1822,7 @@ async function saveCatalogSnapshotInner(products, fileName) {
     saveCatalogSnapshotLastOkKey = dedupeKey
     return
   }
-  const payload = {
-    v: CATALOG_SNAPSHOT_VERSION,
-    fileName: normalizedFileName,
-    savedAt: new Date().toISOString(),
-    products,
-  }
+  const payload = buildCatalogSnapshotPayload(products, normalizedFileName)
   await idbPutCatalogSnapshot(payload)
   try {
     localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)

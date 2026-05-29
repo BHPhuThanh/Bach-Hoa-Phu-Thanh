@@ -2110,14 +2110,18 @@ export default function AdminHub({
     setGoodsSaveToastGen((g) => g + 1)
   }, [])
 
-  const persistStandaloneProducts = useCallback(async (nextProducts, fileNameHint, upsertOnlyVariants) => {
+  const persistStandaloneProducts = useCallback(
+    async (nextProducts, fileNameHint, upsertOnlyVariants, persistOpts = {}) => {
     const fn = String(fileNameHint || '')
+    const persistOptions = persistOpts?.snapshotOnly
+      ? { snapshotOnly: true }
+      : upsertOnlyVariants?.length
+        ? { upsertOnlyVariants, useBulkInsert: true }
+        : undefined
     const persistResult = await persistCatalogSnapshotAndProducts(
       nextProducts,
       fn,
-      upsertOnlyVariants?.length
-        ? { upsertOnlyVariants, useBulkInsert: true }
-        : undefined
+      persistOptions
     )
     if (!persistResult.ok) {
       return {
@@ -2503,7 +2507,12 @@ export default function AdminHub({
           }
         }
         const nextProducts = buildDisplayCatalog(remaining)
-        const pr = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        const pr = await persistStandaloneProducts(
+          nextProducts,
+          standaloneCatalog.fileName || '',
+          null,
+          { snapshotOnly: true }
+        )
         if (!pr?.ok) {
           window.alert(String(pr?.error || 'Không lưu snapshot sau khi xóa.'))
           return
@@ -2860,25 +2869,12 @@ export default function AdminHub({
       afterQty: patch.stockQty,
     })
     if (onUpdateCatalogVariant) {
-      const prevBrand = String(soloGoodsVariant.brand ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (
-        isSupabaseConfigured() &&
-        String(patch.code ?? '').trim() &&
-        patch.brand !== prevBrand
-      ) {
-        const br = await updateProductThuongHieuByMaHang(patch.code, patch.brand)
-        if (!br.ok) {
-          window.alert(
-            describeCatalogPersistError(br.error) ||
-              'Không lưu được thương hiệu lên Supabase. Kiểm tra mạng và quyền ghi bảng «products».'
-          )
-          return
-        }
-      }
       recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
-      onUpdateCatalogVariant(soloGoodsVariant.id, patch)
+      const upd = onUpdateCatalogVariant(soloGoodsVariant.id, patch)
+      if (upd && typeof upd.then === 'function') {
+        const res = await upd
+        if (res && res.ok === false) return
+      }
       triggerGoodsSaveSuccessToast()
       return
     }
@@ -2987,7 +2983,12 @@ export default function AdminHub({
           }
         }
         const nextProducts = buildDisplayCatalog(remaining)
-        const pr = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+        const pr = await persistStandaloneProducts(
+          nextProducts,
+          standaloneCatalog.fileName || '',
+          null,
+          { snapshotOnly: true }
+        )
         if (!pr?.ok) {
           window.alert(String(pr?.error || 'Không lưu snapshot sau khi xóa.'))
           return

@@ -4,8 +4,7 @@
  */
 
 import {
-  saveCatalogSnapshot,
-  saveProductsToSupabaseUpsertOnly,
+  persistCatalogSnapshotAndProducts,
   describeCatalogPersistError,
 } from './catalogRepository.js'
 import { insertInboundHistoryEntry } from './supabaseInboundHistory.js'
@@ -35,31 +34,23 @@ export async function runInboundSupabaseSync({
     return { ok: true, skipped: true, row: orderRow }
   }
 
-  const [snapshotResult, productsResult, historyResult] = await Promise.all([
-    saveCatalogSnapshot(catalogProductsNext, catalogFileName || '').then(
-      () => ({ ok: true }),
-      (error) => ({ ok: false, error })
-    ),
-    saveProductsToSupabaseUpsertOnly(upsertOnlyVariants || [], {
-      existingCatalogProducts: catalogProductsNext,
+  const productsResult = await persistCatalogSnapshotAndProducts(
+    catalogProductsNext,
+    catalogFileName || '',
+    {
+      upsertOnlyVariants: upsertOnlyVariants || [],
       useBulkInsert: false,
-    }),
-    insertInboundHistoryEntry(orderRow),
-  ])
-
-  if (snapshotResult?.ok === false) {
-    throw new Error(
-      describeCatalogPersistError(snapshotResult.error) ||
-        'Không lưu được snapshot danh mục (catalog_snapshots).'
-    )
-  }
+    }
+  )
 
   if (!productsResult?.ok) {
     throw new Error(
       describeCatalogPersistError(productsResult?.error) ||
-        'Không ghi được tồn kho / giá vốn lên bảng «products».'
+        'Không ghi được tồn kho / giá vốn hoặc snapshot danh mục lên Supabase.'
     )
   }
+
+  const historyResult = await insertInboundHistoryEntry(orderRow)
 
   if (!historyResult?.ok) {
     const err = historyResult?.error
