@@ -166,6 +166,7 @@ import {
   readCatalogSnapshotSync,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
+  persistCatalogProductsOnly,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
   deleteProductsForRemovedVariants,
@@ -2113,16 +2114,14 @@ export default function AdminHub({
   const persistStandaloneProducts = useCallback(
     async (nextProducts, fileNameHint, upsertOnlyVariants, persistOpts = {}) => {
     const fn = String(fileNameHint || '')
-    const persistOptions = persistOpts?.snapshotOnly
-      ? { snapshotOnly: true }
+    const persistResult = persistOpts?.snapshotOnly
+      ? await persistCatalogSnapshotAndProducts(nextProducts, fn, { snapshotOnly: true })
       : upsertOnlyVariants?.length
-        ? { upsertOnlyVariants, useBulkInsert: true }
-        : undefined
-    const persistResult = await persistCatalogSnapshotAndProducts(
-      nextProducts,
-      fn,
-      persistOptions
-    )
+        ? await persistCatalogProductsOnly(upsertOnlyVariants, {
+            existingCatalogProducts: nextProducts,
+            useBulkInsert: persistOpts.useBulkInsert === true,
+          })
+        : await persistCatalogSnapshotAndProducts(nextProducts, fn)
     if (!persistResult.ok) {
       return {
         ok: false,

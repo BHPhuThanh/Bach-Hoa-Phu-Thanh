@@ -2,6 +2,41 @@ import { Fragment } from 'react'
 import { formatMoneyThousandsTyping } from './moneyInputFormat.js'
 import { batchBarcodeFieldKey } from './goodsCreateBatch.js'
 
+function BrandField({ row, index, layout, brandOptions, onPatch }) {
+  const listId = `batch-brand-${row.rowId}`
+  const input = (
+    <>
+      <input
+        className="ah-goods-create-input"
+        type="text"
+        list={brandOptions.length > 0 ? listId : undefined}
+        value={row.brand}
+        placeholder="Thương hiệu"
+        autoComplete="off"
+        onChange={(e) => onPatch(index, 'brand', e.target.value)}
+      />
+      {brandOptions.length > 0 ? (
+        <datalist id={listId}>
+          {brandOptions.map((b) => (
+            <option key={b} value={b} />
+          ))}
+        </datalist>
+      ) : null}
+    </>
+  )
+
+  if (layout === 'card') {
+    return (
+      <label className="ah-goods-create-batch-card-field">
+        <span className="ah-goods-create-label">Thương hiệu</span>
+        {input}
+      </label>
+    )
+  }
+
+  return input
+}
+
 function BarcodeInput({
   value,
   fieldKey,
@@ -150,6 +185,7 @@ export default function AdminHubGoodsCreateBatchRow({
   row,
   index,
   layout,
+  brandOptions = [],
   barcodeErrors = {},
   onPatch,
   onPatchExtra,
@@ -191,17 +227,13 @@ export default function AdminHubGoodsCreateBatchRow({
               onChange={(e) => onPatch(index, 'name', e.target.value)}
             />
           </label>
-          <label className="ah-goods-create-batch-card-field">
-            <span className="ah-goods-create-label">Thương hiệu</span>
-            <input
-              className="ah-goods-create-input"
-              type="text"
-              value={row.brand}
-              placeholder="Thương hiệu"
-              autoComplete="off"
-              onChange={(e) => onPatch(index, 'brand', e.target.value)}
-            />
-          </label>
+          <BrandField
+            row={row}
+            index={index}
+            layout={layout}
+            brandOptions={brandOptions}
+            onPatch={onPatch}
+          />
           <label className="ah-goods-create-batch-card-field">
             <span className="ah-goods-create-label">Mã vạch / QR</span>
             <BarcodeInput
@@ -298,16 +330,15 @@ export default function AdminHubGoodsCreateBatchRow({
             onChange={(e) => onPatch(index, 'name', e.target.value)}
           />
         </td>
-        <td className="ah-goods-create-batch-td-brand">
-          <input
-            className="ah-goods-create-input"
-            type="text"
-            value={row.brand}
-            placeholder="TH"
-            autoComplete="off"
-            onChange={(e) => onPatch(index, 'brand', e.target.value)}
-          />
-        </td>
+      <td className="ah-goods-create-batch-td-brand">
+        <BrandField
+          row={row}
+          index={index}
+          layout={layout}
+          brandOptions={brandOptions}
+          onPatch={onPatch}
+        />
+      </td>
         <td className="ah-goods-create-batch-td-code">
           <input
             className="ah-goods-create-input"

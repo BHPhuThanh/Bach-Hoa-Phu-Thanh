@@ -11,6 +11,7 @@ import {
   fetchProducts,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
+  persistCatalogProductsOnly,
   describeCatalogPersistError,
   revalidateCatalogFromStore,
 } from './catalogRepository.js'
@@ -329,8 +330,9 @@ export default function CostAdjustCreatePage() {
           window.alert('Không tìm thấy biến thể trên danh mục để ghi giá vốn lên máy chủ.')
           return
         }
-        persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName, {
-          upsertOnlyVariants: danh_sách_cập_nhật_giá_vốn,
+        persistResult = await persistCatalogProductsOnly(danh_sách_cập_nhật_giá_vốn, {
+          existingCatalogProducts: products,
+          useBulkInsert: false,
         })
         if (!persistResult.ok) {
           window.alert(

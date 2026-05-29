@@ -3,10 +3,7 @@
  * Gộp request song song (Promise.all) để tránh kẹt Auth Lock do gọi tuần tự lồng nhau.
  */
 
-import {
-  persistCatalogSnapshotAndProducts,
-  describeCatalogPersistError,
-} from './catalogRepository.js'
+import { persistCatalogProductsOnly, describeCatalogPersistError } from './catalogRepository.js'
 import { insertInboundHistoryEntry } from './supabaseInboundHistory.js'
 import { isSupabaseConfigured } from './supabaseClient.js'
 import {
@@ -34,19 +31,15 @@ export async function runInboundSupabaseSync({
     return { ok: true, skipped: true, row: orderRow }
   }
 
-  const productsResult = await persistCatalogSnapshotAndProducts(
-    catalogProductsNext,
-    catalogFileName || '',
-    {
-      upsertOnlyVariants: upsertOnlyVariants || [],
-      useBulkInsert: false,
-    }
-  )
+  const productsResult = await persistCatalogProductsOnly(upsertOnlyVariants || [], {
+    existingCatalogProducts: catalogProductsNext,
+    useBulkInsert: false,
+  })
 
   if (!productsResult?.ok) {
     throw new Error(
       describeCatalogPersistError(productsResult?.error) ||
-        'Không ghi được tồn kho / giá vốn hoặc snapshot danh mục lên Supabase.'
+        'Không ghi được tồn kho / giá vốn lên bảng products (Supabase).'
     )
   }
 

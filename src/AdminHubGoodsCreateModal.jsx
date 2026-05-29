@@ -328,6 +328,26 @@ export default function AdminHubGoodsCreateModal({
     [goodsCreateBatchBarcodeErrors]
   )
 
+  const batchBrandOptions = useMemo(() => {
+    const brands = new Set()
+    const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+    for (const v of flat) {
+      const b = String(v.brand ?? v.thuong_hieu ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (b) brands.add(b)
+    }
+    for (const o of brandAutocompleteOptions || []) {
+      const b =
+        typeof o === 'string'
+          ? o
+          : String(o?.label ?? o?.value ?? o?.name ?? '')
+      const t = b.replace(/\s+/g, ' ').trim()
+      if (t) brands.add(t)
+    }
+    return [...brands].sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [catalogList, brandAutocompleteOptions])
+
   useEffect(() => {
     if (!open) return
     resetFormFields()
@@ -1038,6 +1058,7 @@ export default function AdminHubGoodsCreateModal({
                               row={row}
                               index={index}
                               layout="table"
+                              brandOptions={batchBrandOptions}
                               barcodeErrors={goodsCreateBatchBarcodeErrors}
                               onPatch={patchGoodsCreateBatchRowField}
                               onPatchExtra={patchGoodsCreateBatchExtraField}
@@ -1060,6 +1081,7 @@ export default function AdminHubGoodsCreateModal({
                         index={index}
                         layout="card"
                         rowLabel={`Sản phẩm ${index + 1}`}
+                        brandOptions={batchBrandOptions}
                         barcodeErrors={goodsCreateBatchBarcodeErrors}
                         onPatch={patchGoodsCreateBatchRowField}
                         onPatchExtra={patchGoodsCreateBatchExtraField}

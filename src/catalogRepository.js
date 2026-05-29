@@ -1106,9 +1106,11 @@ export async function saveProductsToSupabaseUpsertOnly(flatDisplayVariants, opti
  * Ghi snapshot (Supabase/IDB) rồi đồng bộ bảng `products`.
  * Khi có Supabase: `ok` chỉ là `true` nếu bước upsert `products` thành công — tránh đọc lại từ server rồi đè UI bằng dữ liệu cũ (snapshot có thể mới nhưng `products` đọc ưu tiên không khớp).
  * @param {object} [options]
- * @param {Array<object>} [options.upsertOnlyVariants] — nếu có: chỉ upsert các biến thể này lên `products`, vẫn ghi snapshot đầy đủ `products`.
- * @param {boolean} [options.snapshotOnly] — chỉ ghi `catalog_snapshots` (sau khi đã xóa/sửa `products` riêng).
- * @param {Array<object>} [options.tonKhoOnlyVariants] — nếu truyền (kể cả mảng rỗng): chỉ **PATCH** cột `ton_kho` — không đụng `gia_ban`.
+ * @param {Array<object>} [options.upsertOnlyVariants] — chỉ upsert các biến thể này lên `products` (mặc định **không** ghi snapshot).
+ * @param {boolean} [options.snapshotOnly] — chỉ ghi `catalog_snapshots` (sao lưu / sau xóa hàng loạt).
+ * @param {boolean} [options.withSnapshot] — ép ghi thêm `catalog_snapshots` khi dùng `upsertOnlyVariants` / `tonKhoOnlyVariants`.
+ * @param {boolean} [options.skipSnapshot] — bỏ qua snapshot (mặc định `true` với upsert/tồn kho từng phần).
+ * @param {Array<object>} [options.tonKhoOnlyVariants] — chỉ **PATCH** cột `ton_kho` — không đụng `gia_ban`.
  * @returns {Promise<{ ok: boolean, error?: unknown, snapshotSaved?: boolean, productsWritten?: boolean }>}
  */
 export async function persistCatalogSnapshotAndProducts(products, fileName, options) {
@@ -1133,8 +1135,11 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
       if (!r.ok) {
         return { ok: false, error: r.error, snapshotSaved: false, productsWritten: false }
       }
-      await saveCatalogSnapshot(products, fileName)
-      return { ok: true, snapshotSaved: true, productsWritten: true }
+      const writeSnapshot = options.withSnapshot === true
+      if (writeSnapshot) {
+        await saveCatalogSnapshot(products, fileName)
+      }
+      return { ok: true, snapshotSaved: writeSnapshot, productsWritten: true }
     } catch (error) {
       notifySupabasePersistFailure(error)
       return { ok: false, error, snapshotSaved: false, productsWritten: false }
@@ -1142,36 +1147,11 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
   }
 
   if (options?.upsertOnlyVariants?.length) {
-    try {
-      const r = await saveProductsToSupabaseUpsertOnly(options.upsertOnlyVariants, {
-        existingCatalogProducts: products,
-        useBulkInsert: options.useBulkInsert === true,
-      })
-      if (!r.ok) {
-        return {
-          ok: false,
-          error: r.error,
-          snapshotSaved: false,
-          productsWritten: false,
-        }
-      }
-      await saveCatalogSnapshot(products, fileName)
-      return {
-        ok: true,
-        snapshotSaved: true,
-        productsWritten: true,
-        returnedDisplayVariants: r.returnedDisplayVariants,
-        preparedVariants: r.preparedVariants,
-      }
-    } catch (error) {
-      notifySupabasePersistFailure(error)
-      return {
-        ok: false,
-        error,
-        snapshotSaved: false,
-        productsWritten: false,
-      }
-    }
+    return persistCatalogProductsOnly(options.upsertOnlyVariants, {
+      existingCatalogProducts: products,
+      useBulkInsert: options.useBulkInsert === true,
+      withSnapshot: options.withSnapshot === true,
+    })
   }
 
   try {
@@ -1186,6 +1166,60 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
     }
     await saveCatalogSnapshot(products, fileName)
     return { ok: true, snapshotSaved: true, productsWritten: true }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error, snapshotSaved: false, productsWritten: false }
+  }
+}
+
+/**
+ * Chỉ ghi bảng `products` — không upsert `catalog_snapshots` (CRUD sửa/tạo từng phần hàng ngày).
+ * @param {Array<object>} flatDisplayVariants
+ * @param {object} [options]
+ * @param {Array<object>} [options.existingCatalogProducts]
+ * @param {boolean} [options.useBulkInsert]
+ * @param {boolean} [options.withSnapshot] — nếu `true`, ghi thêm snapshot (sao lưu định kỳ).
+ */
+export async function persistCatalogProductsOnly(flatDisplayVariants, options = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, snapshotSaved: false, productsWritten: true }
+  }
+  if (!Array.isArray(flatDisplayVariants) || flatDisplayVariants.length === 0) {
+    const err = new Error('Không có biến thể để ghi lên bảng products.')
+    return { ok: false, error: err, snapshotSaved: false, productsWritten: false }
+  }
+  try {
+    const r = await saveProductsToSupabaseUpsertOnly(flatDisplayVariants, {
+      existingCatalogProducts: options.existingCatalogProducts ?? [],
+      useBulkInsert: options.useBulkInsert === true,
+    })
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: r.error,
+        snapshotSaved: false,
+        productsWritten: false,
+        written: r.written,
+        skippedUpsert: r.skippedUpsert,
+      }
+    }
+    let snapshotSaved = false
+    if (options.withSnapshot === true && Array.isArray(options.existingCatalogProducts)) {
+      await saveCatalogSnapshot(
+        options.existingCatalogProducts,
+        String(options.fileName ?? 'catalog')
+      )
+      snapshotSaved = true
+    }
+    return {
+      ok: true,
+      snapshotSaved,
+      productsWritten: true,
+      returnedDisplayVariants: r.returnedDisplayVariants,
+      preparedVariants: r.preparedVariants,
+      written: r.written,
+      skippedUpsert: r.skippedUpsert,
+    }
   } catch (error) {
     notifySupabasePersistFailure(error)
     return { ok: false, error, snapshotSaved: false, productsWritten: false }

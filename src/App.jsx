@@ -105,6 +105,7 @@ import {
   fetchProducts,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
+  persistCatalogProductsOnly,
   readCatalogSnapshotSync,
   revalidateCatalogFromStore,
   describeCatalogPersistError,
@@ -3068,8 +3069,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
               }
             }
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-              upsertOnlyVariants: replacements,
+            const r = await persistCatalogProductsOnly(replacements, {
+              existingCatalogProducts: prev,
+              useBulkInsert: false,
             })
             if (!r.ok) {
               throw r.error || new Error(describeCatalogPersistError(r.error))
@@ -3113,8 +3115,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const runPersist = async () => {
         const prev = productsRef.current
         const next = applyProductDataToCatalog(prev, { type: 'append_flat_variants', variants })
-        const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-          upsertOnlyVariants: variants,
+        const r = await persistCatalogProductsOnly(variants, {
+          existingCatalogProducts: prev,
           useBulkInsert: true,
         })
         if (!r.ok) {
@@ -3161,14 +3163,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: 'Thiếu biến thể để ghi lên Supabase.' }
       }
       const prev = productsRef.current
-      const r = await persistCatalogSnapshotAndProducts(
-        nextProducts,
-        catalogFileNameRef.current || fileNameHint || '',
-        { upsertOnlyVariants, useBulkInsert: true }
-      )
+      const r = await persistCatalogProductsOnly(upsertOnlyVariants, {
+        existingCatalogProducts: prev,
+        useBulkInsert: true,
+      })
       if (!r.ok) {
         showPosPersistErrorToast(
-          describeCatalogPersistError(r.error) || 'Không lưu được sản phẩm mới (Supabase / snapshot).'
+          describeCatalogPersistError(r.error) || 'Không lưu được sản phẩm mới (Supabase).'
         )
         return { ok: false, error: describeCatalogPersistError(r.error) }
       }
@@ -3276,8 +3277,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           if (upsertOnly.length === 0) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
-          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-            upsertOnlyVariants: upsertOnly,
+          const r = await persistCatalogProductsOnly(upsertOnly, {
+            existingCatalogProducts: prev,
             useBulkInsert: false,
           })
           if (!r.ok) {
@@ -3392,12 +3393,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const flatNext = flattenDisplayCatalogToVariants(next)
         const touchedIds = new Set(valid.map((e) => String(e.variantId)))
         const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-        const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-          upsertOnlyVariants,
+        const r = await persistCatalogProductsOnly(upsertOnlyVariants, {
+          existingCatalogProducts: snapshotPrev,
+          useBulkInsert: false,
         })
         if (!r.ok) {
           const msg =
-            describeCatalogPersistError(r.error) || 'Không ghi được danh mục lên Supabase.'
+            describeCatalogPersistError(r.error) || 'Không ghi được sản phẩm lên Supabase.'
           showPosPersistErrorToast(`Lỗi đồng bộ: ${msg}. Đã hoàn tác thay đổi!`)
           return { ok: false, updatedCount: 0, error: msg }
         }
