@@ -1,6 +1,12 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
 import { allocateAutoHhSkuIfEmpty } from './autoProductSku.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
+import {
+  buildCatalogVariantsFromUnitModal,
+  parseMoneyDigitsVi,
+  parsePositiveConversion,
+  sortUnitModalLinesByConversion,
+} from './goodsUnitSetupModalLogic.js'
 
 export function newGoodsCreateBatchRowId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -8,39 +14,82 @@ export function newGoodsCreateBatchRowId() {
     : `gcb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** Một dòng nhập độc lập trong form «Tạo nhiều sản phẩm». */
+/** Khóa lỗi mã vạch: rowId hoặc rowId:unitId cho ĐVT phụ. */
+export function batchBarcodeFieldKey(rowId, unitId = null) {
+  return unitId ? `${rowId}:${unitId}` : String(rowId)
+}
+
+export function newGoodsCreateBatchExtraUnit() {
+  return {
+    unitId: newGoodsCreateBatchRowId(),
+    unitLabel: '',
+    conversion: '',
+    price: '',
+    cost: '',
+    barcode: '',
+    code: '',
+  }
+}
+
+/** Một dòng nhập độc lập — `donViTinh` = đơn vị quy đổi bổ sung. */
 export function newGoodsCreateBatchRow() {
   return {
     rowId: newGoodsCreateBatchRowId(),
     name: '',
     code: '',
     barcode: '',
+    brand: '',
     unitLabel: 'Cái',
     price: '',
     wholesale: '',
     cost: '',
     stock: '0',
-    brand: '',
+    donViTinh: [],
+    extraUnitsOpen: false,
   }
 }
 
-/**
- * Cập nhật một field trên đúng index (immutable).
- * @param {Array<object>} rows
- * @param {number} index
- * @param {string} field
- * @param {unknown} value
- */
+/** Reset trắng form batch (gọi khi mở/đóng/lưu xong). */
+export function initialGoodsCreateBatchRows() {
+  return [newGoodsCreateBatchRow()]
+}
+
 export function patchGoodsCreateBatchRow(rows, index, field, value) {
   if (!Array.isArray(rows) || index < 0 || index >= rows.length) return rows
   return rows.map((row, i) => (i === index ? { ...row, [field]: value } : row))
 }
 
-function parseMoneyDigitsVi(raw) {
-  const d = String(raw ?? '').replace(/[^\d]/g, '')
-  if (!d) return 0
-  const n = parseInt(d, 10)
-  return Number.isFinite(n) ? n : 0
+export function patchGoodsCreateBatchExtraUnit(rows, rowIndex, unitIndex, field, value) {
+  if (!Array.isArray(rows) || rowIndex < 0 || rowIndex >= rows.length) return rows
+  return rows.map((row, i) => {
+    if (i !== rowIndex) return row
+    const units = Array.isArray(row.donViTinh) ? [...row.donViTinh] : []
+    if (unitIndex < 0 || unitIndex >= units.length) return row
+    units[unitIndex] = { ...units[unitIndex], [field]: value }
+    return { ...row, donViTinh: units }
+  })
+}
+
+export function addGoodsCreateBatchExtraUnit(rows, rowIndex) {
+  if (!Array.isArray(rows) || rowIndex < 0 || rowIndex >= rows.length) return rows
+  return rows.map((row, i) =>
+    i === rowIndex
+      ? {
+          ...row,
+          extraUnitsOpen: true,
+          donViTinh: [...(row.donViTinh || []), newGoodsCreateBatchExtraUnit()],
+        }
+      : row
+  )
+}
+
+export function removeGoodsCreateBatchExtraUnit(rows, rowIndex, unitIndex) {
+  if (!Array.isArray(rows) || rowIndex < 0 || rowIndex >= rows.length) return rows
+  return rows.map((row, i) => {
+    if (i !== rowIndex) return row
+    const units = (row.donViTinh || []).filter((_, j) => j !== unitIndex)
+    return { ...row, donViTinh: units, extraUnitsOpen: units.length > 0 ? row.extraUnitsOpen : false }
+  })
 }
 
 function catalogBarcodeSet(catalogList) {
@@ -50,60 +99,144 @@ function catalogBarcodeSet(catalogList) {
   )
 }
 
-/**
- * Bước 1: trùng trong batch. Bước 2: trùng danh mục hiện có.
- * @returns {{ ok: true } | { ok: false, message: string, badRowIds: string[], highlightBarcode: string }}
- */
-export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
-  const existing = catalogBarcodeSet(catalogList)
-  const seenInBatch = new Map()
-  const badRowIds = new Set()
-  let highlightBarcode = ''
-  let hasInternal = false
-  let hasCatalog = false
-
+/** Thu thập mọi mã vạch trong form batch (ô chính + ĐVT phụ). */
+function collectBatchBarcodeEntries(batchRows) {
+  const entries = []
   for (const r of batchRows || []) {
-    const norm = String(normalizeBarcodeValue(r.barcode ?? '')).trim()
-    if (!norm) continue
-
-    if (seenInBatch.has(norm)) {
-      badRowIds.add(r.rowId)
-      badRowIds.add(seenInBatch.get(norm))
-      if (!highlightBarcode) highlightBarcode = norm
-      hasInternal = true
-    } else {
-      seenInBatch.set(norm, r.rowId)
-    }
-
-    if (existing.has(norm)) {
-      badRowIds.add(r.rowId)
-      if (!highlightBarcode) highlightBarcode = norm
-      hasCatalog = true
+    const main = String(normalizeBarcodeValue(r.barcode ?? '')).trim()
+    if (main) entries.push({ norm: main, rowId: r.rowId, unitId: null })
+    for (const u of r.donViTinh || []) {
+      const n = String(normalizeBarcodeValue(u.barcode ?? '')).trim()
+      if (n) entries.push({ norm: n, rowId: r.rowId, unitId: u.unitId })
     }
   }
-
-  if (badRowIds.size === 0) {
-    return { ok: true }
-  }
-
-  const display =
-    highlightBarcode.length > 16 ? `${highlightBarcode.slice(0, 16)}…` : highlightBarcode
-  let detail = 'đã tồn tại trong hệ thống hoặc bị nhập trùng'
-  if (hasInternal && !hasCatalog) detail = 'bị nhập trùng giữa các dòng'
-  else if (hasCatalog && !hasInternal) detail = 'đã tồn tại trong hệ thống'
-
-  return {
-    ok: false,
-    message: `Mã vạch ${display} ${detail}.`,
-    badRowIds: [...badRowIds],
-    highlightBarcode,
-  }
+  return entries
 }
 
 /**
- * Mỗi phần tử batch → một biến thể catalog riêng (tên/mã/giá không dùng chung).
+ * Kiểm tra một ô mã vạch (real-time).
+ * @returns {{ ok: true, message: '' } | { ok: false, message: string }}
+ */
+export function inspectGoodsCreateBatchBarcode({
+  barcode,
+  rowId,
+  unitId = null,
+  batchRows,
+  catalogList,
+}) {
+  const norm = String(normalizeBarcodeValue(barcode ?? '')).trim()
+  if (!norm) return { ok: true, message: '' }
+
+  const existing = catalogBarcodeSet(catalogList)
+  if (existing.has(norm)) {
+    return { ok: false, message: 'Mã đã tồn tại' }
+  }
+
+  const fieldKey = batchBarcodeFieldKey(rowId, unitId)
+  let dupCount = 0
+  for (const e of collectBatchBarcodeEntries(batchRows)) {
+    if (e.norm !== norm) continue
+    const k = batchBarcodeFieldKey(e.rowId, e.unitId)
+    if (k === fieldKey) dupCount += 1
+    else dupCount += 1
+  }
+  if (dupCount > 1) {
+    return { ok: false, message: 'Mã bị trùng trong form' }
+  }
+
+  return { ok: true, message: '' }
+}
+
+/**
+ * @returns {{ ok: true } | { ok: false, message: string, errors: Record<string, string> }}
+ */
+export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
+  const errors = {}
+  const entries = collectBatchBarcodeEntries(batchRows)
+  const existing = catalogBarcodeSet(catalogList)
+  const seen = new Map()
+
+  for (const e of entries) {
+    const key = batchBarcodeFieldKey(e.rowId, e.unitId)
+    if (seen.has(e.norm)) {
+      errors[key] = 'Mã bị trùng trong form'
+      errors[seen.get(e.norm)] = 'Mã bị trùng trong form'
+    } else {
+      seen.set(e.norm, key)
+    }
+    if (existing.has(e.norm)) {
+      errors[key] = 'Mã đã tồn tại'
+    }
+  }
+
+  if (Object.keys(errors).length === 0) return { ok: true }
+
+  const firstNorm = entries.find((e) => errors[batchBarcodeFieldKey(e.rowId, e.unitId)])?.norm || ''
+  const display = firstNorm.length > 16 ? `${firstNorm.slice(0, 16)}…` : firstNorm
+  return {
+    ok: false,
+    message: display
+      ? `Mã vạch ${display} đã tồn tại trong hệ thống hoặc bị nhập trùng.`
+      : 'Có mã vạch bị trùng trong form hoặc đã tồn tại.',
+    errors,
+  }
+}
+
+function ensureUniqueVariantCodes(variants, codeSetExisting, syntheticCatalog) {
+  const out = []
+  for (const v of variants) {
+    let code = String(v.code ?? '').trim()
+    if (!code) code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
+    const codeLc = code.toLowerCase()
+    let guard = 0
+    while (
+      (codeSetExisting.has(codeLc) || out.some((x) => String(x.code).toLowerCase() === codeLc)) &&
+      guard < 100000
+    ) {
+      code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
+      guard += 1
+    }
+    codeSetExisting.add(code.toLowerCase())
+    const variant = { ...v, code }
+    out.push(variant)
+    syntheticCatalog.push({ groupVariants: [variant] })
+  }
+  return out
+}
+
+function batchRowToUnitLines(row) {
+  const base = {
+    key: row.rowId,
+    variantId: '',
+    unitLabel: normalizeCatalogUnitLabel(row.unitLabel) || 'Cái',
+    conversion: '1',
+    code: String(row.code ?? '').trim(),
+    barcode: String(row.barcode ?? '').trim(),
+    cost: String(row.cost ?? ''),
+    price: String(row.price ?? ''),
+  }
+  const extras = (row.donViTinh || [])
+    .filter((u) => String(u.unitLabel ?? '').trim())
+    .map((u) => ({
+      key: u.unitId,
+      variantId: '',
+      unitLabel: String(u.unitLabel ?? '').trim(),
+      conversion: String(u.conversion ?? '').trim() || '1',
+      code: String(u.code ?? '').trim(),
+      barcode: String(u.barcode ?? '').trim(),
+      cost: String(u.cost ?? ''),
+      price: String(u.price ?? ''),
+    }))
+  return sortUnitModalLinesByConversion([base, ...extras])
+}
+
+function rowHasExtraUnits(row) {
+  return (row.donViTinh || []).some((u) => String(u.unitLabel ?? '').trim())
+}
+
+/**
  * @param {Array<object>} batchRows
- * @param {Array<object>} catalogList — display catalog hiện có
+ * @param {Array<object>} catalogList
  */
 export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogList) {
   const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
@@ -124,20 +257,71 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       .trim()
     if (!nameTrim) continue
 
-    let code = String(r.code ?? '').trim()
-    if (!code) {
-      code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
+    const brandTrim = String(r.brand ?? '').trim()
+
+    if (rowHasExtraUnits(r)) {
+      const linesSorted = batchRowToUnitLines(r)
+      let rootCode = String(linesSorted[0]?.code ?? '').trim()
+      if (!rootCode) rootCode = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
+
+      const templateVariant = {
+        stockQty: Math.max(0, parseMoneyDigitsVi(r.stock)),
+        wholesalePrice: parseMoneyDigitsVi(r.wholesale),
+        brand: brandTrim,
+        supplier: '',
+        weightRaw: '',
+      }
+
+      const groupVariants = buildCatalogVariantsFromUnitModal({
+        templateVariant,
+        linesSorted,
+        nameTrim,
+      })
+
+      for (const v of groupVariants) {
+        let barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
+        if (
+          barcode &&
+          (barcodeSetExisting.has(barcode) ||
+            out.some((x) => normalizeBarcodeValue(x.barcode) === barcode))
+        ) {
+          barcode = ''
+        }
+        if (barcode) barcodeSetExisting.add(barcode)
+        v.barcode = barcode
+        v.brand = brandTrim
+        v.name = nameTrim
+        v.nameRaw = nameTrim
+        if (v.conversion != null) {
+          const conv = parsePositiveConversion(v.conversion) ?? 1
+          v.conversion = conv
+          v.conversionValue = conv
+        }
+      }
+
+      const unique = ensureUniqueVariantCodes(groupVariants, codeSetExisting, syntheticCatalog)
+      out.push(...unique)
+      continue
     }
+
+    let code = String(r.code ?? '').trim()
+    if (!code) code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
     const codeLc = code.toLowerCase()
     let guard = 0
-    while ((codeSetExisting.has(codeLc) || out.some((x) => String(x.code).toLowerCase() === codeLc)) && guard < 100000) {
+    while (
+      (codeSetExisting.has(codeLc) || out.some((x) => String(x.code).toLowerCase() === codeLc)) &&
+      guard < 100000
+    ) {
       code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
       guard += 1
     }
     codeSetExisting.add(code.toLowerCase())
 
     let barcode = String(normalizeBarcodeValue(r.barcode ?? '')).trim()
-    if (barcode && (barcodeSetExisting.has(barcode) || out.some((x) => normalizeBarcodeValue(x.barcode) === barcode))) {
+    if (
+      barcode &&
+      (barcodeSetExisting.has(barcode) || out.some((x) => normalizeBarcodeValue(x.barcode) === barcode))
+    ) {
       barcode = ''
     }
     if (barcode) barcodeSetExisting.add(barcode)
@@ -153,7 +337,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       cost: parseMoneyDigitsVi(r.cost),
       stockQty: Math.max(0, parseMoneyDigitsVi(r.stock)),
       supplier: '',
-      brand: String(r.brand ?? '').trim(),
+      brand: brandTrim,
       linkedMasterCode: '',
       baseGroupCode: '',
       unitLabel: normalizeCatalogUnitLabel(r.unitLabel) || 'Cái',

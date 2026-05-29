@@ -20,9 +20,15 @@ import BarcodeScanModal from './BarcodeScanModal.jsx'
 import { formatPostgrestErrorForUser } from './entityContactsRepository.js'
 import AdminHubGoodsCreateBatchRow from './AdminHubGoodsCreateBatchRow.jsx'
 import {
+  addGoodsCreateBatchExtraUnit,
+  batchBarcodeFieldKey,
   buildCatalogVariantsFromGoodsCreateBatchRows,
+  initialGoodsCreateBatchRows,
+  inspectGoodsCreateBatchBarcode,
   newGoodsCreateBatchRow,
+  patchGoodsCreateBatchExtraUnit,
   patchGoodsCreateBatchRow,
+  removeGoodsCreateBatchExtraUnit,
   validateGoodsCreateBatchBarcodes,
 } from './goodsCreateBatch.js'
 import './adminHub.css'
@@ -138,11 +144,17 @@ export default function AdminHubGoodsCreateModal({
   const [goodsCreateSaveError, setGoodsCreateSaveError] = useState('')
   /** `single` = một SP; `batch` = nhiều dòng, mỗi dòng state độc lập (tên/mã/giá riêng). */
   const [goodsCreateEntryMode, setGoodsCreateEntryMode] = useState('single')
-  const [goodsCreateBatchRows, setGoodsCreateBatchRows] = useState(() => [newGoodsCreateBatchRow()])
-  /** rowId → true — viền đỏ ô mã vạch bị trùng. */
-  const [goodsCreateBatchBarcodeErrorIds, setGoodsCreateBatchBarcodeErrorIds] = useState({})
+  const [goodsCreateBatchRows, setGoodsCreateBatchRows] = useState(initialGoodsCreateBatchRows)
+  const goodsCreateBatchRowsRef = useRef(goodsCreateBatchRows)
+  goodsCreateBatchRowsRef.current = goodsCreateBatchRows
+  const goodsCreateEntryModeRef = useRef(goodsCreateEntryMode)
+  goodsCreateEntryModeRef.current = goodsCreateEntryMode
+  /** rowId hoặc rowId:unitId → thông báo lỗi mã vạch. */
+  const [goodsCreateBatchBarcodeErrors, setGoodsCreateBatchBarcodeErrors] = useState({})
   const [goodsCreateBatchToast, setGoodsCreateBatchToast] = useState(null)
   const goodsCreateBatchToastTimerRef = useRef(null)
+  const batchBarcodeDebounceRef = useRef({})
+  const [batchFormEpoch, setBatchFormEpoch] = useState(0)
   const [gcUnitModal, setGcUnitModal] = useState(null)
 
   const resetFormFields = useCallback(() => {
@@ -160,10 +172,20 @@ export default function AdminHubGoodsCreateModal({
     setGoodsNewBarcodeDupMsg('')
     setGoodsCreateSaveError('')
     setGoodsCreateEntryMode('single')
-    setGoodsCreateBatchRows([newGoodsCreateBatchRow()])
-    setGoodsCreateBatchBarcodeErrorIds({})
+    setGoodsCreateBatchRows(initialGoodsCreateBatchRows())
+    setGoodsCreateBatchBarcodeErrors({})
     setGoodsCreateBatchToast(null)
+    setBatchFormEpoch((n) => n + 1)
     setGcUnitModal(null)
+  }, [])
+
+  const resetBatchRowsState = useCallback(() => {
+    setGoodsCreateBatchRows(initialGoodsCreateBatchRows())
+    setGoodsCreateBatchBarcodeErrors({})
+    setGoodsCreateBatchToast(null)
+    setBatchFormEpoch((n) => n + 1)
+    Object.values(batchBarcodeDebounceRef.current).forEach((t) => window.clearTimeout(t))
+    batchBarcodeDebounceRef.current = {}
   }, [])
 
   const showGoodsCreateBatchToast = useCallback((message) => {
@@ -189,32 +211,113 @@ export default function AdminHubGoodsCreateModal({
     []
   )
 
-  const patchGoodsCreateBatchRowField = useCallback((index, field, value) => {
-    setGoodsCreateBatchRows((prev) => {
-      if (field === 'barcode') {
-        const rowId = prev[index]?.rowId
-        if (rowId) {
-          setGoodsCreateBatchBarcodeErrorIds((errs) => {
-            if (!errs[rowId]) return errs
-            const next = { ...errs }
-            delete next[rowId]
-            return next
-          })
-        }
-      }
-      return patchGoodsCreateBatchRow(prev, index, field, value)
+  const runBatchBarcodeCheck = useCallback((rowIndex, unitId = null) => {
+    const rows = goodsCreateBatchRowsRef.current
+    const row = rows[rowIndex]
+    if (!row) return
+    const raw = unitId
+      ? (row.donViTinh || []).find((u) => u.unitId === unitId)?.barcode
+      : row.barcode
+    const result = inspectGoodsCreateBatchBarcode({
+      barcode: raw,
+      rowId: row.rowId,
+      unitId,
+      batchRows: rows,
+      catalogList: catalogListRef.current,
+    })
+    const key = batchBarcodeFieldKey(row.rowId, unitId)
+    setGoodsCreateBatchBarcodeErrors((errs) => {
+      const next = { ...errs }
+      if (result.ok) delete next[key]
+      else next[key] = result.message
+      return next
     })
   }, [])
+
+  const scheduleBatchBarcodeCheck = useCallback(
+    (rowIndex, unitId = null) => {
+      const rows = goodsCreateBatchRowsRef.current
+      const row = rows[rowIndex]
+      if (!row) return
+      const debKey = `deb-${batchBarcodeFieldKey(row.rowId, unitId)}`
+      if (batchBarcodeDebounceRef.current[debKey]) {
+        window.clearTimeout(batchBarcodeDebounceRef.current[debKey])
+      }
+      batchBarcodeDebounceRef.current[debKey] = window.setTimeout(() => {
+        delete batchBarcodeDebounceRef.current[debKey]
+        runBatchBarcodeCheck(rowIndex, unitId)
+      }, 400)
+    },
+    [runBatchBarcodeCheck]
+  )
+
+  const clearBatchBarcodeErrorKey = useCallback((rowId, unitId = null) => {
+    const k = batchBarcodeFieldKey(rowId, unitId)
+    setGoodsCreateBatchBarcodeErrors((errs) => {
+      if (!errs[k]) return errs
+      const next = { ...errs }
+      delete next[k]
+      return next
+    })
+  }, [])
+
+  const patchGoodsCreateBatchRowField = useCallback(
+    (index, field, value) => {
+      setGoodsCreateBatchRows((prev) => {
+        const row = prev[index]
+        if (field === 'barcode' && row?.rowId) clearBatchBarcodeErrorKey(row.rowId, null)
+        return patchGoodsCreateBatchRow(prev, index, field, value)
+      })
+      if (field === 'barcode') scheduleBatchBarcodeCheck(index, null)
+    },
+    [clearBatchBarcodeErrorKey, scheduleBatchBarcodeCheck]
+  )
+
+  const patchGoodsCreateBatchExtraField = useCallback(
+    (rowIndex, unitIndex, field, value) => {
+      setGoodsCreateBatchRows((prev) => {
+        const row = prev[rowIndex]
+        const unit = row?.donViTinh?.[unitIndex]
+        if (field === 'barcode' && row?.rowId && unit?.unitId) {
+          clearBatchBarcodeErrorKey(row.rowId, unit.unitId)
+        }
+        return patchGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex, field, value)
+      })
+      if (field === 'barcode') {
+        const row = goodsCreateBatchRowsRef.current[rowIndex]
+        const unit = row?.donViTinh?.[unitIndex]
+        if (unit?.unitId) scheduleBatchBarcodeCheck(rowIndex, unit.unitId)
+      }
+    },
+    [clearBatchBarcodeErrorKey, scheduleBatchBarcodeCheck]
+  )
+
+  const addGoodsCreateBatchExtraUnitRow = useCallback((rowIndex) => {
+    setGoodsCreateBatchRows((prev) => addGoodsCreateBatchExtraUnit(prev, rowIndex))
+  }, [])
+
+  const removeGoodsCreateBatchExtraUnitRow = useCallback(
+    (rowIndex, unitIndex) => {
+      setGoodsCreateBatchRows((prev) => {
+        const row = prev[rowIndex]
+        const unit = row?.donViTinh?.[unitIndex]
+        if (row?.rowId && unit?.unitId) clearBatchBarcodeErrorKey(row.rowId, unit.unitId)
+        return removeGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex)
+      })
+    },
+    [clearBatchBarcodeErrorKey]
+  )
 
   const removeGoodsCreateBatchRow = useCallback((index) => {
     setGoodsCreateBatchRows((prev) => {
       if (prev.length <= 1) return prev
-      const removedId = prev[index]?.rowId
-      if (removedId) {
-        setGoodsCreateBatchBarcodeErrorIds((errs) => {
-          if (!errs[removedId]) return errs
+      const row = prev[index]
+      if (row?.rowId) {
+        setGoodsCreateBatchBarcodeErrors((errs) => {
           const next = { ...errs }
-          delete next[removedId]
+          for (const k of Object.keys(next)) {
+            if (k === row.rowId || k.startsWith(`${row.rowId}:`)) delete next[k]
+          }
           return next
         })
       }
@@ -222,17 +325,31 @@ export default function AdminHubGoodsCreateModal({
     })
   }, [])
 
+  const batchHasBarcodeErrors = useMemo(
+    () => Object.keys(goodsCreateBatchBarcodeErrors).length > 0,
+    [goodsCreateBatchBarcodeErrors]
+  )
+
   useEffect(() => {
     if (!open) return
     resetFormFields()
+    return () => {
+      setGoodsCreateBatchRows(initialGoodsCreateBatchRows())
+      setGoodsCreateBatchBarcodeErrors({})
+    }
   }, [open, resetFormFields])
+
+  useEffect(() => {
+    if (!open) resetBatchRowsState()
+  }, [open, resetBatchRowsState])
 
   const handleClose = useCallback(() => {
     if (goodsCreateSaving) return
     resetFormFields()
+    resetBatchRowsState()
     goodsCreateScanBufferRef.current = { buf: '', times: [] }
     onClose()
-  }, [goodsCreateSaving, onClose, resetFormFields])
+  }, [goodsCreateSaving, onClose, resetFormFields, resetBatchRowsState])
 
   const revalidateGoodsNewBarcode = useCallback(() => {
     const raw = goodsNewBarcodeRef.current?.value ?? ''
@@ -346,6 +463,7 @@ export default function AdminHubGoodsCreateModal({
         const ok = await flushRows(rowsForUpsert)
         if (!ok) return
         resetFormFields()
+        resetBatchRowsState()
         goodsCreateScanBufferRef.current = { buf: '', times: [] }
         onClose()
         onSaved?.()
@@ -354,16 +472,17 @@ export default function AdminHubGoodsCreateModal({
       }
     }
 
-    if (goodsCreateEntryMode === 'batch') {
-      const barcodeCheck = validateGoodsCreateBatchBarcodes(goodsCreateBatchRows, catalogList)
+    if (goodsCreateEntryModeRef.current === 'batch') {
+      const batchRows = goodsCreateBatchRowsRef.current
+      const catalogNow = catalogListRef.current
+      const barcodeCheck = validateGoodsCreateBatchBarcodes(batchRows, catalogNow)
       if (!barcodeCheck.ok) {
-        const errMap = Object.fromEntries(barcodeCheck.badRowIds.map((id) => [id, true]))
-        setGoodsCreateBatchBarcodeErrorIds(errMap)
+        setGoodsCreateBatchBarcodeErrors(barcodeCheck.errors || {})
         showGoodsCreateBatchToast(barcodeCheck.message)
         return
       }
-      setGoodsCreateBatchBarcodeErrorIds({})
-      const built = buildCatalogVariantsFromGoodsCreateBatchRows(goodsCreateBatchRows, catalogList)
+      setGoodsCreateBatchBarcodeErrors({})
+      const built = buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogNow)
       if (built.length === 0) {
         window.alert('Vui lòng nhập tên hàng cho ít nhất một dòng.')
         return
@@ -516,6 +635,7 @@ export default function AdminHubGoodsCreateModal({
     applyExpiryToVariants,
     onClose,
     resetFormFields,
+    resetBatchRowsState,
     showGoodsCreateBatchToast,
   ])
 
@@ -871,7 +991,7 @@ export default function AdminHubGoodsCreateModal({
                   className={`ah-goods-create-mode-tab${goodsCreateEntryMode === 'single' ? ' is-active' : ''}`}
                   onClick={() => {
                     setGoodsCreateEntryMode('single')
-                    setGoodsCreateBatchBarcodeErrorIds({})
+                    setGoodsCreateBatchBarcodeErrors({})
                     setGoodsCreateBatchToast(null)
                   }}
                 >
@@ -884,8 +1004,7 @@ export default function AdminHubGoodsCreateModal({
                   className={`ah-goods-create-mode-tab${goodsCreateEntryMode === 'batch' ? ' is-active' : ''}`}
                   onClick={() => {
                     setGoodsCreateEntryMode('batch')
-                    setGoodsCreateBatchBarcodeErrorIds({})
-                    setGoodsCreateBatchToast(null)
+                    resetBatchRowsState()
                   }}
                 >
                   Nhiều sản phẩm
@@ -893,9 +1012,10 @@ export default function AdminHubGoodsCreateModal({
               </div>
 
               {goodsCreateEntryMode === 'batch' ? (
-                <div className="ah-goods-create-batch">
+                <div className="ah-goods-create-batch" key={`batch-form-${batchFormEpoch}`}>
                   <p className="ah-goods-create-batch-hint">
-                    Mỗi dòng là một sản phẩm riêng — tên, mã và giá không dùng chung giữa các dòng.
+                    Mỗi dòng là một sản phẩm riêng — tên, mã, thương hiệu và giá không dùng chung. Có thể thêm
+                    đơn vị quy đổi ngay trong từng dòng.
                   </p>
                   <div className="ah-goods-create-batch-desktop">
                     <div className="ah-goods-create-batch-table-wrap">
@@ -903,6 +1023,7 @@ export default function AdminHubGoodsCreateModal({
                         <thead>
                           <tr>
                             <th className="ah-goods-create-batch-th-name">Tên hàng *</th>
+                            <th className="ah-goods-create-batch-th-brand">Thương hiệu</th>
                             <th className="ah-goods-create-batch-th-code">Mã hàng</th>
                             <th className="ah-goods-create-batch-th-barcode">Mã vạch</th>
                             <th>ĐVT</th>
@@ -919,8 +1040,12 @@ export default function AdminHubGoodsCreateModal({
                               row={row}
                               index={index}
                               layout="table"
-                              barcodeError={!!goodsCreateBatchBarcodeErrorIds[row.rowId]}
+                              barcodeErrors={goodsCreateBatchBarcodeErrors}
                               onPatch={patchGoodsCreateBatchRowField}
+                              onPatchExtra={patchGoodsCreateBatchExtraField}
+                              onAddExtra={addGoodsCreateBatchExtraUnitRow}
+                              onRemoveExtra={removeGoodsCreateBatchExtraUnitRow}
+                              onBarcodeBlur={runBatchBarcodeCheck}
                               onRemove={removeGoodsCreateBatchRow}
                               canRemove={goodsCreateBatchRows.length > 1}
                             />
@@ -937,8 +1062,12 @@ export default function AdminHubGoodsCreateModal({
                         index={index}
                         layout="card"
                         rowLabel={`Sản phẩm ${index + 1}`}
-                        barcodeError={!!goodsCreateBatchBarcodeErrorIds[row.rowId]}
+                        barcodeErrors={goodsCreateBatchBarcodeErrors}
                         onPatch={patchGoodsCreateBatchRowField}
+                        onPatchExtra={patchGoodsCreateBatchExtraField}
+                        onAddExtra={addGoodsCreateBatchExtraUnitRow}
+                        onRemoveExtra={removeGoodsCreateBatchExtraUnitRow}
+                        onBarcodeBlur={runBatchBarcodeCheck}
                         onRemove={removeGoodsCreateBatchRow}
                         canRemove={goodsCreateBatchRows.length > 1}
                       />
@@ -1170,7 +1299,12 @@ export default function AdminHubGoodsCreateModal({
               <button
                 type="button"
                 className="ah-goods-create-btn ah-goods-create-btn--primary"
-                disabled={revenueReadOnly || !!goodsNewBarcodeDupMsg || goodsCreateSaving}
+                disabled={
+                  revenueReadOnly ||
+                  !!goodsNewBarcodeDupMsg ||
+                  goodsCreateSaving ||
+                  (goodsCreateEntryMode === 'batch' && batchHasBarcodeErrors)
+                }
                 onClick={submitGoodsCreateModal}
               >
                 {goodsCreateSaving ? 'Đang lưu…' : 'Lưu'}
