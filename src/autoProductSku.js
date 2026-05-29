@@ -36,13 +36,24 @@ export function allocateAutoHhSkuIfEmpty(products, userCodeTrimmed) {
   const codeSet = new Set(
     flat.map((v) => String(v.code ?? '').trim().toLowerCase()).filter(Boolean)
   )
-  let code = suggestNextProductCodeFromCatalog(products)
+  return allocateNextHhSkuInCodeSet(codeSet, products)
+}
+
+/**
+ * Cấp mã HH tiếp theo chưa có trong `codeSet` (lowercase), tăng tuần tự HH0460 → HH0461…
+ * Sau khi cấp, thêm mã vào `codeSet`.
+ * @param {Set<string>} codeSet — mã đã dùng (chữ thường)
+ * @param {Array<object>} [catalogProducts] — catalog để tính max HH ban đầu
+ */
+export function allocateNextHhSkuInCodeSet(codeSet, catalogProducts = []) {
+  let code = suggestNextProductCodeFromCatalog(catalogProducts)
   let guard = 0
   while (codeSet.has(code.toLowerCase()) && guard < 100000) {
     const n = parseHhNumericSku(code)
     code = formatHhSkuFromSequence((n != null ? n : 0) + 1)
     guard += 1
   }
+  codeSet.add(code.toLowerCase())
   return code
 }
 
@@ -70,15 +81,16 @@ export function ensureUniqueMaHangAndBarcodeForNewRows(existingProducts, newFlat
   for (const row of newFlatRows) {
     let code = String(row.code ?? '').trim()
     if (!code || codeSet.has(code.toLowerCase())) {
-      code = allocateAutoHhSkuIfEmpty(synthetic, '')
+      code = allocateNextHhSkuInCodeSet(codeSet, synthetic)
+    } else {
+      let guard = 0
+      while (codeSet.has(code.toLowerCase()) && guard < 100000) {
+        const n = parseHhNumericSku(code)
+        code = formatHhSkuFromSequence((n != null ? n : 0) + 1)
+        guard += 1
+      }
+      codeSet.add(code.toLowerCase())
     }
-    let guard = 0
-    while (codeSet.has(code.toLowerCase()) && guard < 100000) {
-      const n = parseHhNumericSku(code)
-      code = formatHhSkuFromSequence((n != null ? n : 0) + 1)
-      guard += 1
-    }
-    codeSet.add(code.toLowerCase())
 
     let barcode = String(normalizeBarcodeValue(row.barcode ?? '')).trim()
     if (barcode && barcodeSet.has(barcode)) barcode = ''

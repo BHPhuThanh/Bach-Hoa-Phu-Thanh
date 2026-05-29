@@ -24,8 +24,8 @@ import {
   batchBarcodeFieldKey,
   buildCatalogVariantsFromGoodsCreateBatchRows,
   initialGoodsCreateBatchRows,
-  inspectGoodsCreateBatchBarcode,
   newGoodsCreateBatchRow,
+  syncGoodsCreateBatchBarcodeErrors,
   patchGoodsCreateBatchExtraUnit,
   patchGoodsCreateBatchRow,
   removeGoodsCreateBatchExtraUnit,
@@ -211,28 +211,20 @@ export default function AdminHubGoodsCreateModal({
     []
   )
 
-  const runBatchBarcodeCheck = useCallback((rowIndex, unitId = null) => {
-    const rows = goodsCreateBatchRowsRef.current
-    const row = rows[rowIndex]
-    if (!row) return
-    const raw = unitId
-      ? (row.donViTinh || []).find((u) => u.unitId === unitId)?.barcode
-      : row.barcode
-    const result = inspectGoodsCreateBatchBarcode({
-      barcode: raw,
-      rowId: row.rowId,
-      unitId,
-      batchRows: rows,
-      catalogList: catalogListRef.current,
-    })
-    const key = batchBarcodeFieldKey(row.rowId, unitId)
-    setGoodsCreateBatchBarcodeErrors((errs) => {
-      const next = { ...errs }
-      if (result.ok) delete next[key]
-      else next[key] = result.message
-      return next
-    })
+  const recomputeBatchBarcodeErrors = useCallback((rows) => {
+    const synced = syncGoodsCreateBatchBarcodeErrors(
+      rows ?? goodsCreateBatchRowsRef.current,
+      catalogListRef.current
+    )
+    setGoodsCreateBatchBarcodeErrors(synced)
   }, [])
+
+  const runBatchBarcodeCheck = useCallback(
+    (rowIndex, unitId = null) => {
+      recomputeBatchBarcodeErrors(goodsCreateBatchRowsRef.current)
+    },
+    [recomputeBatchBarcodeErrors]
+  )
 
   const scheduleBatchBarcodeCheck = useCallback(
     (rowIndex, unitId = null) => {
@@ -245,51 +237,55 @@ export default function AdminHubGoodsCreateModal({
       }
       batchBarcodeDebounceRef.current[debKey] = window.setTimeout(() => {
         delete batchBarcodeDebounceRef.current[debKey]
-        runBatchBarcodeCheck(rowIndex, unitId)
+        recomputeBatchBarcodeErrors(goodsCreateBatchRowsRef.current)
       }, 400)
     },
-    [runBatchBarcodeCheck]
+    [recomputeBatchBarcodeErrors]
   )
-
-  const clearBatchBarcodeErrorKey = useCallback((rowId, unitId = null) => {
-    const k = batchBarcodeFieldKey(rowId, unitId)
-    setGoodsCreateBatchBarcodeErrors((errs) => {
-      if (!errs[k]) return errs
-      const next = { ...errs }
-      delete next[k]
-      return next
-    })
-  }, [])
 
   const patchGoodsCreateBatchRowField = useCallback(
     (index, field, value) => {
-      setGoodsCreateBatchRows((prev) => {
-        const row = prev[index]
-        if (field === 'barcode' && row?.rowId) clearBatchBarcodeErrorKey(row.rowId, null)
-        return patchGoodsCreateBatchRow(prev, index, field, value)
-      })
-      if (field === 'barcode') scheduleBatchBarcodeCheck(index, null)
+      const nextRows = patchGoodsCreateBatchRow(goodsCreateBatchRowsRef.current, index, field, value)
+      goodsCreateBatchRowsRef.current = nextRows
+      setGoodsCreateBatchRows(nextRows)
+      if (field === 'barcode') {
+        const row = nextRows[index]
+        const debKey = row ? `deb-${batchBarcodeFieldKey(row.rowId, null)}` : ''
+        if (debKey && batchBarcodeDebounceRef.current[debKey]) {
+          window.clearTimeout(batchBarcodeDebounceRef.current[debKey])
+          delete batchBarcodeDebounceRef.current[debKey]
+        }
+        recomputeBatchBarcodeErrors(nextRows)
+      }
     },
-    [clearBatchBarcodeErrorKey, scheduleBatchBarcodeCheck]
+    [recomputeBatchBarcodeErrors]
   )
 
   const patchGoodsCreateBatchExtraField = useCallback(
     (rowIndex, unitIndex, field, value) => {
-      setGoodsCreateBatchRows((prev) => {
-        const row = prev[rowIndex]
-        const unit = row?.donViTinh?.[unitIndex]
-        if (field === 'barcode' && row?.rowId && unit?.unitId) {
-          clearBatchBarcodeErrorKey(row.rowId, unit.unitId)
-        }
-        return patchGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex, field, value)
-      })
+      const nextRows = patchGoodsCreateBatchExtraUnit(
+        goodsCreateBatchRowsRef.current,
+        rowIndex,
+        unitIndex,
+        field,
+        value
+      )
+      goodsCreateBatchRowsRef.current = nextRows
+      setGoodsCreateBatchRows(nextRows)
       if (field === 'barcode') {
-        const row = goodsCreateBatchRowsRef.current[rowIndex]
+        const row = nextRows[rowIndex]
         const unit = row?.donViTinh?.[unitIndex]
-        if (unit?.unitId) scheduleBatchBarcodeCheck(rowIndex, unit.unitId)
+        if (row && unit?.unitId) {
+          const debKey = `deb-${batchBarcodeFieldKey(row.rowId, unit.unitId)}`
+          if (batchBarcodeDebounceRef.current[debKey]) {
+            window.clearTimeout(batchBarcodeDebounceRef.current[debKey])
+            delete batchBarcodeDebounceRef.current[debKey]
+          }
+        }
+        recomputeBatchBarcodeErrors(nextRows)
       }
     },
-    [clearBatchBarcodeErrorKey, scheduleBatchBarcodeCheck]
+    [recomputeBatchBarcodeErrors]
   )
 
   const addGoodsCreateBatchExtraUnitRow = useCallback((rowIndex) => {
@@ -298,14 +294,16 @@ export default function AdminHubGoodsCreateModal({
 
   const removeGoodsCreateBatchExtraUnitRow = useCallback(
     (rowIndex, unitIndex) => {
-      setGoodsCreateBatchRows((prev) => {
-        const row = prev[rowIndex]
-        const unit = row?.donViTinh?.[unitIndex]
-        if (row?.rowId && unit?.unitId) clearBatchBarcodeErrorKey(row.rowId, unit.unitId)
-        return removeGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex)
-      })
+      const nextRows = removeGoodsCreateBatchExtraUnit(
+        goodsCreateBatchRowsRef.current,
+        rowIndex,
+        unitIndex
+      )
+      goodsCreateBatchRowsRef.current = nextRows
+      setGoodsCreateBatchRows(nextRows)
+      recomputeBatchBarcodeErrors(nextRows)
     },
-    [clearBatchBarcodeErrorKey]
+    [recomputeBatchBarcodeErrors]
   )
 
   const removeGoodsCreateBatchRow = useCallback((index) => {

@@ -3184,10 +3184,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
 
-  const handleUpdateCatalogVariant = useCallback((variantId, patch) => {
+  const handleUpdateCatalogVariant = useCallback(async (variantId, patch) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
-      const previousState = productsRef.current
-      const prev = previousState
+      const prev = productsRef.current
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
@@ -3263,68 +3262,66 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: true }
       }
 
-      void (async () => {
-        try {
-          if (isSupabaseConfigured()) {
-            if (oldCode && newCode && oldCode !== newCode) {
-              const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
-              if (!dr.ok && !dr.skipped) {
-                throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
-              }
+      try {
+        if (isSupabaseConfigured()) {
+          if (oldCode && newCode && oldCode !== newCode) {
+            const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
+            if (!dr.ok && !dr.skipped) {
+              throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
             }
-            const flatNext = flattenDisplayCatalogToVariants(next)
-            const idSet = new Set(affectedIdsForLog.map(String))
-            const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
-            if (upsertOnly.length === 0) {
-              throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
-            }
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
-              upsertOnlyVariants: upsertOnly,
-            })
-            if (!r.ok) {
-              throw r.error || new Error(describeCatalogPersistError(r.error))
-            }
-            startTransition(() => setProducts(next))
-            await applyServerCatalogAfterPersist()
-            if (inventoryLogMeta) {
-              try {
-                const rows = buildStockAdjustInventoryLogRows(
-                  inventoryLogMeta.prev,
-                  inventoryLogMeta.next,
-                  inventoryLogMeta.ids,
-                  { staffName: staffNameForInventoryLog() }
-                )
-                await insertInventoryLogRows(rows)
-              } catch (logErr) {
-                console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
-              }
-              runLowStockAlertsInBackground(
-                {
-                  catalog: next,
-                  touchedVariantIds: inventoryLogMeta.ids,
-                  userId: activeSellerId,
-                },
-                mergeCreatedLowStockNotifications
-              )
-            }
-            setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
-          } else {
-            const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
-            if (!r.ok) {
-              throw r.error || new Error(describeCatalogPersistError(r.error))
-            }
-            startTransition(() => setProducts(next))
           }
-        } catch (e) {
-          console.error('[App] handleUpdateCatalogVariant', e)
-          startTransition(() => setProducts(previousState))
-          showPosPersistErrorToast(
-            `Lỗi đồng bộ: ${describeCatalogPersistError(e)}. Đã hoàn tác thay đổi!`
-          )
+          const flatNext = flattenDisplayCatalogToVariants(next)
+          const idSet = new Set(affectedIdsForLog.map(String))
+          const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
+          if (upsertOnly.length === 0) {
+            throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
+          }
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current, {
+            upsertOnlyVariants: upsertOnly,
+            useBulkInsert: false,
+          })
+          if (!r.ok) {
+            throw r.error || new Error(describeCatalogPersistError(r.error))
+          }
+          startTransition(() => setProducts(next))
+          await applyServerCatalogAfterPersist()
+          if (inventoryLogMeta) {
+            try {
+              const rows = buildStockAdjustInventoryLogRows(
+                inventoryLogMeta.prev,
+                inventoryLogMeta.next,
+                inventoryLogMeta.ids,
+                { staffName: staffNameForInventoryLog() }
+              )
+              await insertInventoryLogRows(rows)
+            } catch (logErr) {
+              console.warn('[App] Ghi inventory_log sau cập nhật tồn', logErr)
+            }
+            runLowStockAlertsInBackground(
+              {
+                catalog: next,
+                touchedVariantIds: inventoryLogMeta.ids,
+                userId: activeSellerId,
+              },
+              mergeCreatedLowStockNotifications
+            )
+          }
+          setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
+        } else {
+          const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
+          if (!r.ok) {
+            throw r.error || new Error(describeCatalogPersistError(r.error))
+          }
+          startTransition(() => setProducts(next))
         }
-      })()
-
-      return { ok: true }
+        return { ok: true }
+      } catch (e) {
+        console.error('[App] handleUpdateCatalogVariant', e)
+        showPosPersistErrorToast(
+          `Không lưu được thay đổi: ${describeCatalogPersistError(e)}. Vui lòng kiểm tra và thử lại.`
+        )
+        return { ok: false, error: e }
+      }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )

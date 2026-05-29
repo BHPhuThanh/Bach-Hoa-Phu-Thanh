@@ -2308,7 +2308,7 @@ export default function AdminHub({
   }, [catalogListForGoodsEdit, inboundQuickEditSelectedVid, inboundQuickEditExpandId])
 
   const saveProductDetailFromDraft = useCallback(
-    (variant, draft) => {
+    async (variant, draft) => {
       if (!variant || !draft) return false
       const nameTrim = String(draft.name ?? '')
         .replace(/\u00A0/g, ' ')
@@ -2381,7 +2381,11 @@ export default function AdminHub({
 
       if (onUpdateCatalogVariant) {
         recordCostAdjustOnSave(variant, patch, nameTrim)
-        onUpdateCatalogVariant(variant.id, patch)
+        const upd = onUpdateCatalogVariant(variant.id, patch)
+        if (upd && typeof upd.then === 'function') {
+          const res = await upd
+          if (res && res.ok === false) return false
+        }
         triggerGoodsSaveSuccessToast()
         return true
       }

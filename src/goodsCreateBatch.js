@@ -1,5 +1,5 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
-import { allocateAutoHhSkuIfEmpty } from './autoProductSku.js'
+import { allocateNextHhSkuInCodeSet } from './autoProductSku.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 import {
   buildCatalogVariantsFromUnitModal,
@@ -148,9 +148,10 @@ export function inspectGoodsCreateBatchBarcode({
 }
 
 /**
- * @returns {{ ok: true } | { ok: false, message: string, errors: Record<string, string> }}
+ * Đồng bộ toàn bộ lỗi mã vạch — dùng sau mỗi lần sửa/xóa ô (tránh khóa cứng nút Lưu).
+ * @returns {Record<string, string>}
  */
-export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
+export function syncGoodsCreateBatchBarcodeErrors(batchRows, catalogList) {
   const errors = {}
   const entries = collectBatchBarcodeEntries(batchRows)
   const existing = catalogBarcodeSet(catalogList)
@@ -168,8 +169,16 @@ export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
       errors[key] = 'Mã đã tồn tại'
     }
   }
+  return errors
+}
 
+/**
+ * @returns {{ ok: true } | { ok: false, message: string, errors: Record<string, string> }}
+ */
+export function validateGoodsCreateBatchBarcodes(batchRows, catalogList) {
+  const errors = syncGoodsCreateBatchBarcodeErrors(batchRows, catalogList)
   if (Object.keys(errors).length === 0) return { ok: true }
+  const entries = collectBatchBarcodeEntries(batchRows)
 
   const firstNorm = entries.find((e) => errors[batchBarcodeFieldKey(e.rowId, e.unitId)])?.norm || ''
   const display = firstNorm.length > 16 ? `${firstNorm.slice(0, 16)}…` : firstNorm
@@ -186,17 +195,16 @@ function ensureUniqueVariantCodes(variants, codeSetExisting, syntheticCatalog) {
   const out = []
   for (const v of variants) {
     let code = String(v.code ?? '').trim()
-    if (!code) code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
     const codeLc = code.toLowerCase()
-    let guard = 0
-    while (
-      (codeSetExisting.has(codeLc) || out.some((x) => String(x.code).toLowerCase() === codeLc)) &&
-      guard < 100000
+    if (
+      !code ||
+      codeSetExisting.has(codeLc) ||
+      out.some((x) => String(x.code).toLowerCase() === codeLc)
     ) {
-      code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
-      guard += 1
+      code = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+    } else {
+      codeSetExisting.add(codeLc)
     }
-    codeSetExisting.add(code.toLowerCase())
     const variant = { ...v, code }
     out.push(variant)
     syntheticCatalog.push({ groupVariants: [variant] })
@@ -262,7 +270,11 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     if (rowHasExtraUnits(r)) {
       const linesSorted = batchRowToUnitLines(r)
       let rootCode = String(linesSorted[0]?.code ?? '').trim()
-      if (!rootCode) rootCode = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
+      if (!rootCode || codeSetExisting.has(rootCode.toLowerCase())) {
+        rootCode = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+      } else {
+        codeSetExisting.add(rootCode.toLowerCase())
+      }
 
       const templateVariant = {
         stockQty: Math.max(0, parseMoneyDigitsVi(r.stock)),
@@ -305,17 +317,16 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     }
 
     let code = String(r.code ?? '').trim()
-    if (!code) code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
     const codeLc = code.toLowerCase()
-    let guard = 0
-    while (
-      (codeSetExisting.has(codeLc) || out.some((x) => String(x.code).toLowerCase() === codeLc)) &&
-      guard < 100000
+    if (
+      !code ||
+      codeSetExisting.has(codeLc) ||
+      out.some((x) => String(x.code).toLowerCase() === codeLc)
     ) {
-      code = allocateAutoHhSkuIfEmpty(syntheticCatalog, '')
-      guard += 1
+      code = allocateNextHhSkuInCodeSet(codeSetExisting, syntheticCatalog)
+    } else {
+      codeSetExisting.add(codeLc)
     }
-    codeSetExisting.add(code.toLowerCase())
 
     let barcode = String(normalizeBarcodeValue(r.barcode ?? '')).trim()
     if (
