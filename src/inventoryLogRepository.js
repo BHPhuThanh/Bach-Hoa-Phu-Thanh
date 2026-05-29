@@ -191,30 +191,25 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
 }
 
 /**
- * Sau trả hàng POS — cộng tồn (change_qty dương). Combo: một dòng / thành phần BOM.
+ * Sau trả hàng / xóa đơn — cộng tồn thành phần lẻ. Không ghi cho mã combo tổng (giống luồng bán).
  */
 export function buildPosReturnInventoryLogRows(prevProducts, nextProducts, meta, cartLines) {
   if (!prevProducts?.length || !nextProducts?.length) return []
   const doc = String(meta?.documentCode ?? '').trim()
   if (!doc) return []
   const staffName = meta?.staffName ?? staffNameForInventoryLog()
+  const txnCombo = `Khách trả hàng Combo (${doc})`
+  const txnRegular = 'Khách trả hàng'
   const rows = []
 
-  for (const line of cartLines || []) {
-    const hit = findCatalogVariantInProducts(prevProducts, line.variantId)
-    if (!hit?.variant) continue
-    const v = hit.variant
-    const qty = Number(line.qty)
-    if (!Number.isFinite(qty) || qty <= 0) continue
+  const pushRestoreRow = (hit, v, changeQty, txnType, txnQty) => {
     const ma = String(v.code ?? '').trim()
     const maGoc = resolveMaGocFromVariant(v)
-    if (!ma || !maGoc) continue
-    const dq = qty * variantQuyDoiNumber(v)
+    if (!ma || !maGoc) return
+    const cq = Number(changeQty)
+    if (!Number.isFinite(cq) || cq <= 0) return
     const stockAfter = stockTonAfterMaGoc(nextProducts, maGoc)
-    if (stockAfter == null) continue
-    const txnType = line.isComboReturnComponent
-      ? 'Khách trả hàng (Combo)'
-      : 'Khách trả hàng'
+    if (stockAfter == null) return
     rows.push(
       withInventoryLogCatalogMeta(
         {
@@ -222,15 +217,40 @@ export function buildPosReturnInventoryLogRows(prevProducts, nextProducts, meta,
           ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
           transaction_type: txnType,
           document_code: doc,
-          change_qty: dq,
+          change_qty: cq,
           stock_after: stockAfter,
           staff_name: staffName,
         },
         nextProducts,
         v,
-        qty
+        txnQty
       )
     )
+  }
+
+  for (const line of cartLines || []) {
+    const p = findProductContainingVariantId(prevProducts, line.variantId)
+    if (p && isComboCatalogProduct(p)) {
+      const deltaBaseByVid = new Map()
+      mergeComboCartLineIntoDeltaMap(prevProducts, line, deltaBaseByVid)
+      for (const [compVid, basePieces] of deltaBaseByVid) {
+        const q = Number(basePieces)
+        if (!Number.isFinite(q) || q <= 0) continue
+        const hit = findCatalogVariantInProducts(prevProducts, compVid)
+        if (!hit?.variant) continue
+        pushRestoreRow(hit, hit.variant, q, txnCombo, q)
+      }
+      continue
+    }
+
+    const hit = findCatalogVariantInProducts(prevProducts, line.variantId)
+    if (!hit?.variant) continue
+    const v = hit.variant
+    const qty = Number(line.qty)
+    if (!Number.isFinite(qty) || qty <= 0) continue
+    const dq = qty * variantQuyDoiNumber(v)
+    const txnType = line.isComboReturnComponent ? txnCombo : txnRegular
+    pushRestoreRow(hit, v, dq, txnType, qty)
   }
 
   return rows

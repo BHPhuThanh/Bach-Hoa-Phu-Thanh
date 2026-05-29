@@ -1470,83 +1470,31 @@ export default function AdminHub({
       }
 
       if (cartLines.length > 0) {
-        const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, cartLines)
-        const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, cartLines)
-        const touchedIds = collectCartSaleTouchedVariantIds(catalog, cartLines)
-        const nextProducts = applyRestoredQtyToCatalog(catalog, cartLines, {
-          precomputedDeductByMaGoc: deductByMaGoc,
-          precomputedComboDelta: comboDelta,
+        const delDocCode = `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`
+        const stockRestoreResult = await persistCatalogStockRestoreFromCartLines({
+          catalog,
+          cartLines,
+          catalogFileName,
+          onBulkPatchCatalogVariants,
+          setStandaloneCatalog: parentCatalogSupplied ? undefined : setStandaloneCatalog,
         })
-        if (
-          deductByMaGoc.size === 0 &&
-          comboDelta.size === 0 &&
-          touchedIds.size === 0
-        ) {
-          throw new Error('Không tính được lượng hoàn tồn cho các dòng trên đơn.')
+        if (!stockRestoreResult.ok) {
+          throw new Error(
+            String(stockRestoreResult.error || 'Không thể hoàn tác tồn kho.')
+          )
         }
-
-        const delMeta = {
-          documentCode: `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`,
-          inboundOrderId: orderId,
-        }
-        const flatNext = flattenDisplayCatalogToVariants(nextProducts)
-        const tonKhoOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-
-        if (typeof onBulkPatchCatalogVariants === 'function') {
-          const flatPrev = flattenDisplayCatalogToVariants(catalog)
-          const patches = []
-          for (const id of touchedIds) {
-            const prev = flatPrev.find((v) => String(v.id) === String(id))
-            const next = flatNext.find((v) => String(v.id) === String(id))
-            if (!next) continue
-            const prevStock =
-              prev?.stockQty != null && Number.isFinite(Number(prev.stockQty))
-                ? Number(prev.stockQty)
-                : 0
-            const nextStock =
-              next.stockQty != null && Number.isFinite(Number(next.stockQty))
-                ? Number(next.stockQty)
-                : 0
-            if (prevStock === nextStock) continue
-            patches.push({
-              variantId: String(id),
-              patch: { stockQty: nextStock, stockBatches: next.stockBatches },
-            })
-          }
-          if (patches.length === 0) {
-            throw new Error('Không có thay đổi tồn kho để ghi lên máy chủ.')
-          }
-          const stockRes = await onBulkPatchCatalogVariants(patches, {
-            inboundInventoryMeta: delMeta,
-          })
-          if (stockRes?.ok === false) {
-            throw new Error(String(stockRes.error || 'Không thể hoàn tác tồn kho.'))
-          }
-        } else {
-          if (!tonKhoOnlyVariants.length) {
-            throw new Error('Không tìm thấy biến thể để cập nhật tồn kho.')
-          }
-          const persistResult = await persistCatalogSnapshotAndProducts(nextProducts, catalogFileName, {
-            tonKhoOnlyVariants,
-          })
-          if (!persistResult.ok) {
-            throw new Error(
-              describeCatalogPersistError(persistResult.error) ||
-                'Không ghi được tồn kho lên máy chủ.'
-            )
-          }
-          if (isSupabaseConfigured()) {
-            const fresh = await revalidateCatalogFromStore()
-            if (fresh?.products?.length) {
-              setStandaloneCatalog({
-                products: refreshCatalogSearchTexts(fresh.products),
-                fileName: fresh.fileName || catalogFileName,
-              })
-            } else {
-              setStandaloneCatalog({ products: nextProducts, fileName: catalogFileName })
-            }
-          } else {
-            setStandaloneCatalog({ products: nextProducts, fileName: catalogFileName })
+        if (isSupabaseConfigured() && stockRestoreResult.nextProducts) {
+          const invRows = buildPosReturnInventoryLogRows(
+            stockRestoreResult.prevProducts,
+            stockRestoreResult.nextProducts,
+            { documentCode: delDocCode, staffName: staffNameForInventoryLog() },
+            cartLines
+          )
+          await insertInventoryLogRows(invRows)
+          try {
+            window.dispatchEvent(new CustomEvent(INVENTORY_LOG_UPDATED_EVENT))
+          } catch {
+            /* ignore */
           }
         }
       }

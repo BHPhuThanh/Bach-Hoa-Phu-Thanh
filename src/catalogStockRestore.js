@@ -5,7 +5,9 @@ import {
   applyRestoredQtyToCatalog,
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
-  collectCartSaleTouchedVariantIds,
+  collectRestoreStockTouchedVariantIds,
+  findProductContainingVariantId,
+  isComboCatalogProduct,
 } from './comboCatalog.js'
 import {
   describeCatalogPersistError,
@@ -40,10 +42,18 @@ export async function persistCatalogStockRestoreFromCartLines(ctx) {
     return { ok: true, skipped: true, prevProducts: catalog, nextProducts: catalog, touchedIds: new Set() }
   }
 
-  const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, cartLines)
-  const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, cartLines)
-  const touchedIds = collectCartSaleTouchedVariantIds(catalog, cartLines)
-  const nextProducts = applyRestoredQtyToCatalog(catalog, cartLines, {
+  const componentLines = (cartLines || []).filter((l) => {
+    const p = findProductContainingVariantId(catalog, l?.variantId)
+    return !(p && isComboCatalogProduct(p))
+  })
+  if (componentLines.length === 0) {
+    return { ok: false, error: 'Không có thành phần lẻ để hoàn tồn (combo phải rã BOM).' }
+  }
+
+  const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, componentLines)
+  const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, componentLines)
+  const touchedIds = collectRestoreStockTouchedVariantIds(catalog, componentLines)
+  const nextProducts = applyRestoredQtyToCatalog(catalog, componentLines, {
     precomputedDeductByMaGoc: deductByMaGoc,
     precomputedComboDelta: comboDelta,
   })

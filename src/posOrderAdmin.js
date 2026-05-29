@@ -1,8 +1,9 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
 import {
-  getComboBom,
   isComboCatalogProduct,
   findProductContainingVariantId,
+  orderLineIsCombo,
+  resolveComboBomForOrderLine,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
@@ -38,27 +39,14 @@ export function posOrderLineReturnableQty(it) {
   return Math.max(0, qty - returnedQty)
 }
 
-/** Dòng giỏ để hoàn tồn khi xóa đơn (số lượng = đã bán − đã trả). */
+/** Dòng giỏ để hoàn tồn khi xóa đơn (combo → chỉ thành phần lẻ, không mã combo tổng). */
 export function buildOrderDeleteRestoreCartLines(catalogList, items) {
   const list = Array.isArray(items) ? items : []
-  const cartLines = []
   let needRestore = 0
   for (const it of list) {
-    if (!it) continue
-    const restoreQty = posOrderLineReturnableQty(it)
-    if (restoreQty <= 0) continue
-    needRestore++
-    const variantId = String(resolvePosItemVariantId(catalogList, it) || '').trim()
-    if (!variantId) continue
-    cartLines.push({
-      variantId,
-      qty: restoreQty,
-      code: it.code,
-      unitLabel: it.unitLabel,
-      barcode: it.barcode,
-      selectedBatchId: it.selectedBatchId,
-    })
+    if (it && posOrderLineReturnableQty(it) > 0) needRestore++
   }
+  const cartLines = buildPosReturnRestoreCartLines(catalogList, list, posOrderLineReturnableQty)
   return { cartLines, needRestore, resolvedCount: cartLines.length }
 }
 
@@ -69,44 +57,42 @@ export function expandPosReturnLineToRestoreCartLines(catalogList, item, returnQ
   const qty = Math.max(0, Number(returnQty) || 0)
   if (qty <= 0 || !item) return []
 
-  const vid = String(resolvePosItemVariantId(catalogList, item) || item.variantId || '').trim()
-  if (!vid) return []
-
-  const p = findProductContainingVariantId(catalogList, vid)
-  const isCombo =
-    (p && isComboCatalogProduct(p)) ||
-    item.isCombo === true ||
-    item.is_combo === true ||
-    (Array.isArray(item.combo_items) && item.combo_items.length > 0) ||
-    (Array.isArray(item.comboBom) && item.comboBom.length > 0)
-
-  if (isCombo && p) {
-    const bom = getComboBom(p)
+  if (orderLineIsCombo(catalogList, item)) {
+    const bom = resolveComboBomForOrderLine(catalogList, item)
     const lines = []
     for (const row of bom) {
       const per = Number(row.qty) || 0
       if (per <= 0) continue
       const compVid = String(row.variantId ?? '').trim()
       if (!compVid) continue
+      const compProduct = findProductContainingVariantId(catalogList, compVid)
+      if (compProduct && isComboCatalogProduct(compProduct)) continue
       lines.push({
         variantId: compVid,
         qty: qty * per,
         code: row.codeSnap || item.code,
         unitLabel: row.unitLabelSnap || item.unitLabel,
         barcode: item.barcode,
+        selectedBatchId: item.selectedBatchId,
         isComboReturnComponent: true,
       })
     }
     return lines
   }
 
+  const variantId = String(resolvePosItemVariantId(catalogList, item) || item.variantId || '').trim()
+  if (!variantId) return []
+  const p = findProductContainingVariantId(catalogList, variantId)
+  if (p && isComboCatalogProduct(p)) return []
+
   return [
     {
-      variantId: vid,
+      variantId,
       qty,
       code: item.code,
       unitLabel: item.unitLabel,
       barcode: item.barcode,
+      selectedBatchId: item.selectedBatchId,
       isComboReturnComponent: false,
     },
   ]

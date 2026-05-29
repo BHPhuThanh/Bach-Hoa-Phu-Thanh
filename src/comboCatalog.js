@@ -141,6 +141,55 @@ export function getComboBom(p) {
   return Array.isArray(raw) ? raw : []
 }
 
+/**
+ * Dòng đơn POS có phải combo không (catalog + snapshot trên đơn).
+ * @param {Array} catalogList
+ * @param {object} item — dòng `order.items[]`
+ */
+export function orderLineIsCombo(catalogList, item) {
+  if (!item) return false
+  if (item.isCombo === true || item.is_combo === true) return true
+  if (Array.isArray(item.combo_items) && item.combo_items.length > 0) return true
+  if (Array.isArray(item.comboBom) && item.comboBom.length > 0) return true
+  const vid = String(item.variantId ?? '').trim()
+  if (vid) {
+    const p = findProductContainingVariantId(catalogList, vid)
+    if (p && isComboCatalogProduct(p)) return true
+  }
+  return false
+}
+
+/**
+ * BOM cho hoàn kho: ưu tiên catalog, fallback `comboBom` / `combo_items` lưu trên đơn.
+ */
+export function resolveComboBomForOrderLine(catalogList, item) {
+  if (!item) return []
+  const vid = String(item.variantId ?? '').trim()
+  const p = vid ? findProductContainingVariantId(catalogList, vid) : null
+  let bom = p ? getComboBom(p) : []
+  if (!bom.length && Array.isArray(item.comboBom)) bom = item.comboBom
+  if (!bom.length && Array.isArray(item.combo_items)) bom = item.combo_items
+  return Array.isArray(bom) ? bom : []
+}
+
+/** Loại biến thể thuộc «vỏ» combo — không PATCH tồn / không ghi log cho mã combo tổng. */
+export function excludeComboShellVariantIds(products, variantIds) {
+  const out = new Set()
+  for (const id of variantIds || []) {
+    const sid = String(id ?? '').trim()
+    if (!sid) continue
+    const p = findProductContainingVariantId(products, sid)
+    if (p && isComboCatalogProduct(p)) continue
+    out.add(sid)
+  }
+  return out
+}
+
+/** `collectCartSaleTouchedVariantIds` nhưng không bao gồm SKU combo tổng. */
+export function collectRestoreStockTouchedVariantIds(products, cartLines) {
+  return excludeComboShellVariantIds(products, collectCartSaleTouchedVariantIds(products, cartLines))
+}
+
 export function getComboCostOverride(p) {
   const v = p?.comboCostOverride ?? p?.groupVariants?.[0]?.comboCostOverride
   if (v == null || v === '') return null
