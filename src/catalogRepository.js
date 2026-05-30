@@ -1234,24 +1234,27 @@ function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) 
 }
 
 /**
- * UPDATE trực tiếp một dòng `products` theo `ma_hang` (không snapshot, không bulk).
+ * UPDATE trực tiếp một dòng `products` theo khóa `ma_hang` gốc (không snapshot, không bulk).
+ * @param {object} variant — dữ liệu mới (có thể đổi `code` / ma_hang)
+ * @param {{ updateKeyMaHang?: string }} [options] — `ma_hang` trên DB trước khi sửa (bắt buộc khi đổi mã)
  */
-export async function updateSingleProductFromDisplayVariant(variant) {
+export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const maHang = String(variant?.code ?? '').trim()
-  if (!maHang) {
+  const newMaHang = String(variant?.code ?? '').trim()
+  const lookupMaHang = String(options.updateKeyMaHang ?? variant?.persistMaHang ?? newMaHang).trim()
+  if (!lookupMaHang) {
     return { ok: false, error: new Error('Thiếu mã hàng (ma_hang) để cập nhật.') }
   }
   const sb = getSupabaseClient()
   if (!sb) {
     return { ok: false, error: new Error('Không tạo được Supabase client.') }
   }
-  const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: true })
+  const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: false })
   try {
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
       .update(fin)
-      .eq(PRODUCT_PK_COLUMN, maHang)
+      .eq(PRODUCT_PK_COLUMN, lookupMaHang)
       .select('*')
     if (error) throw error
     const rows = Array.isArray(data) ? data : []
@@ -1340,11 +1343,17 @@ export async function updateProductDisplayVariantsSequential(flatVariants) {
   }
   let written = 0
   for (const v of flatVariants) {
-    const r = await updateSingleProductFromDisplayVariant(v)
+    const lookupMaHang = String(v?.persistMaHang ?? v?.code ?? '').trim()
+    const r = await updateSingleProductFromDisplayVariant(v, { updateKeyMaHang: lookupMaHang })
     if (!r.ok) return { ok: false, error: r.error, written }
     if (r.updated === false) {
-      const ins = await insertSingleProductFromDisplayVariant(v)
-      if (!ins.ok) return { ok: false, error: ins.error, written }
+      return {
+        ok: false,
+        error: new Error(
+          `Không tìm thấy dòng products (ma_hang="${lookupMaHang}") để cập nhật — không tạo mới trong luồng sửa.`
+        ),
+        written,
+      }
     }
     written += 1
   }

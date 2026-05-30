@@ -160,6 +160,7 @@ import {
   collectSiblingVariantIds,
   findCanonicalStockRootVariant,
   findRootStockTonKhoForMaGoc,
+  computeDefaultComboCost,
   getComboBom,
   isComboCatalogProduct,
   salableComboPackCount,
@@ -347,6 +348,14 @@ function effectiveSellUnitPrice(variant, wholesaleMode) {
  */
 function effectivePosCostUnit(variant, _wholesaleMode) {
   return Number(variant?.cost) || 0
+}
+
+/** Giá vốn POS: combo = tổng BOM; hàng thường = cột cost biến thể. */
+function effectivePosCostUnitForProduct(products, product, variant, wholesaleMode) {
+  if (product && isComboCatalogProduct(product)) {
+    return computeDefaultComboCost(products, getComboBom(product))
+  }
+  return effectivePosCostUnit(variant, wholesaleMode)
 }
 
 /**
@@ -3278,26 +3287,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
 
-          if (oldCode && newCode && oldCode !== newCode) {
-            const dr = await deleteProductsFromSupabaseByMaHang([oldCode])
-            if (!dr.ok && !dr.skipped) {
-              throw dr.error || new Error('Không xóa được mã hàng cũ trên Supabase.')
-            }
-            const renamed = upsertOnly.find((v) => String(v.id) === String(variantId))
-            if (renamed) {
-              const ir = await insertSingleProductFromDisplayVariant(renamed)
-              if (!ir.ok) throw ir.error || new Error('Không thêm được mã hàng mới trên Supabase.')
-            }
-            const rest = upsertOnly.filter((v) => String(v.id) !== String(variantId))
-            if (rest.length) {
-              const ur = await updateProductDisplayVariantsSequential(rest)
-              if (!ur.ok) throw ur.error || new Error(describeCatalogPersistError(ur.error))
-            }
-          } else {
-            const r = await updateProductDisplayVariantsSequential(upsertOnly)
-            if (!r.ok) {
-              throw r.error || new Error(describeCatalogPersistError(r.error))
-            }
+          const r = await updateProductDisplayVariantsSequential(
+            upsertOnly.map((v) => ({
+              ...v,
+              persistMaHang:
+                String(v.id) === String(variantId) && oldCode && newCode && oldCode !== newCode
+                  ? oldCode
+                  : String(v.code ?? '').trim(),
+            }))
+          )
+          if (!r.ok) {
+            throw r.error || new Error(describeCatalogPersistError(r.error))
           }
 
           startTransition(() => setProducts(next))
@@ -4349,7 +4349,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             code: cur.code,
             name: lineName,
             price: line.deskPriceLocked ? line.price : unitPrice,
-            cost: effectivePosCostUnit(cur, sellWholesaleMode),
+            cost: effectivePosCostUnitForProduct(productsRef.current, p, cur, sellWholesaleMode),
             unitLabel: cur.unitLabel,
             conversionHint: cur.conversionHint || '',
             variantOptions,
@@ -4373,7 +4373,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             code: cur.code,
             name: lineName,
             price: unitPrice,
-            cost: effectivePosCostUnit(cur, sellWholesaleMode),
+            cost: effectivePosCostUnitForProduct(productsRef.current, p, cur, sellWholesaleMode),
             unitLabel: cur.unitLabel,
             conversionHint: cur.conversionHint || '',
             qty: 1,
@@ -4389,7 +4389,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return next
       })
     },
-    [setCart, sellWholesaleMode]
+    [setCart, sellWholesaleMode, productsRef]
   )
 
   addToCartForGlobalScanRef.current = addToCartWithVariant
@@ -5029,9 +5029,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         if (hit) {
           const vo =
             buildVariantOptionsFromProduct(hit.product).find((o) => String(o.id) === vid) || null
-          if (vo) {
-            cost = effectivePosCostUnit(vo, checkoutWholesale)
-          }
+          const vRow = vo || hit.variant
+          cost = effectivePosCostUnitForProduct(products, hit.product, vRow, checkoutWholesale)
         }
       }
       const qty = effectiveCartLineQty(l, cartQtyDraftByLine)

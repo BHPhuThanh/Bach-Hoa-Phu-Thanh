@@ -96,8 +96,7 @@ import {
   buildOrderDeleteRestoreCartLines,
   buildPosReturnRestoreCartLines,
   resolvePosItemVariantId,
-  resolvePosReturnLineUnitCost,
-  posOrderReturnProfitReversal,
+  posReturnLedgerAmountsFromStoredOrderLine,
 } from './posOrderAdmin.js'
 import {
   RANGE_CUSTOM,
@@ -5746,11 +5745,8 @@ export default function AdminHub({
         }
         anyTake = true
         returnQtyByLineId.set(it.orderLineId, draft)
-        const price = Math.max(0, Number(it.price) || 0)
-        const unitCost = await resolvePosReturnLineUnitCost(catalogList, it)
-        const lineRefund = Math.round(draft * price)
-        const lineCostReturn = Math.round(draft * unitCost)
-        const lineProfitReversal = posOrderReturnProfitReversal(it, draft, unitCost)
+        const { lineRefund, lineCostReturn, lineProfitReversal, unitCost } =
+          posReturnLedgerAmountsFromStoredOrderLine(it, draft)
         revenueSub += lineRefund
         costSub += lineCostReturn
         profitSub += lineProfitReversal
@@ -5759,7 +5755,7 @@ export default function AdminHub({
           name: String(it.name || '').trim(),
           unitLabel: String(it.unitLabel || '').trim() || '—',
           qtyReturned: draft,
-          unitRefund: Math.round(price),
+          unitRefund: Math.round(Math.max(0, Number(it.price) || 0)),
           unitCost,
           lineRefund,
           lineCostReturn,
@@ -5816,7 +5812,7 @@ export default function AdminHub({
         { preferStoredLineFinancials: true }
       )
       await persistPosOrderAndReload(merged)
-      console.log('KIỂM TRA HOÀN COMBO:', { revenueSub, costSub, profitSub, returnLines: returnLines.map((l) => ({ code: l.code, unitCost: l.unitCost, lineRefund: l.lineRefund, lineCostReturn: l.lineCostReturn })) })
+      console.log('KIỂM TRA HOÀN COMBO:', { revenueSub, costSub, profitSub })
       const ins = await insertPosReturnLedgerEntry({
         atMs: Date.now(),
         orderId: String(base.id || ''),
