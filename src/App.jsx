@@ -3063,6 +3063,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const deletedVariantIds = Array.isArray(opts.deletedVariantIds)
         ? opts.deletedVariantIds.map(String).filter(Boolean)
         : []
+      const catalogAlreadyPersisted = Boolean(opts.catalogAlreadyPersisted)
       const prev = productsRef.current
       const next = applyProductDataToCatalog(prev, {
         type: 'replace_group',
@@ -3084,9 +3085,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
               }
             }
-            const r = await updateProductDisplayVariantsSequential(replacements)
-            if (!r.ok) {
-              throw r.error || new Error(describeCatalogPersistError(r.error))
+            if (!catalogAlreadyPersisted) {
+              const r = await updateProductDisplayVariantsSequential(replacements)
+              if (!r.ok) {
+                throw r.error || new Error(describeCatalogPersistError(r.error))
+              }
             }
             startTransition(() => setProducts(next))
             setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
@@ -3200,7 +3203,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
 
-  const handleUpdateCatalogVariant = useCallback(async (variantId, patch, oldMaHang) => {
+  const handleUpdateCatalogVariant = useCallback(async (variantId, patch, editingOriginalCode) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
       const cleanMaHangKey = (raw) =>
         String(raw ?? '')
@@ -3212,11 +3215,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
       if (!target) return { ok: false, error: new Error('Không tìm thấy sản phẩm trong danh mục.') }
-      const product = {
-        ...target,
-        ma_hang: cleanMaHangKey(oldMaHang ?? target.code ?? ''),
+      const product = { ...target, ma_hang: cleanMaHangKey(editingOriginalCode ?? target.code ?? '') }
+      const lockedOriginalMaHang = product.ma_hang
+      if (!lockedOriginalMaHang) {
+        return { ok: false, error: new Error('Thiếu mã hàng gốc (editingOriginalCode).') }
       }
-      const originalMaHang = product.ma_hang
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       let next = prev
       const stockRaw = patch?.stockQty
@@ -3280,14 +3283,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       }
 
-      const newCode = Object.prototype.hasOwnProperty.call(patch, 'code')
-        ? String(patch.code ?? '').trim()
-        : originalMaHang
-
-      console.error('--- DEBUG ĐỔI MÃ HÀNG ---', {
-        ma_hang_cu: originalMaHang,
-        ma_hang_moi: newCode,
-      })
+      const newCode = cleanMaHangKey(
+        Object.prototype.hasOwnProperty.call(patch, 'code') ? patch.code : lockedOriginalMaHang
+      )
 
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
         startTransition(() => setProducts(next))
@@ -3308,15 +3306,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           if (!sb) throw new Error('Không tạo được Supabase client.')
 
           for (const v of upsertOnly) {
-            const rawEq =
-              String(v.id) === String(variantId)
-                ? product.ma_hang
-                : flatPrev.find((x) => String(x?.id) === String(v.id))?.code ?? ''
-            const cleanMaHang = cleanMaHangKey(rawEq)
-            if (!cleanMaHang) {
+            const isEditedRow = String(v.id) === String(variantId)
+            const eqMaHang = isEditedRow
+              ? lockedOriginalMaHang
+              : cleanMaHangKey(flatPrev.find((x) => String(x?.id) === String(v.id))?.code ?? '')
+            if (!eqMaHang) {
               throw new Error('Thiếu mã hàng gốc để cập nhật (eq ma_hang).')
             }
-            const newCode = cleanMaHangKey(v.code ?? '')
+            const rowNewCode = cleanMaHangKey(v.code ?? '')
             const sqRaw = v.stockQty ?? v.ton_kho
             const sqNum = Number(sqRaw)
             const rowPayload = {
@@ -3335,37 +3332,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   ? String(v.conversion)
                   : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
             }
-            console.log('ĐANG TÌM MÃ HÀNG ĐỂ UPDATE:', `'${cleanMaHang}'`, '→', `'${newCode}'`)
             const { data, error } = await sb
               .from('products')
-              .update({ ma_hang: newCode, ...rowPayload })
-              .eq('ma_hang', cleanMaHang)
-              .select('*')
+              .update({ ma_hang: rowNewCode, ...rowPayload })
+              .eq('ma_hang', eqMaHang)
+              .select('ma_hang')
             if (error) {
               console.error('Lỗi Update:', error)
               throw error
             }
             if (!Array.isArray(data) || data.length === 0) {
-              const { data: maList, error: listErr } = await sb
-                .from('products')
-                .select('ma_hang')
-                .limit(5000)
-              if (listErr) {
-                console.error('Không đọc được danh sách ma_hang:', listErr)
-              } else {
-                console.log(
-                  'Danh sách ma_hang trong DB (so sánh với',
-                  `'${cleanMaHang}'`,
-                  '):',
-                  (maList || []).map((r) => `'${String(r.ma_hang ?? '')}'`)
-                )
-              }
-              console.error('Lỗi Update: không có dòng nào được cập nhật', {
-                cleanMaHang,
-                newCode,
-                rowPayload,
-              })
-              throw new Error(`Không cập nhật được sản phẩm ma_hang="${cleanMaHang}".`)
+              throw new Error(
+                `Không cập nhật được sản phẩm (ma_hang gốc="${eqMaHang}"). Kiểm tra mã trên Supabase.`
+              )
             }
           }
 

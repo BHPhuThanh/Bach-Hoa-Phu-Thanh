@@ -1872,6 +1872,10 @@ export default function AdminHub({
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
   const [inboundQuickEditSaving, setInboundQuickEditSaving] = useState(false)
+  const [soloGoodsSaving, setSoloGoodsSaving] = useState(false)
+  const [unitModalSaving, setUnitModalSaving] = useState(false)
+  /** Mã hàng gốc khi mở form sửa — không đổi theo draft (đổi mã hàng). */
+  const [editingOriginalCodeByVariantId, setEditingOriginalCodeByVariantId] = useState({})
   const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
@@ -1999,6 +2003,18 @@ export default function AdminHub({
     setPendingUnitDraft(null)
   }, [inboundQuickEditSaving])
 
+  const lockEditingOriginalCode = useCallback((variant) => {
+    if (!variant?.id) return
+    const code = String(variant.code ?? '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .trim()
+    setEditingOriginalCodeByVariantId((prev) => ({
+      ...prev,
+      [String(variant.id)]: code,
+    }))
+  }, [])
+
   const openInboundProductQuickEdit = useCallback(
     (variantIdOrLine, catalogHint) => {
       const ln = variantIdOrLine && typeof variantIdOrLine === 'object' ? variantIdOrLine : null
@@ -2013,6 +2029,7 @@ export default function AdminHub({
       const baseVid = ctx?.variants?.[0]?.id ?? rowVariantId
       const vOpen = ctx?.variants.find((x) => x.id === baseVid) ?? ctx?.clicked
       if (vOpen) {
+        lockEditingOriginalCode(vOpen)
         setInboundQuickEditDraft(buildGoodsDetailDraft(vOpen))
         setInboundQuickEditSelectedVid(baseVid)
       } else {
@@ -2022,7 +2039,7 @@ export default function AdminHub({
       setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
       setInboundQuickEditExpandId(rowVariantId)
     },
-    [catalogListForGoodsEdit]
+    [catalogListForGoodsEdit, lockEditingOriginalCode]
   )
 
   const openGoodsProductQuickEdit = useCallback(
@@ -2296,11 +2313,6 @@ export default function AdminHub({
       const fn = standaloneCatalog?.fileName || catalogFileName || ''
       const prevStandalone = standaloneCatalog
 
-      setStandaloneCatalog({
-        products: nextDisplay,
-        fileName: fn,
-      })
-
       return (async () => {
         try {
           if (deletedVariantIds.length > 0 && isSupabaseConfigured()) {
@@ -2312,12 +2324,18 @@ export default function AdminHub({
               )
             }
           }
-          const pr = await persistStandaloneProducts(nextDisplay, fn, replacements, {
-            useUpdateSequential: true,
-          })
-          if (!pr?.ok) {
-            throw new Error(pr?.error || 'Không lưu được đơn vị tính.')
+          if (!opts.catalogAlreadyPersisted) {
+            const pr = await persistStandaloneProducts(nextDisplay, fn, replacements, {
+              useUpdateSequential: true,
+            })
+            if (!pr?.ok) {
+              throw new Error(pr?.error || 'Không lưu được đơn vị tính.')
+            }
           }
+          setStandaloneCatalog({
+            products: nextDisplay,
+            fileName: fn,
+          })
           return { ok: true }
         } catch (e) {
           console.error('[replaceCatalogGroupFromModal]', e)
@@ -2447,7 +2465,7 @@ export default function AdminHub({
         const upd = onUpdateCatalogVariant(
           variant.id,
           patch,
-          String(variant.code ?? '').trim()
+          editingOriginalCodeByVariantId[String(variant.id)] ?? String(variant.code ?? '').trim()
         )
         if (upd && typeof upd.then === 'function') {
           const res = await upd
@@ -2488,6 +2506,7 @@ export default function AdminHub({
       pendingUnitDraft,
       catalogListForGoodsEdit,
       replaceCatalogGroupFromModal,
+      editingOriginalCodeByVariantId,
     ]
   )
 
@@ -2707,6 +2726,7 @@ export default function AdminHub({
     const ctx = findVariantContext(catalogList, vid)
     const v = ctx?.variants.find((x) => x.id === vid)
     if (v) {
+      lockEditingOriginalCode(v)
       const fp = [
         v.id,
         v.code,
@@ -2732,7 +2752,7 @@ export default function AdminHub({
       return appended.slice(-MAX_OPEN_PRODUCT_DETAIL_TABS)
     })
     setActiveTab(toSoloProductTabId(vid))
-  }, [catalogList])
+  }, [catalogList, lockEditingOriginalCode])
 
   useEffect(() => {
     const raw = hangHoaGoodsOpenRequest?.rawId ? String(hangHoaGoodsOpenRequest.rawId).trim() : ''
@@ -2874,7 +2894,10 @@ export default function AdminHub({
   }, [activeTab, closeSoloProductTab])
 
   const saveSoloGoodsDetail = useCallback(async () => {
+    if (soloGoodsSaving) return
     if (!soloGoodsVariant || !soloGoodsDraft) return
+    setSoloGoodsSaving(true)
+    try {
     const nameTrim = String(soloGoodsDraft.name ?? '')
       .replace(/\u00A0/g, ' ')
       .replace(/\s+/g, ' ')
@@ -2924,9 +2947,13 @@ export default function AdminHub({
           linkedMasterCode: row.linkedMasterCode,
         }
       })
-      await replaceCatalogGroupFromModal(pendingForVariant.anchorVariantId, patchedRows, {
+      const gr = await replaceCatalogGroupFromModal(pendingForVariant.anchorVariantId, patchedRows, {
         deletedVariantIds: pendingForVariant.deletedVariantIds || [],
       })
+      if (gr && typeof gr.then === 'function') {
+        const res = await gr
+        if (res && res.ok === false) return
+      }
       setPendingUnitDraft(null)
       triggerGoodsSaveSuccessToast()
       return
@@ -2944,7 +2971,8 @@ export default function AdminHub({
       const upd = onUpdateCatalogVariant(
         soloGoodsVariant.id,
         patch,
-        String(soloGoodsVariant.code ?? '').trim()
+        editingOriginalCodeByVariantId[String(soloGoodsVariant.id)] ??
+          String(soloGoodsVariant.code ?? '').trim()
       )
       if (upd && typeof upd.then === 'function') {
         const res = await upd
@@ -2972,9 +3000,14 @@ export default function AdminHub({
       void persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
       triggerGoodsSaveSuccessToast()
     }
+    } finally {
+      setSoloGoodsSaving(false)
+    }
   }, [
+    soloGoodsSaving,
     soloGoodsVariant,
     soloGoodsDraft,
+    editingOriginalCodeByVariantId,
     onUpdateCatalogVariant,
     standaloneCatalog,
     persistStandaloneProducts,
@@ -3095,8 +3128,9 @@ export default function AdminHub({
   }, [catalogListForGoodsEdit, soloActiveVariantId])
 
   const commitUnitModal = useCallback(async () => {
-    if (!unitModal) return
-
+    if (!unitModal || unitModalSaving) return
+    setUnitModalSaving(true)
+    try {
     const ctx = findVariantContext(catalogListForGoodsEdit, unitModal.anchorVariantId)
     if (!ctx?.variants?.length) {
       setUnitModal(null)
@@ -3153,8 +3187,8 @@ export default function AdminHub({
             : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
       }
     })
-    if (isSupabaseConfigured()) {
-      try {
+    try {
+      if (isSupabaseConfigured()) {
         const sb = getSupabaseClient()
         if (!sb) throw new Error('Không tạo được Supabase client.')
         const payloadToUpsert = newProducts.map((p) => ({
@@ -3176,54 +3210,45 @@ export default function AdminHub({
           window.alert('Payload rỗng! Dừng lại!')
           return
         }
-        let updatedCount = 0
-        for (const item of payloadToUpsert) {
-          const eqMa = String(item.ma_hang ?? '').trim()
-          const { data, error } = await sb
-            .from('products')
-            .update({
-              dvt: item.don_vi_tinh,
-              ma_vach: item.ma_vach,
-              ten_hang: item.ten_hang,
-              thuong_hieu: item.thuong_hieu,
-              gia_ban: item.gia_ban,
-              gia_von: item.gia_von,
-              ton_kho: item.ton_kho,
-              quy_doi: item.quy_doi,
-            })
-            .eq('ma_hang', eqMa)
-            .select('ma_hang, dvt')
+        const results = await Promise.all(
+          payloadToUpsert.map(async (item) => {
+            const eqMa = String(item.ma_hang ?? '').trim()
+            const { data, error } = await sb
+              .from('products')
+              .update({
+                dvt: item.don_vi_tinh,
+                ma_vach: item.ma_vach,
+                ten_hang: item.ten_hang,
+                thuong_hieu: item.thuong_hieu,
+                gia_ban: item.gia_ban,
+                gia_von: item.gia_von,
+                ton_kho: item.ton_kho,
+                quy_doi: item.quy_doi,
+              })
+              .eq('ma_hang', eqMa)
+              .select('ma_hang, dvt')
+            return { item, data, error }
+          })
+        )
+        for (const { item, data, error } of results) {
           if (error) {
-            console.error('Lỗi Update ĐVT:', error, { item })
+            console.error('Lỗi Update ĐVT:', error, item)
             window.alert(
-              `Lỗi Update ĐVT (${eqMa}): ${error.message || JSON.stringify(error)}`
+              `Lỗi Update ĐVT (${item.ma_hang}): ${error.message || JSON.stringify(error)}`
             )
             return
           }
           if (!Array.isArray(data) || data.length === 0) {
-            console.error('Lỗi Update ĐVT: không tìm thấy dòng ma_hang=', `'${eqMa}'`, item)
-            const { data: maList, error: listErr } = await sb.from('products').select('ma_hang').limit(5000)
-            if (!listErr) {
-              console.log(
-                'Danh sách ma_hang trong DB:',
-                (maList || []).map((r) => `'${String(r.ma_hang ?? '')}'`)
-              )
-            }
-            window.alert(`Không tìm thấy sản phẩm ma_hang="${eqMa}" trên Supabase.`)
+            console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
+            window.alert(`Không cập nhật được ĐVT cho ma_hang="${item.ma_hang}".`)
             return
           }
-          updatedCount += data.length
         }
-        if (updatedCount === 0) {
-          console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
-          window.alert('Lưu ĐVT thất bại: không có dòng nào được cập nhật.')
-          return
-        }
-      } catch (e) {
-        console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
-        window.alert('Lỗi lưu ĐVT lên Supabase!')
-        return
       }
+    } catch (e) {
+      console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
+      window.alert('Lỗi lưu ĐVT lên Supabase!')
+      return
     }
     const nextIds = new Set(replacements.map((v) => String(v.id)))
     const implicitDeleted = ctx.variants
@@ -3240,12 +3265,17 @@ export default function AdminHub({
     const oldAnchor = unitModal.anchorVariantId
     const anchorForSave = unitModal.anchorVariantId
 
-    setUnitModal(null)
-    setPendingUnitDraft({
-      anchorVariantId: anchorForSave,
-      replacements,
+    const groupSave = await replaceCatalogGroupFromModal(anchorForSave, replacements, {
       deletedVariantIds,
+      catalogAlreadyPersisted: true,
     })
+    if (groupSave && typeof groupSave.then === 'function') {
+      const gr = await groupSave
+      if (gr && gr.ok === false) return
+    }
+
+    setUnitModal(null)
+    setPendingUnitDraft(null)
 
     if (mainId && src === 'inbound') {
       inboundQuickEditPreserveRef.current = {
@@ -3266,13 +3296,20 @@ export default function AdminHub({
       setActiveTab(toSoloProductTabId(mainId))
     }
 
+    triggerGoodsSaveSuccessToast()
+    } finally {
+      setUnitModalSaving(false)
+    }
   }, [
     unitModal,
+    unitModalSaving,
     catalogListForGoodsEdit,
     inboundQuickEditDraft,
     inboundQuickEditVariant,
     soloGoodsDraft,
     soloGoodsVariant,
+    replaceCatalogGroupFromModal,
+    triggerGoodsSaveSuccessToast,
   ])
 
   const updateUnitModalConversionAtKey = useCallback((key, raw) => {
@@ -8210,8 +8247,14 @@ export default function AdminHub({
                         />
                       </svg>
                     </button>
-                    <button type="button" className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save" onClick={() => void saveSoloGoodsDetail()} title="Lưu">
-                      ✓
+                    <button
+                      type="button"
+                      className="ah-solo-product-icon-btn ah-solo-product-icon-btn--save"
+                      onClick={() => void saveSoloGoodsDetail()}
+                      title="Lưu"
+                      disabled={soloGoodsSaving}
+                    >
+                      {soloGoodsSaving ? '…' : '✓'}
                     </button>
                   </div>
                 </div>
@@ -10775,8 +10818,13 @@ export default function AdminHub({
               <button type="button" className="ah-iv-btn ah-iv-btn--ghost" onClick={closeUnitModal}>
                 Bỏ qua
               </button>
-              <button type="button" className="ah-iv-btn ah-iv-btn--primary" onClick={commitUnitModal}>
-                Xong
+              <button
+                type="button"
+                className="ah-iv-btn ah-iv-btn--primary"
+                onClick={() => void commitUnitModal()}
+                disabled={unitModalSaving}
+              >
+                {unitModalSaving ? 'Đang lưu…' : 'Xong'}
               </button>
             </footer>
           </div>
