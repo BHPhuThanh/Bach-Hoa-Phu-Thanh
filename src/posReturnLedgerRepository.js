@@ -16,6 +16,17 @@ export function bumpPosReturnLedgerSync() {
 
 const LOCAL_RETURN_MIGRATE_FLAG = 'csv-preview-pos-return-ledger-migrated-v1'
 
+/** Chỉ cảnh báo một lần / phiên khi gặp bản ghi cũ thiếu `profit_delta`. */
+let warnedMissingProfitDeltaOnce = false
+
+function warnMissingProfitDeltaOnce() {
+  if (warnedMissingProfitDeltaOnce) return
+  warnedMissingProfitDeltaOnce = true
+  console.warn(
+    '[posReturnLedger] Một số bản ghi cũ thiếu profit_delta — dùng revenueSub − costSub tạm thời (chỉ hiển thị, không ghi DB).'
+  )
+}
+
 /** Đẩy phiếu trả cũ (chỉ localStorage trên PC) lên Supabase một lần. */
 export async function migrateLocalPosReturnLedgerToSupabaseOnce() {
   if (!isSupabaseConfigured()) return
@@ -72,15 +83,20 @@ function newLedgerEntryId() {
     : `ret-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** `profit_delta` âm trên ledger (vd. −3100) — chỉ đọc DB, không suy từ revenue − cost. */
+/** `profit_delta` trên ledger (âm khi trả hàng). Bao dung bản ghi cũ — không throw, không log lặp. */
 export function ledgerProfitDeltaFromEntry(source) {
   if (source == null || typeof source !== 'object') return 0
-  const delta = Number(source.profit_delta)
-  if (Number.isFinite(delta)) return Math.round(delta)
+  const rawDelta = source.profit_delta
+  if (rawDelta != null && rawDelta !== '' && Number.isFinite(Number(rawDelta))) {
+    return Math.round(Number(rawDelta))
+  }
   const sub = Number(source.profitSub)
   if (Number.isFinite(sub)) return -Math.max(0, Math.round(sub))
-  console.error('[posReturnLedger] thiếu profit_delta trên ledger entry', source)
-  return 0
+  const rev = Math.max(0, Number(source.revenueSub) || 0)
+  const cost = Math.max(0, Number(source.costSub) || 0)
+  const legacy = Math.round(rev - cost) || 0
+  if (legacy !== 0) warnMissingProfitDeltaOnce()
+  return legacy
 }
 
 /** Độ lớn lợi nhuận hoàn (dương) — dùng cộng báo cáo; không phép trừ revenue − cost. */
@@ -100,11 +116,12 @@ function normalizeLedgerEntryFromPayload(row) {
   const revenueSub = Number(p.revenueSub)
   const costSub = Number(p.costSub)
   const profit_delta = ledgerProfitDeltaFromEntry(p)
-  const profitSub = ledgerProfitSubFromParts(p)
+  const profitSub = Math.max(0, Math.abs(profit_delta))
   if (!Number.isFinite(atMs) || !Number.isFinite(revenueSub) || !Number.isFinite(costSub)) {
     return null
   }
-  const id = String(p.id ?? row.id ?? '').trim() || newLedgerEntryId()
+  /** UUID cột `id` trên bảng — ưu tiên hơn id trong payload JSON. */
+  const id = String(row.id ?? p.id ?? '').trim() || newLedgerEntryId()
   return {
     id,
     atMs,
@@ -149,12 +166,6 @@ export async function insertPosReturnLedgerEntry(entry) {
     sourceInvoiceNo: String(entry.sourceInvoiceNo || '').trim(),
     lines: Array.isArray(entry.lines) ? entry.lines : [],
   })
-  console.error('--- DEBUG INSERT pos_return_ledger ---', {
-    revenueSub: payload.revenueSub,
-    costSub: payload.costSub,
-    profitSub: payload.profitSub,
-    profit_delta: payload.profit_delta,
-  })
   const order_id = payload.orderId
   if (!order_id) {
     const error = new Error('Thiếu orderId đơn gốc khi ghi hoàn trả.')
@@ -169,6 +180,13 @@ export async function insertPosReturnLedgerEntry(entry) {
 
   const id = String(entry.id || '').trim() || newLedgerEntryId()
   const fullEntry = { ...payload, id }
+  console.error('--- DEBUG INSERT pos_return_ledger ---', {
+    id,
+    revenueSub: payload.revenueSub,
+    costSub: payload.costSub,
+    profitSub: payload.profitSub,
+    profit_delta: payload.profit_delta,
+  })
 
   if (!isSupabaseConfigured()) {
     const next = [...loadPosReturnDayLedger(), fullEntry]
@@ -246,6 +264,50 @@ export async function fetchPosReturnLedgerEntries() {
     return { ok: true, entries }
   } catch (error) {
     console.error('[posReturnLedger] fetch', error)
+    return { ok: false, error }
+  }
+}
+
+/**
+ * Xóa một phiếu hoàn trả theo UUID (`pos_return_ledger.id`).
+ * @param {string} ledgerIdRaw
+ */
+export async function deletePosReturnLedgerById(ledgerIdRaw) {
+  const ledgerId = String(ledgerIdRaw || '').trim()
+  if (!ledgerId) {
+    return { ok: false, error: new Error('Thiếu id phiếu hoàn trả (UUID).') }
+  }
+
+  if (!isSupabaseConfigured()) {
+    try {
+      const next = loadPosReturnDayLedger().filter((e) => String(e?.id || '').trim() !== ledgerId)
+      savePosReturnDayLedger(next)
+      bumpPosReturnLedgerSync()
+      return { ok: true, skipped: true }
+    } catch (error) {
+      return { ok: false, error }
+    }
+  }
+
+  const sb = getSupabaseClient()
+  if (!sb) {
+    return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  }
+
+  try {
+    const { error } = await sb.from(POS_RETURN_LEDGER_TABLE).delete().eq('id', ledgerId)
+    if (error) {
+      return { ok: false, error }
+    }
+    try {
+      const local = loadPosReturnDayLedger().filter((e) => String(e?.id || '').trim() !== ledgerId)
+      savePosReturnDayLedger(local)
+    } catch {
+      /* ignore local mirror errors */
+    }
+    bumpPosReturnLedgerSync()
+    return { ok: true }
+  } catch (error) {
     return { ok: false, error }
   }
 }

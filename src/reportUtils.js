@@ -1,4 +1,5 @@
 import { normalizePosOrder } from './posOrderAdmin.js'
+import { ledgerProfitDeltaFromEntry } from './posReturnLedgerRepository.js'
 
 /** Khoảng thời gian báo cáo trên Dashboard */
 export const RANGE_TODAY = 'today'
@@ -176,10 +177,7 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
         const inv = String(e.sourceInvoiceNo || orig?.invoiceNo || '').trim()
         const baseInv = inv || oid || '—'
         const revenueSub = Math.max(0, Number(e.revenueSub) || 0)
-        const profit = Number.isFinite(Number(e.profit_delta)) ? Math.round(Number(e.profit_delta)) : 0
-        if (!Number.isFinite(Number(e.profit_delta))) {
-          console.error('[mapReturnLedgerToRevenueDisplayRows] thiếu profit_delta', e?.id, e)
-        }
+        const profit = ledgerProfitDeltaFromEntry(e)
         const at = Number(e.atMs)
         const idKey = String(e.id != null ? e.id : '').trim() || `${at}-${oid}`
         return {

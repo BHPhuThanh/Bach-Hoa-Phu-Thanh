@@ -1292,7 +1292,6 @@ export default function AdminHub({
     }
     setReturnLedgerRemoteLoading(true)
     try {
-      await migrateLocalPosReturnLedgerToSupabaseOnce()
       const r = await fetchPosReturnLedgerEntries()
       if (!r.ok) {
         console.error('[AdminHub] Không tải pos_return_ledger', r.error)
@@ -1302,6 +1301,12 @@ export default function AdminHub({
     } finally {
       setReturnLedgerRemoteLoading(false)
     }
+  }, [])
+
+  /** Một lần / phiên: đẩy ledger localStorage lên Supabase (không gọi lại mỗi lần refresh). */
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return
+    void migrateLocalPosReturnLedgerToSupabaseOnce()
   }, [])
 
   useEffect(() => {
@@ -1319,21 +1324,6 @@ export default function AdminHub({
   useEffect(() => {
     if (activeTab !== TAB_OVERVIEW && !isPosReturnDetailTabId(activeTab)) return
     void refreshPosReturnLedger()
-  }, [activeTab, refreshPosReturnLedger])
-
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      if (activeTab === TAB_OVERVIEW || isPosReturnDetailTabId(activeTab)) {
-        void refreshPosReturnLedger()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', onVisible)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', onVisible)
-    }
   }, [activeTab, refreshPosReturnLedger])
 
   /* —— Tổng quan —— */
