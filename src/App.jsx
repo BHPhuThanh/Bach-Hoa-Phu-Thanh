@@ -3200,7 +3200,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]
   )
 
-  const handleUpdateCatalogVariant = useCallback(async (variantId, patch) => {
+  const handleUpdateCatalogVariant = useCallback(async (variantId, patch, oldMaHang) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
       const prev = productsRef.current
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
@@ -3269,9 +3269,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
 
       const originalMaHang = String(target?.code ?? '').trim()
+      const old_ma_hang = String(oldMaHang ?? originalMaHang).trim()
       const newCode = Object.prototype.hasOwnProperty.call(patch, 'code')
         ? String(patch.code ?? '').trim()
         : originalMaHang
+
+      console.error('--- DEBUG ĐỔI MÃ HÀNG ---', {
+        ma_hang_cu: old_ma_hang,
+        ma_hang_moi: newCode,
+      })
 
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
         startTransition(() => setProducts(next))
@@ -3292,10 +3298,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               ...v,
               persistMaHang:
                 String(v.id) === String(variantId) &&
-                originalMaHang &&
+                old_ma_hang &&
                 newCode &&
-                originalMaHang !== newCode
-                  ? originalMaHang
+                old_ma_hang !== newCode
+                  ? old_ma_hang
                   : String(v.code ?? '').trim(),
             }))
           )

@@ -1236,7 +1236,9 @@ function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) 
 /** UPDATE một dòng `products` theo `ma_hang` cũ (để đổi mã hàng không tạo dòng mới). */
 export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const oldMaHang = String(options.oldMaHang ?? variant?.persistMaHang ?? variant?.code ?? '').trim()
+  const oldMaHang = String(
+    options.oldMaHang ?? options.persistMaHang ?? variant?.persistMaHang ?? variant?.code ?? ''
+  ).trim()
   if (!oldMaHang) {
     return { ok: false, error: new Error('Thiếu mã hàng cũ (old_ma_hang) để cập nhật.') }
   }

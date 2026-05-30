@@ -2437,7 +2437,11 @@ export default function AdminHub({
 
       if (onUpdateCatalogVariant) {
         recordCostAdjustOnSave(variant, patch, nameTrim)
-        const upd = onUpdateCatalogVariant(variant.id, patch)
+        const upd = onUpdateCatalogVariant(
+          variant.id,
+          patch,
+          String(variant.code ?? '').trim()
+        )
         if (upd && typeof upd.then === 'function') {
           const res = await upd
           if (res && res.ok === false) return false
@@ -2930,7 +2934,11 @@ export default function AdminHub({
     })
     if (onUpdateCatalogVariant) {
       recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
-      const upd = onUpdateCatalogVariant(soloGoodsVariant.id, patch)
+      const upd = onUpdateCatalogVariant(
+        soloGoodsVariant.id,
+        patch,
+        String(soloGoodsVariant.code ?? '').trim()
+      )
       if (upd && typeof upd.then === 'function') {
         const res = await upd
         if (res && res.ok === false) return
@@ -3133,25 +3141,23 @@ export default function AdminHub({
           ? String(v.conversion)
           : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
     }))
-    // eslint-disable-next-line no-console
-    console.log('[Đơn vị tính · Lưu] Payload gửi Supabase (nhóm biến thể / products):', supabasePayload)
+    console.error('[Đơn vị tính · Lưu] Payload gửi Supabase:', supabasePayload)
     if (isSupabaseConfigured()) {
       try {
         const sb = getSupabaseClient()
         if (!sb) throw new Error('Không tạo được Supabase client.')
         const payloadArray = supabasePayload.map((r) => {
           const oldMa = String(
-            replacements.find((x) => String(x.id) === String(r.variantId))?.persistMaHang ?? r.ma_hang
+            replacements.find((x) => String(x.id) === String(r.variantId))?.persistMaHang ??
+              r.ma_hang
           ).trim()
-          return {
-            ...r,
-            // Upsert thử ngay sau log để bắt lỗi sớm; giữ mã cũ cho dòng đã tồn tại.
-            ma_hang: oldMa || r.ma_hang,
-          }
+          const { variantId: _vid, ...row } = r
+          return { ...row, ma_hang: oldMa || row.ma_hang }
         })
-        const { error } = await sb.from('products').upsert(payloadArray)
-        if (error) throw error
-        console.log('Lưu ĐVT lên Supabase thành công!')
+        console.error('--- DEBUG TRƯỚC KHI UPSERT ĐVT ---', payloadArray)
+        const response = await sb.from('products').upsert(payloadArray)
+        console.error('--- DEBUG SAU KHI UPSERT ĐVT ---', response)
+        if (response?.error) throw response.error
       } catch (e) {
         console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
         window.alert('Lỗi lưu ĐVT lên Supabase!')
@@ -5768,11 +5774,25 @@ export default function AdminHub({
         }
         anyTake = true
         returnQtyByLineId.set(it.orderLineId, draft)
-        const { lineRefund, lineCostReturn, lineProfitReversal, unitCost } =
-          posReturnLedgerAmountsFromStoredOrderLine(it, draft)
+        const originalOrderLine = it
+        const orderQty = Math.max(0, Number(originalOrderLine.qty) || 0)
+        const lineProfitReversal =
+          orderQty > 0
+            ? (Number(originalOrderLine.lineProfit ?? originalOrderLine.line_profit ?? 0) /
+                orderQty) *
+              draft
+            : 0
+        const { lineRefund, lineCostReturn, unitCost } =
+          posReturnLedgerAmountsFromStoredOrderLine(originalOrderLine, draft)
         revenueSub += lineRefund
-        costSub += lineCostReturn
+        costSub += lineRefund - Math.round(lineProfitReversal)
         profitSub += lineProfitReversal
+        console.error('--- DEBUG TRẢ HÀNG COMBO ---', {
+          line_profit: originalOrderLine.lineProfit ?? originalOrderLine.line_profit,
+          revenue: originalOrderLine.lineRevenue ?? originalOrderLine.line_revenue,
+          qty: orderQty,
+          profitSub_ket_qua: lineProfitReversal,
+        })
         returnLines.push({
           code: String(it.code || '').trim(),
           name: String(it.name || '').trim(),
@@ -5781,7 +5801,7 @@ export default function AdminHub({
           unitRefund: Math.round(Math.max(0, Number(it.price) || 0)),
           unitCost,
           lineRefund,
-          lineCostReturn,
+          lineCostReturn: lineRefund - Math.round(lineProfitReversal),
           lineProfitReversal,
           variantId: String(it.variantId || '').trim(),
         })
