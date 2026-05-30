@@ -4,6 +4,7 @@ import {
   isComboCatalogProduct,
   findProductContainingVariantId,
   orderLineIsCombo,
+  resolveComboBomForOrderLine,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
