@@ -96,6 +96,7 @@ import {
   buildOrderDeleteRestoreCartLines,
   buildPosReturnRestoreCartLines,
   resolvePosItemVariantId,
+  posOrderLineUnitCostForReturn,
 } from './posOrderAdmin.js'
 import {
   RANGE_CUSTOM,
@@ -5740,10 +5741,10 @@ export default function AdminHub({
         anyTake = true
         returnQtyByLineId.set(it.orderLineId, draft)
         const price = Math.max(0, Number(it.price) || 0)
-        const cost = Math.max(0, Number(it.cost) || 0)
+        const unitCost = posOrderLineUnitCostForReturn(catalogList, it)
         const lineRefund = Math.round(draft * price)
         revenueSub += lineRefund
-        costSub += Math.round(draft * cost)
+        costSub += Math.round(draft * unitCost)
         returnLines.push({
           code: String(it.code || '').trim(),
           name: String(it.name || '').trim(),

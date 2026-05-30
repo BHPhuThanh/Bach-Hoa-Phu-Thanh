@@ -4,6 +4,7 @@ import {
   findProductContainingVariantId,
   orderLineIsCombo,
   resolveComboBomForOrderLine,
+  computeComboOrderLineUnitCost,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
@@ -30,6 +31,23 @@ export function resolvePosItemVariantId(catalogList, item) {
   }
 
   return ''
+}
+
+/**
+ * Giá vốn đơn vị khi ghi ledger hoàn trả (combo → tổng BOM thành phần).
+ * @param {Array} catalogList
+ * @param {object} item — dòng đơn đã normalize
+ */
+export function posOrderLineUnitCostForReturn(catalogList, item) {
+  if (!item) return 0
+  if (orderLineIsCombo(catalogList, item)) {
+    return computeComboOrderLineUnitCost(catalogList, item)
+  }
+  const qty = Math.max(0, Number(item.qty) || 0)
+  if (qty > 0 && item.lineCost != null && Number.isFinite(Number(item.lineCost))) {
+    return Math.max(0, Math.round(Number(item.lineCost) / qty))
+  }
+  return Math.max(0, Number(item.cost) || 0)
 }
 
 export function posOrderLineReturnableQty(it) {

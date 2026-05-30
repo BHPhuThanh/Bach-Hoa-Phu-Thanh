@@ -296,6 +296,21 @@ export function buildCartSaleStockDeltaByVariantId(products, cartLines) {
   return buildComboCartSaleDeltaByVariantId(products, cartLines)
 }
 
+/**
+ * Giá vốn đơn vị combo khi hoàn trả / báo cáo — BOM hoặc `comboCostOverride`.
+ * @param {Array} catalogList
+ * @param {object} item — dòng `order.items[]`
+ */
+export function computeComboOrderLineUnitCost(catalogList, item) {
+  const bom = resolveComboBomForOrderLine(catalogList, item)
+  if (!bom.length) return 0
+  const vid = String(item?.variantId ?? '').trim()
+  const p = vid ? findProductContainingVariantId(catalogList, vid) : null
+  const override = p ? getComboCostOverride(p) : null
+  if (override != null) return Math.max(0, Math.round(override))
+  return computeDefaultComboCost(catalogList, bom)
+}
+
 /** Tổng giá vốn mặc định = Σ (giá vốn thành phần × số lượng trong combo) theo đơn vị đang chọn. */
 export function computeDefaultComboCost(products, bom) {
   let sum = 0

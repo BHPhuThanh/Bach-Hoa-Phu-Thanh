@@ -999,6 +999,17 @@
   color: #fecaca;
 }
 
+/* Toast quét mã — chỉ mobile (≤768px); PC ẩn để không che nút Thanh toán */
+.pos-scan-toast--mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .pos-scan-toast--mobile-only {
+    display: block;
+  }
+}
+
 /* Toast kết quả quét mã vạch — góc phải dưới, phù hợp dark mode */
 .pos-scan-toast {
   position: fixed;

@@ -2909,19 +2909,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   /** Sau ghi Supabase: đọc lại DB (revalidate) để UI/POS khớp server — tránh cache client. */
   const applyServerCatalogAfterPersist = useCallback(async () => {
-    if (!isSupabaseConfigured()) return
+    if (!isSupabaseConfigured()) return null
     const fresh = await revalidateCatalogFromStore()
     if (!fresh?.products?.length) {
       console.warn('[App] revalidateCatalogFromStore: không có sản phẩm sau khi đồng bộ.')
-      return
+      return null
     }
-    startTransition(() => {
-      setProducts(prepareCatalogForPosSearch(fresh.products))
-      setFileName(fresh.fileName)
-      setCsvRowCount(fresh.csvRowCount)
-      setSalesRefresh((x) => x + 1)
-      bumpOrdersSync()
-    })
+    const prepared = prepareCatalogForPosSearch(fresh.products)
+    setProducts(prepared)
+    productsRef.current = prepared
+    setFileName(fresh.fileName)
+    setCsvRowCount(fresh.csvRowCount)
+    setSalesRefresh((x) => x + 1)
+    bumpOrdersSync()
+    return fresh
   }, [])
 
   useEffect(() => {
@@ -3127,6 +3128,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           return { ok: false, error: r.error }
         }
         const prepared = r.preparedVariants || variants
+        const merged = applyProductDataToCatalog(prev, {
+          type: 'append_flat_variants',
+          variants: prepared,
+        })
+        const nextCatalog = prepareCatalogForPosSearch(merged)
+        setProducts(nextCatalog)
+        productsRef.current = nextCatalog
         try {
           inboundCatalogUpsertReconcileRef.current?.({
             requested: prepared,
@@ -3170,6 +3178,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: describeCatalogPersistError(r.error) }
       }
       const prepared = r.preparedVariants || upsertOnlyVariants
+      const merged = applyProductDataToCatalog(prev, {
+        type: 'append_flat_variants',
+        variants: prepared,
+      })
+      const nextCatalog = prepareCatalogForPosSearch(merged)
+      setProducts(nextCatalog)
+      productsRef.current = nextCatalog
       await applyServerCatalogAfterPersist()
       return { ok: true, preparedVariants: prepared }
     },
@@ -3330,6 +3345,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const showPosScanToastMessage = useCallback((text) => {
     const t = String(text ?? '').trim()
     if (!t) return
+    if (typeof window !== 'undefined' && window.innerWidth > 768) return
     if (posScanToastClearRef.current != null) {
       window.clearTimeout(posScanToastClearRef.current)
       posScanToastClearRef.current = null
@@ -6027,7 +6043,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         </div>
       ) : null}
       {posScanToast ? (
-        <div className="pos-scan-toast" role="status" aria-live="polite">
+        <div className="pos-scan-toast pos-scan-toast--mobile-only" role="status" aria-live="polite">
           {posScanToast}
         </div>
       ) : null}
