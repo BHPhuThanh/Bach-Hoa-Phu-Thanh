@@ -112,7 +112,6 @@ import {
   revalidateCatalogFromStore,
   describeCatalogPersistError,
   catalogDbErrorToastMessage,
-  resolveProductsDbIdForDisplayVariant,
   collectMaHangCodesForVariantIds,
   deleteProductsFromSupabaseByMaHang,
   deleteProductsForRemovedVariants,
@@ -3085,7 +3084,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
               }
             }
-            const r = await updateProductDisplayVariantsSequential(replacements, prev)
+            const r = await updateProductDisplayVariantsSequential(replacements)
             if (!r.ok) {
               throw r.error || new Error(describeCatalogPersistError(r.error))
             }
@@ -3291,10 +3290,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const r = await updateProductDisplayVariantsSequential(
             upsertOnly.map((v) => ({
               ...v,
-              productsDbId: resolveProductsDbIdForDisplayVariant(prev, v),
-              product_id: resolveProductsDbIdForDisplayVariant(prev, v),
-            })),
-            prev
+              persistMaHang:
+                String(v.id) === String(variantId) && oldCode && newCode && oldCode !== newCode
+                  ? oldCode
+                  : String(v.code ?? '').trim(),
+            }))
           )
           if (!r.ok) {
             throw r.error || new Error(describeCatalogPersistError(r.error))
@@ -3409,7 +3409,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const flatNext = flattenDisplayCatalogToVariants(next)
         const touchedIds = new Set(valid.map((e) => String(e.variantId)))
         const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants, snapshotPrev)
+        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants)
         if (!r.ok) {
           const msg =
             describeCatalogPersistError(r.error) || 'Không ghi được sản phẩm lên Supabase.'

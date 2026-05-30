@@ -97,7 +97,6 @@ import {
   buildPosReturnRestoreCartLines,
   resolvePosItemVariantId,
   posReturnLedgerAmountsFromStoredOrderLine,
-  attachProductsDbIdToRestoreCartLines,
 } from './posOrderAdmin.js'
 import {
   RANGE_CUSTOM,
@@ -167,7 +166,6 @@ import {
   fetchProductsCostAndStockByMaHang,
   readCatalogSnapshotSync,
   flattenDisplayCatalogToVariants,
-  resolveProductsDbIdForDisplayVariant,
   persistCatalogSnapshotAndProducts,
   updateProductDisplayVariantsSequential,
   insertProductDisplayVariantsSequential,
@@ -2146,7 +2144,7 @@ export default function AdminHub({
       ? await persistCatalogSnapshotAndProducts(nextProducts, fn, { snapshotOnly: true })
       : upsertOnlyVariants?.length
         ? persistOpts.useUpdateSequential === true
-          ? await updateProductDisplayVariantsSequential(upsertOnlyVariants, nextProducts)
+          ? await updateProductDisplayVariantsSequential(upsertOnlyVariants)
           : await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
               existingCatalogProducts: nextProducts,
             })
@@ -5773,21 +5771,9 @@ export default function AdminHub({
         return
       }
       const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
-      let restoreCartLines = await buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
+      const restoreCartLines = await buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
         returnQtyByLineId.get(it.orderLineId) || 0
       )
-      restoreCartLines = attachProductsDbIdToRestoreCartLines(catalogList, restoreCartLines)
-      const missingDbId = restoreCartLines.filter(
-        (l) => !resolveProductsDbIdForDisplayVariant(catalogList, l)
-      )
-      if (missingDbId.length > 0) {
-        const codes = missingDbId.map((l) => l.code || l.variantId).filter(Boolean).join(', ')
-        throw new Error(
-          codes
-            ? `Thiếu id sản phẩm trên Supabase (tra cứu mã: ${codes}). Tải lại danh mục rồi thử lại.`
-            : 'Thiếu id sản phẩm trên Supabase để hoàn tồn. Tải lại danh mục rồi thử lại.'
-        )
-      }
       if (restoreCartLines.length === 0) {
         throw new Error(
           'Không khớp sản phẩm trong danh mục để hoàn tồn kho (kiểm tra combo / mã hàng trên đơn).'

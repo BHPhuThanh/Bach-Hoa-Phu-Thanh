@@ -330,10 +330,7 @@ export default function CostAdjustCreatePage() {
           window.alert('Không tìm thấy biến thể trên danh mục để ghi giá vốn lên máy chủ.')
           return
         }
-        persistResult = await updateProductDisplayVariantsSequential(
-          danh_sách_cập_nhật_giá_vốn,
-          nextProducts
-        )
+        persistResult = await updateProductDisplayVariantsSequential(danh_sách_cập_nhật_giá_vốn)
         if (!persistResult.ok) {
           window.alert(
             describeCatalogPersistError(persistResult.error) ||

@@ -11,7 +11,6 @@ export const BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX = 11
 export const PRODUCT_PK_COLUMN = 'ma_hang'
 
 export const CATALOG_PRODUCT_DB_COLUMNS = [
-  'id',
   'ma_hang',
   'ma_vach',
   'ten_hang',

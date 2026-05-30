@@ -133,7 +133,6 @@ export function buildCatalogVariantsFromUnitModal({
     const rootCode = String(finalCodes[0] ?? '').trim()
 
     if (prev) {
-      const productsDbId = String(prev.productsDbId ?? prev.product_id ?? prev.raw?.id ?? '').trim()
       out.push({
         ...prev,
         id,
@@ -147,7 +146,7 @@ export function buildCatalogVariantsFromUnitModal({
         cost,
         price,
         linkedMasterCode: String(prev.linkedMasterCode ?? '').trim(),
-        ...(productsDbId ? { productsDbId, product_id: productsDbId } : {}),
+        persistMaHang: String(prev.code ?? '').trim(),
       })
       continue
     }

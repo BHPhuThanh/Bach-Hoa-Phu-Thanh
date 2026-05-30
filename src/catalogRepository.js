@@ -51,43 +51,8 @@ const PRODUCTS_TABLE = 'products'
 /** Cột thời gian tạo trên Postgres (sau migration `products_created_at`). */
 const PRODUCTS_CREATED_AT_COLUMN = 'created_at'
 
-/** Danh sách cột SELECT — `id` (UUID) luôn đầu tiên. */
-const PRODUCTS_FETCH_COLUMNS = [
-  'id',
-  ...CATALOG_PRODUCT_DB_COLUMNS.filter((c) => c !== 'id'),
-  PRODUCTS_CREATED_AT_COLUMN,
-].join(',')
-
-const PRODUCTS_ROW_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-export function isProductsTableRowUuid(value) {
-  return PRODUCTS_ROW_UUID_RE.test(String(value ?? '').trim())
-}
-
-/** UUID `products.id` từ biến thể catalog (productsDbId / raw.id / tra cứu ma_hang). */
-export function resolveProductsDbIdForDisplayVariant(catalogProducts, variant) {
-  const direct = String(
-    variant?.productsDbId ?? variant?.product_id ?? variant?.raw?.id ?? ''
-  ).trim()
-  if (isProductsTableRowUuid(direct)) return direct
-
-  const flat = flattenDisplayCatalogToVariants(catalogProducts)
-  const vid = String(variant?.id ?? variant?.variantId ?? '').trim()
-  const code = String(variant?.code ?? variant?.ma_hang ?? '').trim().toLowerCase()
-
-  if (vid) {
-    const byVid = flat.find((v) => String(v.id ?? '') === vid)
-    const fromVid = String(byVid?.productsDbId ?? byVid?.product_id ?? byVid?.raw?.id ?? '').trim()
-    if (isProductsTableRowUuid(fromVid)) return fromVid
-  }
-  if (code) {
-    const byCode = flat.find((v) => String(v.code ?? '').trim().toLowerCase() === code)
-    const fromCode = String(byCode?.productsDbId ?? byCode?.product_id ?? byCode?.raw?.id ?? '').trim()
-    if (isProductsTableRowUuid(fromCode)) return fromCode
-  }
-  return ''
-}
+/** Danh sách cột SELECT khi đọc `products`. */
+const PRODUCTS_FETCH_COLUMNS = [...CATALOG_PRODUCT_DB_COLUMNS, PRODUCTS_CREATED_AT_COLUMN].join(',')
 
 /** Giới hạn `in('ma_hang', …)` mỗi request (độ dài URL PostgREST). */
 const PRODUCTS_IN_QUERY_CHUNK = 200
@@ -416,9 +381,7 @@ function displayVariantToProductsRow(v) {
     sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0
   const isCombo = variantIsComboForPersist(v)
   const comboBom = isCombo && Array.isArray(v?.comboBom) ? v.comboBom : []
-  const productsDbId = String(v?.productsDbId ?? v?.raw?.id ?? '').trim()
   return {
-    ...(productsDbId ? { id: productsDbId } : {}),
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
     ten_hang: dbTextCell(v?.name),
@@ -1260,49 +1223,33 @@ export async function fetchMaxHhNumericSequenceFromSupabase() {
   return fetchMaxMaHangNumericFromSupabase()
 }
 
-function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false, omitRowId = false } = {}) {
+function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) {
   const raw = pickProductRowDbColumns(displayVariantToProductsRow(variant))
-  if (omitRowId) delete raw.id
   const allow = new Set(
     omitMaHang
       ? CATALOG_PRODUCT_DB_COLUMNS.filter((k) => k !== PRODUCT_PK_COLUMN)
       : CATALOG_PRODUCT_DB_COLUMNS
   )
-  if (omitRowId) allow.delete('id')
   return finalizeProductRowForSupabase(raw, allow)
 }
 
-/**
- * UPDATE một dòng `products` theo UUID `id` (ổn định khi đổi `ma_hang`).
- */
+/** UPDATE một dòng `products` theo `ma_hang` cũ (để đổi mã hàng không tạo dòng mới). */
 export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const dbId = String(
-    options.productsDbId ??
-      resolveProductsDbIdForDisplayVariant(options.catalogProducts, variant) ??
-      ''
-  ).trim()
-  if (!isProductsTableRowUuid(dbId)) {
-    const code = String(variant?.code ?? '').trim()
-    return {
-      ok: false,
-      error: new Error(
-        code
-          ? `Thiếu id (UUID) sản phẩm «${code}» — tải lại danh mục hoặc kiểm tra cột id trên Supabase.`
-          : 'Thiếu id (UUID) sản phẩm trên Supabase — không thể cập nhật.'
-      ),
-    }
+  const oldMaHang = String(options.oldMaHang ?? variant?.persistMaHang ?? variant?.code ?? '').trim()
+  if (!oldMaHang) {
+    return { ok: false, error: new Error('Thiếu mã hàng cũ (old_ma_hang) để cập nhật.') }
   }
   const sb = getSupabaseClient()
   if (!sb) {
     return { ok: false, error: new Error('Không tạo được Supabase client.') }
   }
-  const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: false, omitRowId: true })
+  const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: false })
   try {
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
       .update(fin)
-      .eq('id', dbId)
+      .eq(PRODUCT_PK_COLUMN, oldMaHang)
       .select('*')
     if (error) throw error
     const rows = Array.isArray(data) ? data : []
@@ -1382,7 +1329,7 @@ export async function insertSingleProductFromDisplayVariant(variant) {
 /**
  * Cập nhật lần lượt từng biến thể — dùng cho sửa giá/tồn/1 vài SP.
  */
-export async function updateProductDisplayVariantsSequential(flatVariants, catalogProducts = []) {
+export async function updateProductDisplayVariantsSequential(flatVariants) {
   if (!Array.isArray(flatVariants) || flatVariants.length === 0) {
     return { ok: false, error: new Error('Không có sản phẩm để cập nhật.') }
   }
@@ -1391,17 +1338,15 @@ export async function updateProductDisplayVariantsSequential(flatVariants, catal
   }
   let written = 0
   for (const v of flatVariants) {
-    const dbId = resolveProductsDbIdForDisplayVariant(catalogProducts, v)
     const r = await updateSingleProductFromDisplayVariant(v, {
-      productsDbId: dbId,
-      catalogProducts,
+      oldMaHang: String(v?.persistMaHang ?? v?.code ?? '').trim(),
     })
     if (!r.ok) return { ok: false, error: r.error, written }
     if (r.updated === false) {
       return {
         ok: false,
         error: new Error(
-          `Không tìm thấy dòng products (id="${dbId}") để cập nhật — không tạo mới trong luồng sửa.`
+          `Không tìm thấy dòng products (ma_hang="${String(v?.persistMaHang ?? v?.code ?? '').trim()}") để cập nhật — không tạo mới trong luồng sửa.`
         ),
         written,
       }
@@ -1838,7 +1783,7 @@ export async function fetchComboUnitCostFromSupabaseByMaHang(maHang, catalogList
       const part = compCodes.slice(i, i + PRODUCTS_IN_QUERY_CHUNK)
       const { data: rows, error: err2 } = await sb
         .from(PRODUCTS_TABLE)
-        .select(`id, ${PRODUCT_PK_COLUMN}, gia_von`)
+        .select(`${PRODUCT_PK_COLUMN}, gia_von`)
         .in(PRODUCT_PK_COLUMN, part)
       if (err2) throw err2
       const costByCode = new Map()
@@ -1872,7 +1817,7 @@ export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
     const part = uniq.slice(i, i + MA_HANG_LOOKUP_CHUNK)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
-      .select(`id, ${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi`)
+      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi`)
       .in(PRODUCT_PK_COLUMN, part)
     if (error) throw error
     for (const row of data || []) {
@@ -1914,11 +1859,8 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
   const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
-  const productsDbId = String(row.id ?? '').trim()
   const flat = {
     id: `sb-${rowIndex}-${code}`,
-    productsDbId,
-    product_id: productsDbId,
     code,
     barcode,
     name,
@@ -1980,8 +1922,6 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
       return applyComboMetadataToDisplayVariant(
         {
           ...v,
-          productsDbId: live.productsDbId ?? v.productsDbId,
-          product_id: live.product_id ?? live.productsDbId ?? v.product_id ?? v.productsDbId,
           price: live.price,
           wholesalePrice: live.wholesalePrice,
           cost: live.cost,
