@@ -381,7 +381,9 @@ function displayVariantToProductsRow(v) {
     sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0
   const isCombo = variantIsComboForPersist(v)
   const comboBom = isCombo && Array.isArray(v?.comboBom) ? v.comboBom : []
+  const productsDbId = String(v?.productsDbId ?? v?.raw?.id ?? '').trim()
   return {
+    ...(productsDbId ? { id: productsDbId } : {}),
     ma_hang: maHang,
     ma_vach: dbTextCell(v?.barcode),
     ten_hang: dbTextCell(v?.name),
@@ -1234,16 +1236,18 @@ function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) 
 }
 
 /**
- * UPDATE trực tiếp một dòng `products` theo khóa `ma_hang` gốc (không snapshot, không bulk).
- * @param {object} variant — dữ liệu mới (có thể đổi `code` / ma_hang)
- * @param {{ updateKeyMaHang?: string }} [options] — `ma_hang` trên DB trước khi sửa (bắt buộc khi đổi mã)
+ * UPDATE một dòng `products` theo UUID `id` (ổn định khi đổi `ma_hang`).
  */
 export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const newMaHang = String(variant?.code ?? '').trim()
-  const lookupMaHang = String(options.updateKeyMaHang ?? variant?.persistMaHang ?? newMaHang).trim()
-  if (!lookupMaHang) {
-    return { ok: false, error: new Error('Thiếu mã hàng (ma_hang) để cập nhật.') }
+  const dbId = String(
+    options.productsDbId ?? variant?.productsDbId ?? variant?.raw?.id ?? ''
+  ).trim()
+  if (!dbId) {
+    return {
+      ok: false,
+      error: new Error('Thiếu id (UUID) sản phẩm trên Supabase — không thể cập nhật.'),
+    }
   }
   const sb = getSupabaseClient()
   if (!sb) {
@@ -1254,7 +1258,7 @@ export async function updateSingleProductFromDisplayVariant(variant, options = {
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
       .update(fin)
-      .eq(PRODUCT_PK_COLUMN, lookupMaHang)
+      .eq('id', dbId)
       .select('*')
     if (error) throw error
     const rows = Array.isArray(data) ? data : []
@@ -1343,14 +1347,14 @@ export async function updateProductDisplayVariantsSequential(flatVariants) {
   }
   let written = 0
   for (const v of flatVariants) {
-    const lookupMaHang = String(v?.persistMaHang ?? v?.code ?? '').trim()
-    const r = await updateSingleProductFromDisplayVariant(v, { updateKeyMaHang: lookupMaHang })
+    const dbId = String(v?.productsDbId ?? v?.raw?.id ?? '').trim()
+    const r = await updateSingleProductFromDisplayVariant(v, { productsDbId: dbId })
     if (!r.ok) return { ok: false, error: r.error, written }
     if (r.updated === false) {
       return {
         ok: false,
         error: new Error(
-          `Không tìm thấy dòng products (ma_hang="${lookupMaHang}") để cập nhật — không tạo mới trong luồng sửa.`
+          `Không tìm thấy dòng products (id="${dbId}") để cập nhật — không tạo mới trong luồng sửa.`
         ),
         written,
       }
@@ -1863,8 +1867,10 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
   const stockNormMaxRaw = String(row.ton_lon_nhat ?? '').trim()
   const stockNormMin = stockNormMinRaw ? parseStockQty(stockNormMinRaw) : null
   const stockNormMax = stockNormMaxRaw ? parseStockQty(stockNormMaxRaw) : null
+  const productsDbId = String(row.id ?? '').trim()
   const flat = {
     id: `sb-${rowIndex}-${code}`,
+    productsDbId,
     code,
     barcode,
     name,
@@ -1926,6 +1932,7 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
       return applyComboMetadataToDisplayVariant(
         {
           ...v,
+          productsDbId: live.productsDbId ?? v.productsDbId,
           price: live.price,
           wholesalePrice: live.wholesalePrice,
           cost: live.cost,

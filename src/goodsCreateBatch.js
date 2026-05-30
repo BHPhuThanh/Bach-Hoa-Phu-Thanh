@@ -60,13 +60,14 @@ export function patchGoodsCreateBatchRow(rows, index, field, value) {
 
 export function patchGoodsCreateBatchExtraUnit(rows, rowIndex, unitIndex, field, value) {
   if (!Array.isArray(rows) || rowIndex < 0 || rowIndex >= rows.length) return rows
-  return rows.map((row, i) => {
-    if (i !== rowIndex) return row
-    const units = Array.isArray(row.donViTinh) ? [...row.donViTinh] : []
-    if (unitIndex < 0 || unitIndex >= units.length) return row
-    units[unitIndex] = { ...units[unitIndex], [field]: value }
-    return { ...row, donViTinh: units }
-  })
+  const next = [...rows]
+  const row = next[rowIndex]
+  if (!row) return rows
+  const units = [...(row.donViTinh || [])]
+  if (unitIndex < 0 || unitIndex >= units.length) return rows
+  units[unitIndex] = { ...units[unitIndex], [field]: value }
+  next[rowIndex] = { ...row, donViTinh: units }
+  return next
 }
 
 export function addGoodsCreateBatchExtraUnit(rows, rowIndex) {
@@ -84,11 +85,18 @@ export function addGoodsCreateBatchExtraUnit(rows, rowIndex) {
 
 export function removeGoodsCreateBatchExtraUnit(rows, rowIndex, unitIndex) {
   if (!Array.isArray(rows) || rowIndex < 0 || rowIndex >= rows.length) return rows
-  return rows.map((row, i) => {
-    if (i !== rowIndex) return row
-    const units = (row.donViTinh || []).filter((_, j) => j !== unitIndex)
-    return { ...row, donViTinh: units, extraUnitsOpen: units.length > 0 ? row.extraUnitsOpen : false }
-  })
+  const next = [...rows]
+  const row = next[rowIndex]
+  if (!row) return rows
+  const units = [...(row.donViTinh || [])]
+  if (unitIndex < 0 || unitIndex >= units.length) return rows
+  units.splice(unitIndex, 1)
+  next[rowIndex] = {
+    ...row,
+    donViTinh: units,
+    extraUnitsOpen: units.length > 0 ? row.extraUnitsOpen : false,
+  }
+  return next
 }
 
 function catalogBarcodeSet(catalogList) {

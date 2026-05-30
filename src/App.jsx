@@ -3287,14 +3287,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
 
+          const flatPrev = flattenDisplayCatalogToVariants(prev)
+          const targetBefore = flatPrev.find((x) => String(x?.id) === String(variantId))
           const r = await updateProductDisplayVariantsSequential(
-            upsertOnly.map((v) => ({
-              ...v,
-              persistMaHang:
-                String(v.id) === String(variantId) && oldCode && newCode && oldCode !== newCode
-                  ? oldCode
-                  : String(v.code ?? '').trim(),
-            }))
+            upsertOnly.map((v) => {
+              const prevRow = flatPrev.find((x) => String(x?.id) === String(v?.id))
+              const productsDbId = String(
+                v?.productsDbId ?? prevRow?.productsDbId ?? prevRow?.raw?.id ?? targetBefore?.productsDbId ?? targetBefore?.raw?.id ?? ''
+              ).trim()
+              return { ...v, productsDbId }
+            })
           )
           if (!r.ok) {
             throw r.error || new Error(describeCatalogPersistError(r.error))

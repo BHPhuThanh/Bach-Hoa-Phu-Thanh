@@ -263,27 +263,23 @@ export default function AdminHubGoodsCreateModal({
 
   const patchGoodsCreateBatchExtraField = useCallback(
     (rowIndex, unitIndex, field, value) => {
-      const nextRows = patchGoodsCreateBatchExtraUnit(
-        goodsCreateBatchRowsRef.current,
-        rowIndex,
-        unitIndex,
-        field,
-        value
-      )
-      goodsCreateBatchRowsRef.current = nextRows
-      setGoodsCreateBatchRows(nextRows)
-      if (field === 'barcode') {
-        const row = nextRows[rowIndex]
-        const unit = row?.donViTinh?.[unitIndex]
-        if (row && unit?.unitId) {
-          const debKey = `deb-${batchBarcodeFieldKey(row.rowId, unit.unitId)}`
-          if (batchBarcodeDebounceRef.current[debKey]) {
-            window.clearTimeout(batchBarcodeDebounceRef.current[debKey])
-            delete batchBarcodeDebounceRef.current[debKey]
+      setGoodsCreateBatchRows((prev) => {
+        const nextRows = patchGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex, field, value)
+        goodsCreateBatchRowsRef.current = nextRows
+        if (field === 'barcode') {
+          const row = nextRows[rowIndex]
+          const unit = row?.donViTinh?.[unitIndex]
+          if (row && unit?.unitId) {
+            const debKey = `deb-${batchBarcodeFieldKey(row.rowId, unit.unitId)}`
+            if (batchBarcodeDebounceRef.current[debKey]) {
+              window.clearTimeout(batchBarcodeDebounceRef.current[debKey])
+              delete batchBarcodeDebounceRef.current[debKey]
+            }
           }
+          recomputeBatchBarcodeErrors(nextRows)
         }
-        recomputeBatchBarcodeErrors(nextRows)
-      }
+        return nextRows
+      })
     },
     [recomputeBatchBarcodeErrors]
   )
@@ -294,14 +290,12 @@ export default function AdminHubGoodsCreateModal({
 
   const removeGoodsCreateBatchExtraUnitRow = useCallback(
     (rowIndex, unitIndex) => {
-      const nextRows = removeGoodsCreateBatchExtraUnit(
-        goodsCreateBatchRowsRef.current,
-        rowIndex,
-        unitIndex
-      )
-      goodsCreateBatchRowsRef.current = nextRows
-      setGoodsCreateBatchRows(nextRows)
-      recomputeBatchBarcodeErrors(nextRows)
+      setGoodsCreateBatchRows((prev) => {
+        const nextRows = removeGoodsCreateBatchExtraUnit(prev, rowIndex, unitIndex)
+        goodsCreateBatchRowsRef.current = nextRows
+        recomputeBatchBarcodeErrors(nextRows)
+        return nextRows
+      })
     },
     [recomputeBatchBarcodeErrors]
   )
@@ -891,12 +885,16 @@ export default function AdminHubGoodsCreateModal({
   const removeUnitModalRowKey = useCallback((key) => {
     setGcUnitModal((m) => {
       if (!m || m.lines.length <= 1) return m
+      const removed = m.lines.find((r) => r.key === key)
+      const deletedVariantIds = [...(m.deletedVariantIds || [])]
+      const vid = String(removed?.variantId ?? '').trim()
+      if (vid) deletedVariantIds.push(vid)
       let lines = m.lines.filter((r) => r.key !== key)
       lines = sortUnitModalLinesByConversion(lines)
       const bc = parseMoneyDigitsVi(lines[0].cost)
       const bp = parseMoneyDigitsVi(lines[0].price)
       lines = propagateBaseUnitMoney(lines, bc, bp)
-      return { ...m, lines }
+      return { ...m, lines, deletedVariantIds }
     })
   }, [])
 

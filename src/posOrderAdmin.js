@@ -68,10 +68,7 @@ export function posOrderLineUnitCostFromStoredOrder(item) {
   return null
 }
 
-/**
- * Ledger trả hàng — chỉ đọc lineRevenue / lineCost / lineProfit đã lưu trên đơn gốc.
- * @returns {{ lineRefund: number, lineCostReturn: number, lineProfitReversal: number, unitCost: number }}
- */
+/** Ledger trả hàng — chỉ lấy doanh thu / lợi nhuận đã lưu trên đơn gốc. */
 export function posReturnLedgerAmountsFromStoredOrderLine(item, returnQty) {
   const qOrder = Math.max(0, Number(item?.qty) || 0)
   const qRet = Math.max(0, Number(returnQty) || 0)
@@ -79,21 +76,20 @@ export function posReturnLedgerAmountsFromStoredOrderLine(item, returnQty) {
     return { lineRefund: 0, lineCostReturn: 0, lineProfitReversal: 0, unitCost: 0 }
   }
   const price = Math.max(0, Number(item?.price) || 0)
-  const lineRevenue = Number.isFinite(Number(item?.lineRevenue))
-    ? Number(item.lineRevenue)
-    : Math.round(price * qOrder)
-  const lineCost = Number.isFinite(Number(item?.lineCost))
-    ? Number(item.lineCost)
-    : Math.round((Number(item?.cost) || 0) * qOrder)
-  const lineProfit = Number.isFinite(Number(item?.lineProfit))
-    ? Number(item.lineProfit)
-    : lineRevenue - lineCost
-  const share = qOrder > 0 ? qRet / qOrder : 1
-  const lineRefund = Math.round(lineRevenue * share)
-  const lineCostReturn = Math.round(lineCost * share)
-  const lineProfitReversal = Math.round(lineProfit * share)
-  const unitCost = qRet > 0 ? Math.round(lineCostReturn / qRet) : 0
-  return { lineRefund, lineCostReturn, lineProfitReversal, unitCost }
+  const revStored = Number(item?.lineRevenue ?? item?.line_revenue)
+  const profStored = Number(item?.lineProfit ?? item?.line_profit ?? item?.profit)
+  const revTotal = Number.isFinite(revStored) ? revStored : Math.round(price * qOrder)
+  const profTotal = Number.isFinite(profStored) ? profStored : 0
+  const share = qOrder > 0 ? qRet / qOrder : 0
+  const lineRefund = Math.round(revTotal * share)
+  const lineProfitReversal = Math.round(profTotal * share)
+  const lineCostReturn = lineRefund - lineProfitReversal
+  return {
+    lineRefund,
+    lineCostReturn,
+    lineProfitReversal,
+    unitCost: qRet > 0 ? Math.round(lineCostReturn / qRet) : 0,
+  }
 }
 
 export function posOrderLineReturnableQty(it) {
