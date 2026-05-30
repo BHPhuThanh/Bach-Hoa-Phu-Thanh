@@ -1,4 +1,5 @@
 import { normalizePosOrder } from './posOrderAdmin.js'
+import { ledgerProfitSubFromParts } from './posReturnLedgerRepository.js'
 
 /** Khoảng thời gian báo cáo trên Dashboard */
 export const RANGE_TODAY = 'today'
@@ -177,10 +178,7 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
         const baseInv = inv || oid || '—'
         const revenueSub = Math.max(0, Number(e.revenueSub) || 0)
         const costSub = Math.max(0, Number(e.costSub) || 0)
-        const profitSubStored = Number(e.profitSub)
-        const profitReversal = Number.isFinite(profitSubStored)
-          ? Math.max(0, profitSubStored)
-          : Math.max(0, revenueSub - costSub)
+        const profitReversal = ledgerProfitSubFromParts(e, revenueSub, costSub)
         const at = Number(e.atMs)
         const idKey = String(e.id != null ? e.id : '').trim() || `${at}-${oid}`
         return {

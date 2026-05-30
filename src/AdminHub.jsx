@@ -122,6 +122,7 @@ import {
   deletePosReturnLedgerByOrderId,
   fetchPosReturnLedgerEntries,
   insertPosReturnLedgerEntry,
+  ledgerProfitSubFromParts,
   migrateLocalPosReturnLedgerToSupabaseOnce,
   POS_RETURN_LEDGER_BUMP_EVENT,
 } from './posReturnLedgerRepository.js'
@@ -1594,6 +1595,19 @@ export default function AdminHub({
       )
       const revenue = Math.round(salesRevenue - returnsRevenue)
 
+      const returnLedgerEntries = filterPosReturnLedgerEntriesForReport(
+        returnDayLedger,
+        ovRange,
+        ovFrom,
+        ovTo
+      )
+      const returnsProfitReversal = Math.round(
+        returnLedgerEntries.reduce(
+          (sum, e) => sum + ledgerProfitSubFromParts(e, e.revenueSub, e.costSub),
+          0
+        )
+      )
+
       // QUAN TRỌNG: Tiền vốn chỉ tính đơn bán HD, không cộng/trừ đơn TH.
       const cost = Math.round(
         salesOrders.reduce(
@@ -1601,7 +1615,10 @@ export default function AdminHub({
           0
         )
       )
-      const profit = Math.round(revenue - cost)
+      const salesProfit = Math.round(
+        salesOrders.reduce((sum, o) => Math.round(sum + orderTotalProfit(o)), 0)
+      )
+      const profit = Math.round(salesProfit - returnsProfitReversal)
       return { revenue, cost, profit, count: ovFiltered.length, countAll: orders.length }
     } catch (err) {
       console.error('[AdminHub ovStats]', err)
@@ -1613,7 +1630,7 @@ export default function AdminHub({
         countAll: orders.length,
       }
     }
-  }, [ovFiltered, ovRevenueTableRows, orders.length, catalogList])
+  }, [ovFiltered, ovRevenueTableRows, orders.length, catalogList, returnDayLedger, ovRange, ovFrom, ovTo])
 
   /** Biến thể vừa thêm qua modal «Tạo mới» trên phiếu nhập (chờ `products` từ App kịp cập nhật). Được dọn trong useLayoutEffect khi đã có trong danh mục. */
   const [inboundPendingNewFlatVariants, setInboundPendingNewFlatVariants] = useState([])
@@ -5782,16 +5799,17 @@ export default function AdminHub({
                 orderQty) *
               draft
             : 0
+        const lineProfitReversalRounded = Math.round(lineProfitReversal)
         const { lineRefund, lineCostReturn, unitCost } =
           posReturnLedgerAmountsFromStoredOrderLine(originalOrderLine, draft)
         revenueSub += lineRefund
-        costSub += lineRefund - Math.round(lineProfitReversal)
-        profitSub += lineProfitReversal
+        costSub += lineCostReturn
+        profitSub += lineProfitReversalRounded
         console.error('--- DEBUG TRẢ HÀNG COMBO ---', {
           line_profit: originalOrderLine.lineProfit ?? originalOrderLine.line_profit,
           revenue: originalOrderLine.lineRevenue ?? originalOrderLine.line_revenue,
           qty: orderQty,
-          profitSub_ket_qua: lineProfitReversal,
+          profitSub_ket_qua: lineProfitReversalRounded,
         })
         returnLines.push({
           code: String(it.code || '').trim(),
@@ -5801,8 +5819,8 @@ export default function AdminHub({
           unitRefund: Math.round(Math.max(0, Number(it.price) || 0)),
           unitCost,
           lineRefund,
-          lineCostReturn: lineRefund - Math.round(lineProfitReversal),
-          lineProfitReversal,
+          lineCostReturn,
+          lineProfitReversal: lineProfitReversalRounded,
           variantId: String(it.variantId || '').trim(),
         })
         const prevR = Math.max(0, Number(it.returnedQty) || 0)
@@ -5855,13 +5873,21 @@ export default function AdminHub({
         { preferStoredLineFinancials: true }
       )
       await persistPosOrderAndReload(merged)
-      console.log('KIỂM TRA HOÀN COMBO:', { revenueSub, costSub, profitSub })
+      const profitSubRounded = Math.round(profitSub)
+      const revenueSubRounded = Math.round(revenueSub)
+      const costSubRounded = Math.round(costSub)
+      console.error('--- DEBUG TRƯỚC INSERT LEDGER ---', {
+        revenueSub: revenueSubRounded,
+        costSub: costSubRounded,
+        profitSub: profitSubRounded,
+        profit_delta: -profitSubRounded,
+      })
       const ins = await insertPosReturnLedgerEntry({
         atMs: Date.now(),
         orderId: String(base.id || ''),
-        revenueSub,
-        costSub,
-        profitSub,
+        revenueSub: revenueSubRounded,
+        costSub: costSubRounded,
+        profitSub: profitSubRounded,
         sourceInvoiceNo: String(base.invoiceNo || '').trim(),
         lines: returnLines,
       })

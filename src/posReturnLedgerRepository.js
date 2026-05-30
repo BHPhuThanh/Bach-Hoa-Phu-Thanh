@@ -49,6 +49,7 @@ export async function migrateLocalPosReturnLedgerToSupabaseOnce() {
       orderId: e.orderId,
       revenueSub: e.revenueSub,
       costSub: e.costSub,
+      profitSub: e.profitSub,
       sourceInvoiceNo: e.sourceInvoiceNo,
       lines: e.lines,
     })
@@ -71,6 +72,17 @@ function newLedgerEntryId() {
     : `ret-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+/** Lợi nhuận hoàn trả đã tính sẵn — không suy lại từ revenue − cost khi payload có `profitSub`. */
+export function ledgerProfitSubFromParts(source, revenueSub, costSub) {
+  const rev = Math.max(0, Number(revenueSub) || 0)
+  const cost = Math.max(0, Number(costSub) || 0)
+  if (source != null && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, 'profitSub')) {
+    const explicit = Number(source.profitSub)
+    if (Number.isFinite(explicit)) return Math.max(0, Math.round(explicit))
+  }
+  return Math.max(0, Math.round(rev - cost))
+}
+
 function normalizeLedgerEntryFromPayload(row) {
   if (!row || typeof row !== 'object') return null
   const p = row.payload && typeof row.payload === 'object' ? row.payload : row
@@ -82,10 +94,7 @@ function normalizeLedgerEntryFromPayload(row) {
         : Date.now()
   const revenueSub = Number(p.revenueSub)
   const costSub = Number(p.costSub)
-  const profitSubRaw = Number(p.profitSub)
-  const profitSub = Number.isFinite(profitSubRaw)
-    ? Math.max(0, profitSubRaw)
-    : Math.max(0, revenueSub - costSub)
+  const profitSub = ledgerProfitSubFromParts(p, revenueSub, costSub)
   if (!Number.isFinite(atMs) || !Number.isFinite(revenueSub) || !Number.isFinite(costSub)) {
     return null
   }
@@ -115,20 +124,25 @@ function normalizeLedgerEntryFromPayload(row) {
  * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, entry?: object }>}
  */
 export async function insertPosReturnLedgerEntry(entry) {
-  const revenueSub = Math.max(0, Number(entry.revenueSub) || 0)
-  const costSub = Math.max(0, Number(entry.costSub) || 0)
-  const profitSubExplicit = Number(entry.profitSub)
-  const profitSub = Number.isFinite(profitSubExplicit)
-    ? Math.max(0, profitSubExplicit)
-    : Math.max(0, revenueSub - costSub)
+  const revenueSub = Math.max(0, Math.round(Number(entry.revenueSub) || 0))
+  const costSub = Math.max(0, Math.round(Number(entry.costSub) || 0))
+  const profitSub = ledgerProfitSubFromParts(entry, revenueSub, costSub)
+  const profit_delta = -profitSub
   const payload = stripUndefinedDeep({
     atMs: entry.atMs,
     orderId: String(entry.orderId || '').trim(),
     revenueSub,
     costSub,
     profitSub,
+    profit_delta,
     sourceInvoiceNo: String(entry.sourceInvoiceNo || '').trim(),
     lines: Array.isArray(entry.lines) ? entry.lines : [],
+  })
+  console.error('--- DEBUG INSERT pos_return_ledger ---', {
+    revenueSub: payload.revenueSub,
+    costSub: payload.costSub,
+    profitSub: payload.profitSub,
+    profit_delta: payload.profit_delta,
   })
   const order_id = payload.orderId
   if (!order_id) {
