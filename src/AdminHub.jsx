@@ -3158,8 +3158,11 @@ export default function AdminHub({
         const sb = getSupabaseClient()
         if (!sb) throw new Error('Không tạo được Supabase client.')
         const payloadToUpsert = newProducts.map((p) => ({
-          ma_hang: p.ma_hang,
-          dvt: p.don_vi_tinh,
+          ma_hang: String(p.ma_hang ?? '')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '')
+            .replace(/\u00A0/g, ' ')
+            .trim(),
+          don_vi_tinh: p.don_vi_tinh,
           ma_vach: p.ma_vach,
           ten_hang: p.ten_hang,
           thuong_hieu: p.thuong_hieu,
@@ -3173,14 +3176,47 @@ export default function AdminHub({
           window.alert('Payload rỗng! Dừng lại!')
           return
         }
-        const { data, error } = await sb.from('products').upsert(payloadToUpsert).select('*')
-        if (error) {
-          console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
-          throw error
+        let updatedCount = 0
+        for (const item of payloadToUpsert) {
+          const eqMa = String(item.ma_hang ?? '').trim()
+          const { data, error } = await sb
+            .from('products')
+            .update({
+              dvt: item.don_vi_tinh,
+              ma_vach: item.ma_vach,
+              ten_hang: item.ten_hang,
+              thuong_hieu: item.thuong_hieu,
+              gia_ban: item.gia_ban,
+              gia_von: item.gia_von,
+              ton_kho: item.ton_kho,
+              quy_doi: item.quy_doi,
+            })
+            .eq('ma_hang', eqMa)
+            .select('ma_hang, dvt')
+          if (error) {
+            console.error('Lỗi Update ĐVT:', error, { item })
+            window.alert(
+              `Lỗi Update ĐVT (${eqMa}): ${error.message || JSON.stringify(error)}`
+            )
+            return
+          }
+          if (!Array.isArray(data) || data.length === 0) {
+            console.error('Lỗi Update ĐVT: không tìm thấy dòng ma_hang=', `'${eqMa}'`, item)
+            const { data: maList, error: listErr } = await sb.from('products').select('ma_hang').limit(5000)
+            if (!listErr) {
+              console.log(
+                'Danh sách ma_hang trong DB:',
+                (maList || []).map((r) => `'${String(r.ma_hang ?? '')}'`)
+              )
+            }
+            window.alert(`Không tìm thấy sản phẩm ma_hang="${eqMa}" trên Supabase.`)
+            return
+          }
+          updatedCount += data.length
         }
-        if (!Array.isArray(data) || data.length === 0) {
+        if (updatedCount === 0) {
           console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
-          window.alert('Lưu ĐVT thất bại: Supabase không trả về dòng đã ghi.')
+          window.alert('Lưu ĐVT thất bại: không có dòng nào được cập nhật.')
           return
         }
       } catch (e) {

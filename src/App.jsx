@@ -3202,13 +3202,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const handleUpdateCatalogVariant = useCallback(async (variantId, patch, oldMaHang) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
+      const cleanMaHangKey = (raw) =>
+        String(raw ?? '')
+          .replace(/[\u200B-\u200D\uFEFF]/g, '')
+          .replace(/\u00A0/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
       const prev = productsRef.current
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
       if (!target) return { ok: false, error: new Error('Không tìm thấy sản phẩm trong danh mục.') }
       const product = {
         ...target,
-        ma_hang: String(oldMaHang ?? target.code ?? '').trim(),
+        ma_hang: cleanMaHangKey(oldMaHang ?? target.code ?? ''),
       }
       const originalMaHang = product.ma_hang
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
@@ -3302,18 +3308,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           if (!sb) throw new Error('Không tạo được Supabase client.')
 
           for (const v of upsertOnly) {
-            const eqMaHang =
+            const rawEq =
               String(v.id) === String(variantId)
-                ? originalMaHang
-                : String(flatPrev.find((x) => String(x?.id) === String(v.id))?.code ?? '').trim()
-            if (!eqMaHang) {
+                ? product.ma_hang
+                : flatPrev.find((x) => String(x?.id) === String(v.id))?.code ?? ''
+            const cleanMaHang = cleanMaHangKey(rawEq)
+            if (!cleanMaHang) {
               throw new Error('Thiếu mã hàng gốc để cập nhật (eq ma_hang).')
             }
-            const newCode = String(v.code ?? '').trim()
+            const newCode = cleanMaHangKey(v.code ?? '')
             const sqRaw = v.stockQty ?? v.ton_kho
             const sqNum = Number(sqRaw)
-            const payload = {
-              ma_hang: newCode,
+            const rowPayload = {
               ma_vach: String(v.barcode ?? '').trim(),
               ten_hang: String(v.name ?? '').trim(),
               thuong_hieu: String(v.brand ?? '').trim(),
@@ -3329,21 +3335,37 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   ? String(v.conversion)
                   : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
             }
+            console.log('ĐANG TÌM MÃ HÀNG ĐỂ UPDATE:', `'${cleanMaHang}'`, '→', `'${newCode}'`)
             const { data, error } = await sb
               .from('products')
-              .update(payload)
-              .eq('ma_hang', eqMaHang)
+              .update({ ma_hang: newCode, ...rowPayload })
+              .eq('ma_hang', cleanMaHang)
               .select('*')
             if (error) {
               console.error('Lỗi Update:', error)
               throw error
             }
             if (!Array.isArray(data) || data.length === 0) {
+              const { data: maList, error: listErr } = await sb
+                .from('products')
+                .select('ma_hang')
+                .limit(5000)
+              if (listErr) {
+                console.error('Không đọc được danh sách ma_hang:', listErr)
+              } else {
+                console.log(
+                  'Danh sách ma_hang trong DB (so sánh với',
+                  `'${cleanMaHang}'`,
+                  '):',
+                  (maList || []).map((r) => `'${String(r.ma_hang ?? '')}'`)
+                )
+              }
               console.error('Lỗi Update: không có dòng nào được cập nhật', {
-                eqMaHang,
-                payload,
+                cleanMaHang,
+                newCode,
+                rowPayload,
               })
-              throw new Error(`Không cập nhật được sản phẩm ma_hang="${eqMaHang}".`)
+              throw new Error(`Không cập nhật được sản phẩm ma_hang="${cleanMaHang}".`)
             }
           }
 
