@@ -25,6 +25,7 @@ import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb
 import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
 import {
   CATALOG_PRODUCT_TYPE_COMBO,
+  computeDefaultComboCost,
   getComboBom,
   isComboCatalogProduct,
 } from './comboCatalog.js'
@@ -1708,6 +1709,73 @@ const MA_HANG_LOOKUP_CHUNK = 200
  * @param {Iterable<string>} maHangKeys
  * @returns {Promise<Map<string, Record<string, unknown>>>}
  */
+/**
+ * Fallback giá vốn combo từ DB (đơn cũ thiếu cost): `gia_von` hoặc BOM + giá vốn thành phần.
+ * @param {string} maHang
+ * @param {Array} [catalogList] — danh mục hiện tại để resolve variantId trong BOM
+ * @returns {Promise<number>}
+ */
+export async function fetchComboUnitCostFromSupabaseByMaHang(maHang, catalogList = []) {
+  const code = String(maHang ?? '').trim()
+  if (!code || !isSupabaseConfigured()) return 0
+  const sb = getSupabaseClient()
+  if (!sb) return 0
+  try {
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .select(PRODUCTS_FETCH_COLUMNS)
+      .eq(PRODUCT_PK_COLUMN, code)
+      .maybeSingle()
+    if (error) throw error
+    if (!data) return 0
+
+    const gv = Number(data.gia_von)
+    if (Number.isFinite(gv) && gv > 0) return Math.round(gv)
+
+    const bom = parseComboBomFromProductsDbRow(data)
+    if (!bom.length) return 0
+
+    let sum = computeDefaultComboCost(catalogList, bom)
+    if (sum > 0) return sum
+
+    const compCodes = [
+      ...new Set(
+        bom
+          .map((r) => String(r.codeSnap ?? r.ma_hang ?? r.code ?? '').trim())
+          .filter(Boolean)
+      ),
+    ]
+    if (compCodes.length === 0) return 0
+
+    let compSum = 0
+    for (let i = 0; i < compCodes.length; i += PRODUCTS_IN_QUERY_CHUNK) {
+      const part = compCodes.slice(i, i + PRODUCTS_IN_QUERY_CHUNK)
+      const { data: rows, error: err2 } = await sb
+        .from(PRODUCTS_TABLE)
+        .select(`${PRODUCT_PK_COLUMN}, gia_von`)
+        .in(PRODUCT_PK_COLUMN, part)
+      if (err2) throw err2
+      const costByCode = new Map()
+      for (const row of rows || []) {
+        const k = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
+        const c = Number(row.gia_von)
+        if (k && Number.isFinite(c) && c >= 0) costByCode.set(k, c)
+      }
+      for (const row of bom) {
+        const per = Number(row.qty)
+        if (!Number.isFinite(per) || per <= 0) continue
+        const k = String(row.codeSnap ?? row.ma_hang ?? row.code ?? '').trim()
+        const c = costByCode.get(k)
+        if (Number.isFinite(c)) compSum += c * per
+      }
+    }
+    return Math.round(compSum)
+  } catch (e) {
+    console.error('[catalogRepository] fetchComboUnitCostFromSupabaseByMaHang', code, e)
+    return 0
+  }
+}
+
 export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
   const uniq = [...new Set([...maHangKeys].map((x) => String(x ?? '').trim()).filter(Boolean))]
   const map = new Map()

@@ -82,6 +82,10 @@ function normalizeLedgerEntryFromPayload(row) {
         : Date.now()
   const revenueSub = Number(p.revenueSub)
   const costSub = Number(p.costSub)
+  const profitSubRaw = Number(p.profitSub)
+  const profitSub = Number.isFinite(profitSubRaw)
+    ? Math.max(0, profitSubRaw)
+    : Math.max(0, revenueSub - costSub)
   if (!Number.isFinite(atMs) || !Number.isFinite(revenueSub) || !Number.isFinite(costSub)) {
     return null
   }
@@ -92,6 +96,7 @@ function normalizeLedgerEntryFromPayload(row) {
     orderId: String(p.orderId ?? row.order_id ?? '').trim(),
     revenueSub,
     costSub,
+    profitSub,
     sourceInvoiceNo: String(p.sourceInvoiceNo ?? '').trim(),
     lines: Array.isArray(p.lines) ? p.lines : [],
   }
@@ -110,11 +115,18 @@ function normalizeLedgerEntryFromPayload(row) {
  * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, entry?: object }>}
  */
 export async function insertPosReturnLedgerEntry(entry) {
+  const revenueSub = Math.max(0, Number(entry.revenueSub) || 0)
+  const costSub = Math.max(0, Number(entry.costSub) || 0)
+  const profitSubExplicit = Number(entry.profitSub)
+  const profitSub = Number.isFinite(profitSubExplicit)
+    ? Math.max(0, profitSubExplicit)
+    : Math.max(0, revenueSub - costSub)
   const payload = stripUndefinedDeep({
     atMs: entry.atMs,
     orderId: String(entry.orderId || '').trim(),
-    revenueSub: Math.max(0, Number(entry.revenueSub) || 0),
-    costSub: Math.max(0, Number(entry.costSub) || 0),
+    revenueSub,
+    costSub,
+    profitSub,
     sourceInvoiceNo: String(entry.sourceInvoiceNo || '').trim(),
     lines: Array.isArray(entry.lines) ? entry.lines : [],
   })

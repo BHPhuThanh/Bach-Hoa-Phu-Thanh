@@ -177,6 +177,10 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
         const baseInv = inv || oid || '—'
         const revenueSub = Math.max(0, Number(e.revenueSub) || 0)
         const costSub = Math.max(0, Number(e.costSub) || 0)
+        const profitSubStored = Number(e.profitSub)
+        const profitReversal = Number.isFinite(profitSubStored)
+          ? Math.max(0, profitSubStored)
+          : Math.max(0, revenueSub - costSub)
         const at = Number(e.atMs)
         const idKey = String(e.id != null ? e.id : '').trim() || `${at}-${oid}`
         return {
@@ -187,7 +191,8 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
           invoiceNo: `TH-${baseInv}`,
           createdAt: Number.isFinite(at) ? new Date(at).toISOString() : new Date().toISOString(),
           displayTotal: -revenueSub,
-          displayProfit: costSub - revenueSub,
+          /** Âm = trừ LN khỏi báo cáo (vd. combo −3.100, không phải −15.000). */
+          displayProfit: -profitReversal,
         }
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())

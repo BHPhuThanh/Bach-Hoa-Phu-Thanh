@@ -96,7 +96,8 @@ import {
   buildOrderDeleteRestoreCartLines,
   buildPosReturnRestoreCartLines,
   resolvePosItemVariantId,
-  posOrderLineUnitCostForReturn,
+  resolvePosReturnLineUnitCost,
+  posOrderReturnProfitReversal,
 } from './posOrderAdmin.js'
 import {
   RANGE_CUSTOM,
@@ -5730,34 +5731,45 @@ export default function AdminHub({
       const base = normalizePosOrder(posReturnModal, catalogList, { preferStoredLineFinancials: true })
       let revenueSub = 0
       let costSub = 0
+      let profitSub = 0
       let anyTake = false
-      /** @type {Array<{ code: string, name: string, unitLabel: string, qtyReturned: number, unitRefund: number, lineRefund: number }>} */
+      /** @type {Array<object>} */
       const returnLines = []
       const returnQtyByLineId = new Map()
-      const newItems = base.items.map((it) => {
+      const newItems = []
+      for (const it of base.items) {
         const ret = posOrderLineReturnableQty(it)
         const draft = parseReturnQtyDraft(posReturnQtyDraft[it.orderLineId], ret)
-        if (draft <= 0) return it
+        if (draft <= 0) {
+          newItems.push(it)
+          continue
+        }
         anyTake = true
         returnQtyByLineId.set(it.orderLineId, draft)
         const price = Math.max(0, Number(it.price) || 0)
-        const unitCost = posOrderLineUnitCostForReturn(catalogList, it)
+        const unitCost = await resolvePosReturnLineUnitCost(catalogList, it)
         const lineRefund = Math.round(draft * price)
+        const lineCostReturn = Math.round(draft * unitCost)
+        const lineProfitReversal = posOrderReturnProfitReversal(it, draft, unitCost)
         revenueSub += lineRefund
-        costSub += Math.round(draft * unitCost)
+        costSub += lineCostReturn
+        profitSub += lineProfitReversal
         returnLines.push({
           code: String(it.code || '').trim(),
           name: String(it.name || '').trim(),
           unitLabel: String(it.unitLabel || '').trim() || '—',
           qtyReturned: draft,
           unitRefund: Math.round(price),
+          unitCost,
           lineRefund,
+          lineCostReturn,
+          lineProfitReversal,
           variantId: String(it.variantId || '').trim(),
         })
         const prevR = Math.max(0, Number(it.returnedQty) || 0)
         const q = Math.max(0, Number(it.qty) || 0)
-        return { ...it, returnedQty: Math.min(q, prevR + draft) }
-      })
+        newItems.push({ ...it, returnedQty: Math.min(q, prevR + draft) })
+      }
       if (!anyTake) {
         alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
         return
@@ -5809,6 +5821,7 @@ export default function AdminHub({
         orderId: String(base.id || ''),
         revenueSub,
         costSub,
+        profitSub,
         sourceInvoiceNo: String(base.invoiceNo || '').trim(),
         lines: returnLines,
       })
