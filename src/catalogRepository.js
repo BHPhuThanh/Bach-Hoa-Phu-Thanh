@@ -26,6 +26,7 @@ import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSche
 import {
   CATALOG_PRODUCT_TYPE_COMBO,
   computeDefaultComboCost,
+  enrichComboBomWithVariantIds,
   getComboBom,
   isComboCatalogProduct,
 } from './comboCatalog.js'
@@ -1715,6 +1716,31 @@ const MA_HANG_LOOKUP_CHUNK = 200
  * @param {Array} [catalogList] — danh mục hiện tại để resolve variantId trong BOM
  * @returns {Promise<number>}
  */
+/**
+ * BOM combo từ Supabase khi đơn / catalog không còn `combo_bom` trên dòng.
+ * @returns {Promise<Array<object>>}
+ */
+export async function fetchComboBomFromSupabaseByMaHang(maHang, catalogList = []) {
+  const code = String(maHang ?? '').trim()
+  if (!code || !isSupabaseConfigured()) return []
+  const sb = getSupabaseClient()
+  if (!sb) return []
+  try {
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .select(PRODUCTS_FETCH_COLUMNS)
+      .eq(PRODUCT_PK_COLUMN, code)
+      .maybeSingle()
+    if (error) throw error
+    if (!data) return []
+    const bom = parseComboBomFromProductsDbRow(data)
+    return enrichComboBomWithVariantIds(catalogList, bom)
+  } catch (e) {
+    console.error('[catalogRepository] fetchComboBomFromSupabaseByMaHang', code, e)
+    return []
+  }
+}
+
 export async function fetchComboUnitCostFromSupabaseByMaHang(maHang, catalogList = []) {
   const code = String(maHang ?? '').trim()
   if (!code || !isSupabaseConfigured()) return 0

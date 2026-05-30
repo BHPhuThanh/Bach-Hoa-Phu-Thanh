@@ -156,20 +156,80 @@ export function orderLineIsCombo(catalogList, item) {
     const p = findProductContainingVariantId(catalogList, vid)
     if (p && isComboCatalogProduct(p)) return true
   }
+  const code = String(item.code ?? '').trim()
+  if (code && findComboProductByMaHang(catalogList, code)) return true
   return false
 }
 
+/** Tìm sản phẩm combo theo `ma_hang` (mã dòng đơn). */
+export function findComboProductByMaHang(catalogList, maHang) {
+  const k = String(maHang ?? '').trim().toLowerCase()
+  if (!k) return null
+  for (const p of catalogList || []) {
+    if (!isComboCatalogProduct(p)) continue
+    for (const v of p.groupVariants || [p]) {
+      if (String(v.code ?? '').trim().toLowerCase() === k) return p
+    }
+  }
+  return null
+}
+
+/** `variant.id` từ mã hàng trong catalog hiện tại. */
+export function findVariantIdByMaHangInCatalog(catalogList, maHang) {
+  const k = String(maHang ?? '').trim().toLowerCase()
+  if (!k) return ''
+  for (const p of catalogList || []) {
+    for (const v of p.groupVariants || [p]) {
+      if (String(v.code ?? '').trim().toLowerCase() === k) return String(v.id ?? '')
+    }
+  }
+  return ''
+}
+
 /**
- * BOM cho hoàn kho: ưu tiên catalog, fallback `comboBom` / `combo_items` lưu trên đơn.
+ * BOM thành phần — bổ sung `variantId` từ `codeSnap` / mã hàng nếu thiếu.
+ * @returns {Array<{ variantId: string, qty: number, codeSnap?: string, unitLabelSnap?: string }>}
+ */
+export function enrichComboBomWithVariantIds(catalogList, bom) {
+  const rows = Array.isArray(bom) ? bom : []
+  const out = []
+  for (const row of rows) {
+    const per = Number(row.qty)
+    if (!Number.isFinite(per) || per <= 0) continue
+    let variantId = String(row.variantId ?? '').trim()
+    const codeSnap = String(row.codeSnap ?? row.ma_hang ?? row.code ?? '').trim()
+    if (!variantId && codeSnap) {
+      variantId = findVariantIdByMaHangInCatalog(catalogList, codeSnap)
+    }
+    if (!variantId && !codeSnap) continue
+    out.push({
+      ...row,
+      variantId,
+      qty: per,
+      codeSnap: codeSnap || String(row.codeSnap ?? '').trim(),
+    })
+  }
+  return out
+}
+
+/**
+ * BOM cho hoàn kho: catalog theo variantId hoặc ma_hang → đơn → enrich variantId.
  */
 export function resolveComboBomForOrderLine(catalogList, item) {
   if (!item) return []
   const vid = String(item.variantId ?? '').trim()
-  const p = vid ? findProductContainingVariantId(catalogList, vid) : null
+  let p = null
+  if (vid) {
+    const byVid = findProductContainingVariantId(catalogList, vid)
+    if (byVid && isComboCatalogProduct(byVid)) p = byVid
+  }
+  if (!p) {
+    p = findComboProductByMaHang(catalogList, item.code)
+  }
   let bom = p ? getComboBom(p) : []
   if (!bom.length && Array.isArray(item.comboBom)) bom = item.comboBom
   if (!bom.length && Array.isArray(item.combo_items)) bom = item.combo_items
-  return Array.isArray(bom) ? bom : []
+  return enrichComboBomWithVariantIds(catalogList, bom)
 }
 
 /** Loại biến thể thuộc «vỏ» combo — không PATCH tồn / không ghi log cho mã combo tổng. */

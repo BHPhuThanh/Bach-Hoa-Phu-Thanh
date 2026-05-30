@@ -1465,7 +1465,7 @@ export default function AdminHub({
       }
 
       const orderItems = Array.isArray(base?.items) ? base.items : []
-      const { cartLines, needRestore, resolvedCount } = buildOrderDeleteRestoreCartLines(
+      const { cartLines, needRestore, resolvedCount } = await buildOrderDeleteRestoreCartLines(
         catalog,
         orderItems
       )
@@ -5775,7 +5775,7 @@ export default function AdminHub({
         return
       }
       const returnDocCode = `TH-${String(base.invoiceNo || base.id || '').trim() || '—'}`
-      const restoreCartLines = buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
+      const restoreCartLines = await buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
         returnQtyByLineId.get(it.orderLineId) || 0
       )
       if (restoreCartLines.length === 0) {
@@ -5880,7 +5880,7 @@ export default function AdminHub({
     if (revenueReadOnly) return
     if (!posCancelModal) return
     const base = normalizePosOrder(posCancelModal, catalogList)
-    const restoreCartLines = buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
+    const restoreCartLines = await buildPosReturnRestoreCartLines(catalogList, base.items, (it) =>
       posOrderLineReturnableQty(it)
     )
     if (restoreCartLines.length > 0) {

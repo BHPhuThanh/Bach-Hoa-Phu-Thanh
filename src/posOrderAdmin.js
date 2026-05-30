@@ -1,9 +1,16 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
-import { fetchComboUnitCostFromSupabaseByMaHang } from './catalogRepository.js'
+import {
+  fetchComboBomFromSupabaseByMaHang,
+  fetchComboUnitCostFromSupabaseByMaHang,
+} from './catalogRepository.js'
 import {
   isComboCatalogProduct,
+  findComboProductByMaHang,
   findProductContainingVariantId,
+  findVariantIdByMaHangInCatalog,
+  getComboBom,
   orderLineIsCombo,
+  enrichComboBomWithVariantIds,
   resolveComboBomForOrderLine,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
@@ -105,47 +112,77 @@ export function posOrderLineReturnableQty(it) {
 }
 
 /** Dòng giỏ để hoàn tồn khi xóa đơn (combo → chỉ thành phần lẻ, không mã combo tổng). */
-export function buildOrderDeleteRestoreCartLines(catalogList, items) {
+export async function buildOrderDeleteRestoreCartLines(catalogList, items) {
   const list = Array.isArray(items) ? items : []
   let needRestore = 0
   for (const it of list) {
     if (it && posOrderLineReturnableQty(it) > 0) needRestore++
   }
-  const cartLines = buildPosReturnRestoreCartLines(catalogList, list, posOrderLineReturnableQty)
+  const cartLines = await buildPosReturnRestoreCartLines(catalogList, list, posOrderLineReturnableQty)
   return { cartLines, needRestore, resolvedCount: cartLines.length }
 }
 
+/** BOM combo cho hoàn tồn: đơn → catalog → Supabase (không trả mảng rỗng khi DB/catalog còn BOM). */
+async function resolveComboBomForPosReturnRestore(catalogList, item) {
+  let bom = resolveComboBomForOrderLine(catalogList, item)
+  if (bom.length) return bom
+  const code = String(item?.code ?? '').trim()
+  if (!code) return []
+  bom = await fetchComboBomFromSupabaseByMaHang(code, catalogList)
+  if (bom.length) return bom
+  const p = findComboProductByMaHang(catalogList, code)
+  return enrichComboBomWithVariantIds(catalogList, getComboBom(p))
+}
+
+function expandPosReturnLinesFromBom(catalogList, item, comboReturnQty, bom) {
+  const qty = Math.max(0, Number(comboReturnQty) || 0)
+  const lines = []
+  for (const row of bom || []) {
+    const per = Number(row.qty) || 0
+    if (per <= 0) continue
+    let compVid = String(row.variantId ?? '').trim()
+    const codeSnap = String(row.codeSnap ?? row.ma_hang ?? row.code ?? '').trim()
+    if (!compVid && codeSnap) {
+      compVid = findVariantIdByMaHangInCatalog(catalogList, codeSnap)
+    }
+    if (!compVid && !codeSnap) continue
+    const compProduct = compVid ? findProductContainingVariantId(catalogList, compVid) : null
+    if (compProduct && isComboCatalogProduct(compProduct)) continue
+    lines.push({
+      variantId: compVid,
+      qty: qty * per,
+      code: codeSnap || item.code,
+      unitLabel: row.unitLabelSnap || item.unitLabel,
+      barcode: item.barcode,
+      selectedBatchId: item.selectedBatchId,
+      isComboReturnComponent: true,
+    })
+  }
+  return lines
+}
+
 /**
- * Một dòng đơn trả → dòng giỏ hoàn tồn (combo: tách BOM, SL = SL combo trả × SL thành phần / combo).
+ * Một dòng đơn trả → dòng giỏ hoàn tồn (combo: SL lẻ = SL combo trả × SL trong 1 combo).
  */
-export function expandPosReturnLineToRestoreCartLines(catalogList, item, returnQty) {
+export async function expandPosReturnLineToRestoreCartLines(catalogList, item, returnQty) {
   const qty = Math.max(0, Number(returnQty) || 0)
   if (qty <= 0 || !item) return []
 
   if (orderLineIsCombo(catalogList, item)) {
-    const bom = resolveComboBomForOrderLine(catalogList, item)
-    const lines = []
-    for (const row of bom) {
-      const per = Number(row.qty) || 0
-      if (per <= 0) continue
-      const compVid = String(row.variantId ?? '').trim()
-      if (!compVid) continue
-      const compProduct = findProductContainingVariantId(catalogList, compVid)
-      if (compProduct && isComboCatalogProduct(compProduct)) continue
-      lines.push({
-        variantId: compVid,
-        qty: qty * per,
-        code: row.codeSnap || item.code,
-        unitLabel: row.unitLabelSnap || item.unitLabel,
-        barcode: item.barcode,
-        selectedBatchId: item.selectedBatchId,
-        isComboReturnComponent: true,
-      })
+    let bom = resolveComboBomForOrderLine(catalogList, item)
+    if (!bom.length) {
+      const code = String(item.code ?? '').trim()
+      if (code) {
+        bom = await fetchComboBomFromSupabaseByMaHang(code, catalogList)
+      }
     }
-    return lines
+    return expandPosReturnLinesFromBom(catalogList, item, qty, bom)
   }
 
-  const variantId = String(resolvePosItemVariantId(catalogList, item) || item.variantId || '').trim()
+  let variantId = String(resolvePosItemVariantId(catalogList, item) || item.variantId || '').trim()
+  if (!variantId) {
+    variantId = findVariantIdByMaHangInCatalog(catalogList, item.code)
+  }
   if (!variantId) return []
   const p = findProductContainingVariantId(catalogList, variantId)
   if (p && isComboCatalogProduct(p)) return []
@@ -164,14 +201,15 @@ export function expandPosReturnLineToRestoreCartLines(catalogList, item, returnQ
 }
 
 /** Gom các dòng đơn đang trả thành cartLines cho {@link applyRestoredQtyToCatalog}. */
-export function buildPosReturnRestoreCartLines(catalogList, items, qtyForLine) {
+export async function buildPosReturnRestoreCartLines(catalogList, items, qtyForLine) {
   const list = Array.isArray(items) ? items : []
   const cartLines = []
   for (const it of list) {
     if (!it) continue
     const returnQty = typeof qtyForLine === 'function' ? qtyForLine(it) : 0
     if (returnQty <= 0) continue
-    cartLines.push(...expandPosReturnLineToRestoreCartLines(catalogList, it, returnQty))
+    const expanded = await expandPosReturnLineToRestoreCartLines(catalogList, it, returnQty)
+    cartLines.push(...expanded)
   }
   return cartLines
 }

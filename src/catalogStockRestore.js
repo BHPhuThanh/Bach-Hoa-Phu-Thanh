@@ -7,6 +7,7 @@ import {
   buildNonComboDeductionByMaGoc,
   collectRestoreStockTouchedVariantIds,
   findProductContainingVariantId,
+  findVariantIdByMaHangInCatalog,
   isComboCatalogProduct,
 } from './comboCatalog.js'
 import {
@@ -42,7 +43,17 @@ export async function persistCatalogStockRestoreFromCartLines(ctx) {
     return { ok: true, skipped: true, prevProducts: catalog, nextProducts: catalog, touchedIds: new Set() }
   }
 
-  const componentLines = (cartLines || []).filter((l) => {
+  const normalizedCartLines = (cartLines || [])
+    .map((l) => {
+      let variantId = String(l?.variantId ?? '').trim()
+      const code = String(l?.code ?? '').trim()
+      if (!variantId && code) variantId = findVariantIdByMaHangInCatalog(catalog, code)
+      const q = Math.max(0, Number(l?.qty) || 0)
+      return variantId && q > 0 ? { ...l, variantId, qty: q } : null
+    })
+    .filter(Boolean)
+
+  const componentLines = normalizedCartLines.filter((l) => {
     const p = findProductContainingVariantId(catalog, l?.variantId)
     return !(p && isComboCatalogProduct(p))
   })
@@ -50,16 +61,22 @@ export async function persistCatalogStockRestoreFromCartLines(ctx) {
     return { ok: false, error: 'Không có thành phần lẻ để hoàn tồn (combo phải rã BOM).' }
   }
 
-  const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, componentLines)
-  const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, componentLines)
-  const touchedIds = collectRestoreStockTouchedVariantIds(catalog, componentLines)
-  const nextProducts = applyRestoredQtyToCatalog(catalog, componentLines, {
+  const deductByMaGoc = buildNonComboDeductionByMaGoc(catalog, normalizedCartLines)
+  const comboDelta = buildComboCartSaleDeltaByVariantId(catalog, normalizedCartLines)
+  const touchedIds = collectRestoreStockTouchedVariantIds(catalog, normalizedCartLines)
+  const nextProducts = applyRestoredQtyToCatalog(catalog, normalizedCartLines, {
     precomputedDeductByMaGoc: deductByMaGoc,
     precomputedComboDelta: comboDelta,
   })
 
   if (deductByMaGoc.size === 0 && comboDelta.size === 0 && touchedIds.size === 0) {
-    return { ok: false, error: 'Không tính được lượng hoàn tồn cho các dòng.' }
+    const codes = normalizedCartLines.map((l) => l.code || l.variantId).filter(Boolean).join(', ')
+    return {
+      ok: false,
+      error: codes
+        ? `Không tính được lượng hoàn tồn (kiểm tra mã/ĐVT trên đơn: ${codes}).`
+        : 'Không tính được lượng hoàn tồn cho các dòng.',
+    }
   }
 
   const flatNext = flattenDisplayCatalogToVariants(nextProducts)
