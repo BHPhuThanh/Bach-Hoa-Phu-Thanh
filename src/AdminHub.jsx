@@ -3152,10 +3152,9 @@ export default function AdminHub({
         const { error } = await sb.from('products').upsert(payloadArray)
         if (error) throw error
         console.log('Lưu ĐVT lên Supabase thành công!')
-        showHubCameraToast('Lưu ĐVT lên Supabase thành công!', 'ok')
       } catch (e) {
         console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
-        showHubCameraToast('Lỗi lưu ĐVT lên Supabase!', 'err')
+        window.alert('Lỗi lưu ĐVT lên Supabase!')
         return
       }
     }
@@ -3207,7 +3206,6 @@ export default function AdminHub({
     inboundQuickEditVariant,
     soloGoodsDraft,
     soloGoodsVariant,
-    showHubCameraToast,
   ])
 
   const updateUnitModalConversionAtKey = useCallback((key, raw) => {
