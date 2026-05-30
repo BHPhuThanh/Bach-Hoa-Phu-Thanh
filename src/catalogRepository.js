@@ -1237,7 +1237,7 @@ function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) 
 export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
   const oldMaHang = String(
-    options.oldMaHang ?? options.persistMaHang ?? variant?.persistMaHang ?? variant?.code ?? ''
+    options.oldMaHang ?? options.persistMaHang ?? variant?.persistMaHang ?? ''
   ).trim()
   if (!oldMaHang) {
     return { ok: false, error: new Error('Thiếu mã hàng cũ (old_ma_hang) để cập nhật.') }
@@ -1341,7 +1341,7 @@ export async function updateProductDisplayVariantsSequential(flatVariants) {
   let written = 0
   for (const v of flatVariants) {
     const r = await updateSingleProductFromDisplayVariant(v, {
-      oldMaHang: String(v?.persistMaHang ?? v?.code ?? '').trim(),
+      oldMaHang: String(v?.persistMaHang ?? '').trim(),
     })
     if (!r.ok) return { ok: false, error: r.error, written }
     if (r.updated === false) {

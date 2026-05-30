@@ -3203,9 +3203,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const handleUpdateCatalogVariant = useCallback(async (variantId, patch, oldMaHang) => {
       if (variantId == null || !patch || typeof patch !== 'object') return { ok: false }
       const prev = productsRef.current
-      const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
+      if (!target) return { ok: false, error: new Error('Không tìm thấy sản phẩm trong danh mục.') }
+      /** Khóa mã gốc trước khi patch/form đổi `code` — chỉ dùng giá trị này trong `.eq('ma_hang', …)`. */
+      const originalMaHang = String(oldMaHang ?? target.code ?? '').trim()
+      const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       let next = prev
       const stockRaw = patch?.stockQty
       const stockNum = Number(stockRaw)
@@ -3268,14 +3271,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       }
 
-      const originalMaHang = String(target?.code ?? '').trim()
-      const old_ma_hang = String(oldMaHang ?? originalMaHang).trim()
       const newCode = Object.prototype.hasOwnProperty.call(patch, 'code')
         ? String(patch.code ?? '').trim()
         : originalMaHang
 
       console.error('--- DEBUG ĐỔI MÃ HÀNG ---', {
-        ma_hang_cu: old_ma_hang,
+        ma_hang_cu: originalMaHang,
         ma_hang_moi: newCode,
       })
 
@@ -3297,11 +3298,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             upsertOnly.map((v) => ({
               ...v,
               persistMaHang:
-                String(v.id) === String(variantId) &&
-                old_ma_hang &&
-                newCode &&
-                old_ma_hang !== newCode
-                  ? old_ma_hang
+                String(v.id) === String(variantId)
+                  ? originalMaHang
                   : String(v.code ?? '').trim(),
             }))
           )

@@ -3130,39 +3130,45 @@ export default function AdminHub({
       nameTrim,
       prevByVariantId: prevById,
     })
-    const supabasePayload = replacements.map((v) => ({
-      variantId: v.id,
-      ma_hang: String(v.code ?? '').trim(),
-      ma_vach: String(v.barcode ?? '').trim(),
-      ten_hang: nameTrim,
-      thuong_hieu: String(v.brand ?? '').trim(),
-      gia_ban: Number(v.price) || 0,
-      gia_von: Number(v.cost) || 0,
-      ton_kho:
-        v.stockQty != null && v.stockQty !== '' && Number.isFinite(Number(v.stockQty))
-          ? Number(v.stockQty)
-          : 0,
-      dvt: normalizeCatalogUnitLabel(v.unitLabel),
-      quy_doi:
-        v.conversion != null && String(v.conversion).trim() !== '' && Number.isFinite(Number(v.conversion))
-          ? String(v.conversion)
-          : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
-    }))
-    console.error('[Đơn vị tính · Lưu] Payload gửi Supabase:', supabasePayload)
+    const payload = replacements.map((v) => {
+      const prev = prevById.get(v.id)
+      const ma_hang = String(v.persistMaHang ?? prev?.code ?? v.code ?? '').trim()
+      return {
+        ma_hang,
+        ma_vach: String(v.barcode ?? '').trim(),
+        ten_hang: nameTrim,
+        thuong_hieu: String(v.brand ?? '').trim(),
+        gia_ban: Number(v.price) || 0,
+        gia_von: Number(v.cost) || 0,
+        ton_kho:
+          v.stockQty != null && v.stockQty !== '' && Number.isFinite(Number(v.stockQty))
+            ? Number(v.stockQty)
+            : 0,
+        dvt: normalizeCatalogUnitLabel(v.unitLabel),
+        quy_doi:
+          v.conversion != null &&
+          String(v.conversion).trim() !== '' &&
+          Number.isFinite(Number(v.conversion))
+            ? String(v.conversion)
+            : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
+      }
+    })
     if (isSupabaseConfigured()) {
       try {
         const sb = getSupabaseClient()
         if (!sb) throw new Error('Không tạo được Supabase client.')
-        const payloadArray = supabasePayload.map((r) => {
-          const oldMa = String(
-            replacements.find((x) => String(x.id) === String(r.variantId))?.persistMaHang ??
-              r.ma_hang
-          ).trim()
-          const { variantId: _vid, ...row } = r
-          return { ...row, ma_hang: oldMa || row.ma_hang }
-        })
-        console.error('--- DEBUG TRƯỚC KHI UPSERT ĐVT ---', payloadArray)
-        const response = await sb.from('products').upsert(payloadArray)
+        console.warn('KIỂM TRA CẤU TRÚC PAYLOAD:', payload)
+        if (!Array.isArray(payload) || payload.length === 0) {
+          window.alert('Lỗi lưu ĐVT: payload trống — không gửi lên Supabase.')
+          return
+        }
+        const missingMa = payload.filter((row) => !String(row?.ma_hang ?? '').trim())
+        if (missingMa.length > 0) {
+          console.warn('[Đơn vị tính · Lưu] Dòng thiếu ma_hang:', missingMa)
+          window.alert('Lỗi lưu ĐVT: thiếu mã hàng (ma_hang) trên một hoặc nhiều dòng.')
+          return
+        }
+        const response = await sb.from('products').upsert(payload)
         console.error('--- DEBUG SAU KHI UPSERT ĐVT ---', response)
         if (response?.error) throw response.error
       } catch (e) {
