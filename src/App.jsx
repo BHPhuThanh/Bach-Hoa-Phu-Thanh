@@ -3268,10 +3268,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
       }
 
-      const oldCode = String(target?.code ?? '').trim()
+      const originalMaHang = String(target?.code ?? '').trim()
       const newCode = Object.prototype.hasOwnProperty.call(patch, 'code')
         ? String(patch.code ?? '').trim()
-        : oldCode
+        : originalMaHang
 
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
         startTransition(() => setProducts(next))
@@ -3291,8 +3291,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             upsertOnly.map((v) => ({
               ...v,
               persistMaHang:
-                String(v.id) === String(variantId) && oldCode && newCode && oldCode !== newCode
-                  ? oldCode
+                String(v.id) === String(variantId) &&
+                originalMaHang &&
+                newCode &&
+                originalMaHang !== newCode
+                  ? originalMaHang
                   : String(v.code ?? '').trim(),
             }))
           )
@@ -5052,8 +5055,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ...(orderLineId ? { orderLineId } : {}),
         ...(variantId ? { variantId } : {}),
         lineRevenue,
+        line_revenue: lineRevenue,
         lineCost,
         lineProfit,
+        line_profit: lineProfit,
       }
     })
     const totalCost = items.reduce((s, it) => s + it.lineCost, 0)

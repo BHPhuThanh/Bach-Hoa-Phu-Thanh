@@ -183,7 +183,7 @@ import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
 } from './inboundWeightedCost.js'
-import { isSupabaseConfigured } from './supabaseClient.js'
+import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 import { persistCatalogStockRestoreFromCartLines } from './catalogStockRestore.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
@@ -3079,7 +3079,7 @@ export default function AdminHub({
     })
   }, [catalogListForGoodsEdit, soloActiveVariantId])
 
-  const commitUnitModal = useCallback(() => {
+  const commitUnitModal = useCallback(async () => {
     if (!unitModal) return
 
     const ctx = findVariantContext(catalogListForGoodsEdit, unitModal.anchorVariantId)
@@ -3135,6 +3135,30 @@ export default function AdminHub({
     }))
     // eslint-disable-next-line no-console
     console.log('[Đơn vị tính · Lưu] Payload gửi Supabase (nhóm biến thể / products):', supabasePayload)
+    if (isSupabaseConfigured()) {
+      try {
+        const sb = getSupabaseClient()
+        if (!sb) throw new Error('Không tạo được Supabase client.')
+        const payloadArray = supabasePayload.map((r) => {
+          const oldMa = String(
+            replacements.find((x) => String(x.id) === String(r.variantId))?.persistMaHang ?? r.ma_hang
+          ).trim()
+          return {
+            ...r,
+            // Upsert thử ngay sau log để bắt lỗi sớm; giữ mã cũ cho dòng đã tồn tại.
+            ma_hang: oldMa || r.ma_hang,
+          }
+        })
+        const { error } = await sb.from('products').upsert(payloadArray)
+        if (error) throw error
+        console.log('Lưu ĐVT lên Supabase thành công!')
+        showHubCameraToast('Lưu ĐVT lên Supabase thành công!', 'ok')
+      } catch (e) {
+        console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
+        showHubCameraToast('Lỗi lưu ĐVT lên Supabase!', 'err')
+        return
+      }
+    }
     const nextIds = new Set(replacements.map((v) => String(v.id)))
     const implicitDeleted = ctx.variants
       .map((v) => String(v.id))
@@ -3183,6 +3207,7 @@ export default function AdminHub({
     inboundQuickEditVariant,
     soloGoodsDraft,
     soloGoodsVariant,
+    showHubCameraToast,
   ])
 
   const updateUnitModalConversionAtKey = useCallback((key, raw) => {

@@ -78,11 +78,13 @@ export function posReturnLedgerAmountsFromStoredOrderLine(item, returnQty) {
   const price = Math.max(0, Number(item?.price) || 0)
   const revStored = Number(item?.lineRevenue ?? item?.line_revenue)
   const profStored = Number(item?.lineProfit ?? item?.line_profit ?? item?.profit)
-  const revTotal = Number.isFinite(revStored) ? revStored : Math.round(price * qOrder)
-  const profTotal = Number.isFinite(profStored) ? profStored : 0
-  const share = qOrder > 0 ? qRet / qOrder : 0
-  const lineRefund = Math.round(revTotal * share)
-  const lineProfitReversal = Math.round(profTotal * share)
+  const revPerUnit =
+    qOrder > 0
+      ? (Number.isFinite(revStored) ? revStored : Math.round(price * qOrder)) / qOrder
+      : Math.max(0, price)
+  const profitPerUnit = qOrder > 0 ? (Number.isFinite(profStored) ? profStored : 0) / qOrder : 0
+  const lineRefund = Math.round(revPerUnit * qRet)
+  const lineProfitReversal = Math.round(profitPerUnit * qRet)
   const lineCostReturn = lineRefund - lineProfitReversal
   return {
     lineRefund,
@@ -262,7 +264,11 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
     const lineProfit =
       raw.lineProfit != null && Number.isFinite(Number(raw.lineProfit))
         ? Number(raw.lineProfit)
-        : lineRevenue - lineCost
+        : raw.line_profit != null && Number.isFinite(Number(raw.line_profit))
+          ? Number(raw.line_profit)
+          : raw.profit != null && Number.isFinite(Number(raw.profit))
+            ? Number(raw.profit)
+            : lineRevenue - lineCost
     const orderLineId =
       String(raw.orderLineId || raw.lineId || '').trim() || `leg-${oid}-${idx}`
     return {
