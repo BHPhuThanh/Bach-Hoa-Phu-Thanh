@@ -175,8 +175,8 @@ const PRODUCT_AMOUNT_STRING_COLUMNS = new Set([
   'gia_si',
 ])
 
-/** Gửi lên Supabase dạng số JSON — không dùng `""` cho cột numeric trên Postgres. */
-const PRODUCT_PAYLOAD_NUMBER_COLUMNS = new Set(['gia_ban', 'gia_von', 'ton_kho', 'quy_doi'])
+/** Gửi lên Supabase dạng số JSON — `gia_ban`/`gia_von` là text trên DB → dùng {@link PRODUCT_AMOUNT_STRING_COLUMNS}. */
+const PRODUCT_PAYLOAD_NUMBER_COLUMNS = new Set(['ton_kho', 'quy_doi'])
 
 function defaultNumberForProductPayloadColumn(column) {
   if (column === 'quy_doi') return 1
@@ -1432,7 +1432,14 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
       console.error('Lỗi Insert Supabase:', r.error)
       return { ok: false, error: r.error, preparedVariants: prepared, written: prepared.length }
     }
-    const out = r.displayVariant ? { ...row, ...r.displayVariant, code } : row
+    if (!r.displayVariant) {
+      const err = new Error(
+        `Insert «products» không trả về dòng hiển thị cho ${PRODUCT_PK_COLUMN}="${code}".`
+      )
+      console.error('Lỗi Insert Supabase:', err)
+      return { ok: false, error: err, preparedVariants: prepared, written: prepared.length }
+    }
+    const out = { ...row, ...r.displayVariant, code: String(r.displayVariant.code ?? code).trim() }
     prepared.push(out)
   }
 

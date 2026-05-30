@@ -426,13 +426,11 @@ export default function AdminHubGoodsCreateModal({
       if (!Array.isArray(rowsForUpsert) || rowsForUpsert.length === 0) return false
       // eslint-disable-next-line no-console
       console.log('Dữ liệu gửi đi:', rowsForUpsert)
-      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...flat, ...rowsForUpsert])
-      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
 
-      /** Insert trực tiếp Supabase — tránh hàng đợi append có thể khiến caller unmount trước khi POST xong. */
+      /** Chỉ ghi Supabase trước — không merge mã form vào state (tránh ghost HHxxxx). */
       if (persistStandaloneProducts) {
         try {
-          const res = await persistStandaloneProducts(nextProducts, fileNameHint, rowsForUpsert)
+          const res = await persistStandaloneProducts(null, fileNameHint, rowsForUpsert)
           if (!res || res.ok === false) {
             console.error('Lỗi Insert Supabase:', res?.error)
             setGoodsCreateSaveError(

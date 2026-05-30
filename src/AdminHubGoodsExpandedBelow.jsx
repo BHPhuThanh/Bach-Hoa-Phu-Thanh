@@ -1,4 +1,5 @@
-﻿import { AdminHubComboBomPanel, shouldShowComboBomTab } from './AdminHubComboBomPanel.jsx'
+﻿import { AdminHubComboBomPanel } from './AdminHubComboBomPanel.jsx'
+import { shouldShowComboBomTab } from './comboBomTabVisible.js'
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 import { sortVariantsSmallestUnitFirst } from './goodsUnitSetupModalLogic.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'

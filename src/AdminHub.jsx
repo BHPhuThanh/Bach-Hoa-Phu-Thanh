@@ -53,8 +53,8 @@ import {
   collectCartSaleTouchedVariantIds,
   getComboBom,
   isComboCatalogProduct,
-  shouldShowComboBomTab,
 } from './comboCatalog.js'
+import { shouldShowComboBomTab } from './comboBomTabVisible.js'
 import { flattenCatalogToGoodsSearchRows } from './catalogGoodsSearchRows.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import AdminHubInboundDraftLineRow from './AdminHubInboundDraftLineRow.jsx'
@@ -163,6 +163,7 @@ import './costAdjustCreatePage.css'
 import {
   CATALOG_SNAPSHOT_STORAGE_KEY,
   CATALOG_SYNC_BUMP_KEY,
+  applyProductDataToCatalog,
   fetchProducts,
   fetchProductsCostAndStockByMaHang,
   readCatalogSnapshotSync,
@@ -2181,30 +2182,44 @@ export default function AdminHub({
       }
     }
     if (upsertOnlyVariants?.length) {
-      const prepared = persistResult.preparedVariants || upsertOnlyVariants
+      const prepared = persistResult.preparedVariants
+      if (!Array.isArray(prepared) || prepared.length === 0) {
+        return {
+          ok: false,
+          error:
+            'Supabase không trả về dữ liệu sản phẩm sau khi tạo — không cập nhật giao diện (tránh mã ảo).',
+        }
+      }
       if (isSupabaseConfigured()) {
-        const fresh = await revalidateCatalogFromStore()
-        if (fresh?.products?.length) {
+        if (typeof onRevalidateCatalog === 'function') {
+          await onRevalidateCatalog()
+        } else {
+          const fresh = await revalidateCatalogFromStore()
+          if (!fresh?.products?.length) {
+            window.alert(
+              'Đã ghi Supabase nhưng không tải lại được danh mục. F5 trang và kiểm tra bảng products — không hiển thị mã chưa có trên DB.'
+            )
+            return {
+              ok: false,
+              error: 'Không tải lại danh mục sau insert.',
+            }
+          }
           setStandaloneCatalog({
             products: refreshCatalogSearchTexts(fresh.products),
             fileName: fresh.fileName || fn,
           })
-          if (typeof onRevalidateCatalog === 'function') {
-            await onRevalidateCatalog()
-          }
-          return { ok: true, preparedVariants: prepared }
         }
+        return { ok: true, preparedVariants: prepared }
       }
-      const flat = (Array.isArray(nextProducts) ? nextProducts : []).flatMap((p) => p.groupVariants || [p])
-      const withoutNew = flat.filter(
-        (v) => !prepared.some((p) => String(p.id) === String(v.id))
-      )
-      const mergedFlat = mergeFlatCatalogRowsBySmartUomGroups([...withoutNew, ...prepared])
-      const mergedProducts = prepareCatalogForPosSearch(buildDisplayCatalog(mergedFlat))
-      setStandaloneCatalog({ products: mergedProducts, fileName: fn })
-      if (typeof onRevalidateCatalog === 'function') {
-        await onRevalidateCatalog()
-      }
+      const base = Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []
+      const merged = applyProductDataToCatalog(base, {
+        type: 'append_flat_variants',
+        variants: prepared,
+      })
+      setStandaloneCatalog({
+        products: prepareCatalogForPosSearch(merged),
+        fileName: fn,
+      })
       return { ok: true, preparedVariants: prepared }
     }
     if (isSupabaseConfigured()) {
@@ -2223,7 +2238,7 @@ export default function AdminHub({
     }
     setStandaloneCatalog({ products: nextProducts, fileName: fn })
     return { ok: true }
-  }, [onRevalidateCatalog])
+  }, [onRevalidateCatalog, standaloneCatalog?.products])
 
   const handleComboSaveDisplay = useCallback(
     (payload) => {
@@ -2242,9 +2257,17 @@ export default function AdminHub({
         return
       }
       if (onAppendCatalogVariants) {
-        onAppendCatalogVariants([flatRow])
-        setComboModal(null)
-        triggerGoodsSaveSuccessToast()
+        void (async () => {
+          const res = await onAppendCatalogVariants([flatRow])
+          if (!res?.ok) {
+            window.alert(
+              String(res?.error || 'Không lưu combo lên Supabase — kiểm tra Database.')
+            )
+            return
+          }
+          setComboModal(null)
+          triggerGoodsSaveSuccessToast()
+        })()
         return
       }
       const without =
@@ -2332,10 +2355,21 @@ export default function AdminHub({
               throw new Error(pr?.error || 'Không lưu được đơn vị tính.')
             }
           }
-          setStandaloneCatalog({
-            products: nextDisplay,
-            fileName: fn,
-          })
+          if (isSupabaseConfigured()) {
+            const fresh = await revalidateCatalogFromStore()
+            if (!fresh?.products?.length) {
+              throw new Error('Không tải lại danh mục sau khi lưu nhóm ĐVT.')
+            }
+            setStandaloneCatalog({
+              products: refreshCatalogSearchTexts(fresh.products),
+              fileName: fresh.fileName || fn,
+            })
+          } else {
+            setStandaloneCatalog({
+              products: nextDisplay,
+              fileName: fn,
+            })
+          }
           return { ok: true }
         } catch (e) {
           console.error('[replaceCatalogGroupFromModal]', e)
@@ -3175,8 +3209,8 @@ export default function AdminHub({
         ma_vach: String(v.barcode ?? '').trim(),
         ten_hang: nameTrim,
         thuong_hieu: String(v.brand ?? '').trim(),
-        gia_ban: Number(v.price) || 0,
-        gia_von: Number(v.cost) || 0,
+        gia_ban: String(v.price ?? ''),
+        gia_von: String(v.cost ?? ''),
         ton_kho:
           sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
         quy_doi:
@@ -3201,7 +3235,6 @@ export default function AdminHub({
           gia_von: p.gia_von,
           dvt: p.don_vi_tinh,
         }))
-        console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
         if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
           window.alert('Payload rỗng! Dừng lại!')
           return
@@ -3211,22 +3244,24 @@ export default function AdminHub({
             .from('products')
             .update({
               quy_doi: item.quy_doi,
-              gia_ban: item.gia_ban,
-              gia_von: item.gia_von,
+              gia_ban: String(item.gia_ban ?? ''),
+              gia_von: String(item.gia_von ?? ''),
               dvt: item.dvt,
             })
             .eq('ma_hang', item.ma_hang.trim())
-            .select('ma_hang, dvt, quy_doi')
+            .select('ma_hang, dvt, quy_doi, gia_ban, gia_von')
           if (error) {
-            window.alert(`Lỗi Supabase khi lưu ${item.ma_hang}: ${error.message}`)
-            console.error('LỖI SUPABASE ĐVT GỐC:', error)
+            window.alert(
+              `Lỗi Supabase khi lưu ĐVT «${item.ma_hang}»: ${error.message}\n(Kiểm tra cột quy_doi / dvt / gia_ban / gia_von trên bảng products.)`
+            )
+            console.error('LỖI SUPABASE ĐVT:', error, item)
             return
           }
           if (!Array.isArray(data) || data.length === 0) {
             window.alert(
-              `Supabase không cập nhật dòng nào cho ma_hang="${item.ma_hang}" (RLS hoặc mã không tồn tại).`
+              `Supabase không cập nhật dòng nào cho ma_hang="${item.ma_hang}" — mã không tồn tại trên DB (không phải RLS nếu đã tắt).`
             )
-            console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert, { item })
+            console.error('LỖI SUPABASE ĐVT: 0 rows', { item, payloadToUpsert })
             return
           }
         }
@@ -4073,7 +4108,8 @@ export default function AdminHub({
           activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
           list.length > 0
         ) {
-          const prepared = res.preparedVariants || list
+          const prepared = res.preparedVariants
+          if (!Array.isArray(prepared) || prepared.length === 0) return res
           setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, prepared))
           appendInboundDraftLinesFromFlatRows(setInboundFormLines, prepared)
         }
@@ -4094,7 +4130,8 @@ export default function AdminHub({
         Array.isArray(upsertOnlyVariants) &&
         upsertOnlyVariants.length > 0
       ) {
-        const prepared = result.preparedVariants || upsertOnlyVariants
+        const prepared = result.preparedVariants
+        if (!Array.isArray(prepared) || prepared.length === 0) return result
         setInboundPendingNewFlatVariants((prev) => mergeInboundPendingFlatVariantsById(prev, prepared))
         appendInboundDraftLinesFromFlatRows(setInboundFormLines, prepared)
       }

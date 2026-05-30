@@ -1,4 +1,5 @@
-import { getComboBom, shouldShowComboBomTab } from './comboCatalog.js'
+import { getComboBom } from './comboCatalog.js'
+import { shouldShowComboBomTab } from './comboBomTabVisible.js'
 import { buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { findVariantContext } from './inboundFormUnitHelpers.js'
 
@@ -207,5 +208,3 @@ export function AdminHubComboBomPanel({
     </div>
   )
 }
-
-export { shouldShowComboBomTab }

@@ -3139,23 +3139,32 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           showPosPersistErrorToast(msg)
           return { ok: false, error: r.error }
         }
-        const prepared = r.preparedVariants || variants
-        const merged = applyProductDataToCatalog(prev, {
-          type: 'append_flat_variants',
-          variants: prepared,
-        })
-        const nextCatalog = prepareCatalogForPosSearch(merged)
-        setProducts(nextCatalog)
-        productsRef.current = nextCatalog
+        const prepared = r.preparedVariants
+        if (!Array.isArray(prepared) || prepared.length === 0) {
+          const err = new Error(
+            'Insert thành công nhưng thiếu dữ liệu phản hồi từ Supabase — không cập nhật danh mục (tránh mã ảo).'
+          )
+          showPosPersistErrorToast(err.message)
+          return { ok: false, error: err }
+        }
+        const fresh = await applyServerCatalogAfterPersist()
+        if (!fresh?.products?.length) {
+          const merged = applyProductDataToCatalog(prev, {
+            type: 'append_flat_variants',
+            variants: prepared,
+          })
+          const nextCatalog = prepareCatalogForPosSearch(merged)
+          setProducts(nextCatalog)
+          productsRef.current = nextCatalog
+        }
         try {
           inboundCatalogUpsertReconcileRef.current?.({
             requested: prepared,
-            returned: r.returnedDisplayVariants,
+            returned: r.returnedDisplayVariants ?? prepared,
           })
         } catch (e) {
           console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
         }
-        await applyServerCatalogAfterPersist()
         return { ok: true, preparedVariants: prepared }
       }
 
@@ -3189,15 +3198,24 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         )
         return { ok: false, error: describeCatalogPersistError(r.error) }
       }
-      const prepared = r.preparedVariants || upsertOnlyVariants
-      const merged = applyProductDataToCatalog(prev, {
-        type: 'append_flat_variants',
-        variants: prepared,
-      })
-      const nextCatalog = prepareCatalogForPosSearch(merged)
-      setProducts(nextCatalog)
-      productsRef.current = nextCatalog
-      await applyServerCatalogAfterPersist()
+      const prepared = r.preparedVariants
+      if (!Array.isArray(prepared) || prepared.length === 0) {
+        const err = new Error(
+          'Insert thành công nhưng thiếu dữ liệu phản hồi từ Supabase — không cập nhật danh mục.'
+        )
+        showPosPersistErrorToast(err.message)
+        return { ok: false, error: err }
+      }
+      const fresh = await applyServerCatalogAfterPersist()
+      if (!fresh?.products?.length) {
+        const merged = applyProductDataToCatalog(prev, {
+          type: 'append_flat_variants',
+          variants: prepared,
+        })
+        const nextCatalog = prepareCatalogForPosSearch(merged)
+        setProducts(nextCatalog)
+        productsRef.current = nextCatalog
+      }
       return { ok: true, preparedVariants: prepared }
     },
     [applyServerCatalogAfterPersist, showPosPersistErrorToast]

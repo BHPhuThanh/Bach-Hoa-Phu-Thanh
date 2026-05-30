@@ -128,13 +128,6 @@ export function isComboCatalogProduct(p) {
   return false
 }
 
-/** Tab «Thành phần combo» — combo đánh dấu hoặc đã có BOM. */
-export function shouldShowComboBomTab(p) {
-  if (!p) return false
-  if (isComboCatalogProduct(p)) return true
-  return getComboBom(p).length > 0
-}
-
 export function getComboBom(p) {
   if (!p) return []
   const raw = p.comboBom ?? p.groupVariants?.[0]?.comboBom
