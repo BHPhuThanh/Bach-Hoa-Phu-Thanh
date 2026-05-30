@@ -72,15 +72,20 @@ function newLedgerEntryId() {
     : `ret-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** Lợi nhuận hoàn trả đã tính sẵn — không suy lại từ revenue − cost khi payload có `profitSub`. */
-export function ledgerProfitSubFromParts(source, revenueSub, costSub) {
-  const rev = Math.max(0, Number(revenueSub) || 0)
-  const cost = Math.max(0, Number(costSub) || 0)
-  if (source != null && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, 'profitSub')) {
-    const explicit = Number(source.profitSub)
-    if (Number.isFinite(explicit)) return Math.max(0, Math.round(explicit))
-  }
-  return Math.max(0, Math.round(rev - cost))
+/** `profit_delta` âm trên ledger (vd. −3100) — chỉ đọc DB, không suy từ revenue − cost. */
+export function ledgerProfitDeltaFromEntry(source) {
+  if (source == null || typeof source !== 'object') return 0
+  const delta = Number(source.profit_delta)
+  if (Number.isFinite(delta)) return Math.round(delta)
+  const sub = Number(source.profitSub)
+  if (Number.isFinite(sub)) return -Math.max(0, Math.round(sub))
+  console.error('[posReturnLedger] thiếu profit_delta trên ledger entry', source)
+  return 0
+}
+
+/** Độ lớn lợi nhuận hoàn (dương) — dùng cộng báo cáo; không phép trừ revenue − cost. */
+export function ledgerProfitSubFromParts(source) {
+  return Math.max(0, Math.abs(ledgerProfitDeltaFromEntry(source)))
 }
 
 function normalizeLedgerEntryFromPayload(row) {
@@ -94,7 +99,8 @@ function normalizeLedgerEntryFromPayload(row) {
         : Date.now()
   const revenueSub = Number(p.revenueSub)
   const costSub = Number(p.costSub)
-  const profitSub = ledgerProfitSubFromParts(p, revenueSub, costSub)
+  const profit_delta = ledgerProfitDeltaFromEntry(p)
+  const profitSub = ledgerProfitSubFromParts(p)
   if (!Number.isFinite(atMs) || !Number.isFinite(revenueSub) || !Number.isFinite(costSub)) {
     return null
   }
@@ -106,6 +112,7 @@ function normalizeLedgerEntryFromPayload(row) {
     revenueSub,
     costSub,
     profitSub,
+    profit_delta,
     sourceInvoiceNo: String(p.sourceInvoiceNo ?? '').trim(),
     lines: Array.isArray(p.lines) ? p.lines : [],
   }
@@ -126,8 +133,12 @@ function normalizeLedgerEntryFromPayload(row) {
 export async function insertPosReturnLedgerEntry(entry) {
   const revenueSub = Math.max(0, Math.round(Number(entry.revenueSub) || 0))
   const costSub = Math.max(0, Math.round(Number(entry.costSub) || 0))
-  const profitSub = ledgerProfitSubFromParts(entry, revenueSub, costSub)
-  const profit_delta = -profitSub
+  const profitSub = Math.max(0, Math.round(Number(entry.profitSub) || 0))
+  const profit_delta = Number.isFinite(Number(entry.profit_delta))
+    ? Math.round(Number(entry.profit_delta))
+    : profitSub > 0
+      ? -profitSub
+      : 0
   const payload = stripUndefinedDeep({
     atMs: entry.atMs,
     orderId: String(entry.orderId || '').trim(),

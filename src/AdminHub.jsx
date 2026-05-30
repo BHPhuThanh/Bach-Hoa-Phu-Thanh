@@ -1603,7 +1603,7 @@ export default function AdminHub({
       )
       const returnsProfitReversal = Math.round(
         returnLedgerEntries.reduce(
-          (sum, e) => sum + ledgerProfitSubFromParts(e, e.revenueSub, e.costSub),
+          (sum, e) => sum + ledgerProfitSubFromParts(e),
           0
         )
       )

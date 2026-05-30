@@ -1,5 +1,4 @@
 import { normalizePosOrder } from './posOrderAdmin.js'
-import { ledgerProfitSubFromParts } from './posReturnLedgerRepository.js'
 
 /** Khoảng thời gian báo cáo trên Dashboard */
 export const RANGE_TODAY = 'today'
@@ -177,8 +176,10 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
         const inv = String(e.sourceInvoiceNo || orig?.invoiceNo || '').trim()
         const baseInv = inv || oid || '—'
         const revenueSub = Math.max(0, Number(e.revenueSub) || 0)
-        const costSub = Math.max(0, Number(e.costSub) || 0)
-        const profitReversal = ledgerProfitSubFromParts(e, revenueSub, costSub)
+        const profit = Number.isFinite(Number(e.profit_delta)) ? Math.round(Number(e.profit_delta)) : 0
+        if (!Number.isFinite(Number(e.profit_delta))) {
+          console.error('[mapReturnLedgerToRevenueDisplayRows] thiếu profit_delta', e?.id, e)
+        }
         const at = Number(e.atMs)
         const idKey = String(e.id != null ? e.id : '').trim() || `${at}-${oid}`
         return {
@@ -189,8 +190,8 @@ export function mapReturnLedgerToRevenueDisplayRows(orders, entriesInWindow) {
           invoiceNo: `TH-${baseInv}`,
           createdAt: Number.isFinite(at) ? new Date(at).toISOString() : new Date().toISOString(),
           displayTotal: -revenueSub,
-          /** Âm = trừ LN khỏi báo cáo (vd. combo −3.100, không phải −15.000). */
-          displayProfit: -profitReversal,
+          /** Âm = giá trị profit_delta đã lưu Supabase (vd. −3.100). */
+          displayProfit: profit,
         }
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
