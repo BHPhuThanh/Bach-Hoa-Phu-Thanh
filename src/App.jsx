@@ -3332,19 +3332,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   ? String(v.conversion)
                   : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
             }
+            const cleanMaHang = cleanMaHangKey(eqMaHang)
             const { data, error } = await sb
               .from('products')
               .update({ ma_hang: rowNewCode, ...rowPayload })
-              .eq('ma_hang', eqMaHang)
+              .eq('ma_hang', cleanMaHang)
               .select('ma_hang')
             if (error) {
-              console.error('Lỗi Update:', error)
-              throw error
+              window.alert(`Supabase chối từ đổi mã: ${error.message}`)
+              console.error('LỖI SUPABASE ĐỔI MÃ GỐC:', error)
+              return { ok: false, error }
             }
             if (!Array.isArray(data) || data.length === 0) {
-              throw new Error(
-                `Không cập nhật được sản phẩm (ma_hang gốc="${eqMaHang}"). Kiểm tra mã trên Supabase.`
+              window.alert(
+                `Supabase không cập nhật dòng nào (ma_hang gốc="${cleanMaHang}" → "${rowNewCode}"). Kiểm tra RLS / trùng mã / khóa ngoại.`
               )
+              console.error('LỖI SUPABASE ĐỔI MÃ GỐC: 0 rows', {
+                cleanMaHang,
+                rowNewCode,
+                rowPayload,
+              })
+              return { ok: false }
             }
           }
 
@@ -3381,9 +3389,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: true }
       } catch (e) {
         console.error('[App] handleUpdateCatalogVariant', e)
-        showPosPersistErrorToast(
-          `Không lưu được thay đổi: ${describeCatalogPersistError(e)}. Vui lòng kiểm tra và thử lại.`
-        )
+        const msg = describeCatalogPersistError(e)
+        if (typeof window !== 'undefined') {
+          window.alert(`Không lưu được thay đổi: ${msg}`)
+        }
+        showPosPersistErrorToast(`Không lưu được thay đổi: ${msg}. Vui lòng kiểm tra và thử lại.`)
         return { ok: false, error: e }
       }
     },

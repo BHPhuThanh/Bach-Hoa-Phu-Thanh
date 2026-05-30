@@ -3196,51 +3196,37 @@ export default function AdminHub({
             .replace(/[\u200B-\u200D\uFEFF]/g, '')
             .replace(/\u00A0/g, ' ')
             .trim(),
-          don_vi_tinh: p.don_vi_tinh,
-          ma_vach: p.ma_vach,
-          ten_hang: p.ten_hang,
-          thuong_hieu: p.thuong_hieu,
+          quy_doi: p.quy_doi,
           gia_ban: p.gia_ban,
           gia_von: p.gia_von,
-          ton_kho: p.ton_kho,
-          quy_doi: p.quy_doi,
+          dvt: p.don_vi_tinh,
         }))
         console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
         if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
           window.alert('Payload rỗng! Dừng lại!')
           return
         }
-        const results = await Promise.all(
-          payloadToUpsert.map(async (item) => {
-            const eqMa = String(item.ma_hang ?? '').trim()
-            const { data, error } = await sb
-              .from('products')
-              .update({
-                dvt: item.don_vi_tinh,
-                ma_vach: item.ma_vach,
-                ten_hang: item.ten_hang,
-                thuong_hieu: item.thuong_hieu,
-                gia_ban: item.gia_ban,
-                gia_von: item.gia_von,
-                ton_kho: item.ton_kho,
-                quy_doi: item.quy_doi,
-              })
-              .eq('ma_hang', eqMa)
-              .select('ma_hang, dvt')
-            return { item, data, error }
-          })
-        )
-        for (const { item, data, error } of results) {
+        for (const item of payloadToUpsert) {
+          const { data, error } = await sb
+            .from('products')
+            .update({
+              quy_doi: item.quy_doi,
+              gia_ban: item.gia_ban,
+              gia_von: item.gia_von,
+              dvt: item.dvt,
+            })
+            .eq('ma_hang', item.ma_hang.trim())
+            .select('ma_hang, dvt, quy_doi')
           if (error) {
-            console.error('Lỗi Update ĐVT:', error, item)
-            window.alert(
-              `Lỗi Update ĐVT (${item.ma_hang}): ${error.message || JSON.stringify(error)}`
-            )
+            window.alert(`Lỗi Supabase khi lưu ${item.ma_hang}: ${error.message}`)
+            console.error('LỖI SUPABASE ĐVT GỐC:', error)
             return
           }
           if (!Array.isArray(data) || data.length === 0) {
-            console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
-            window.alert(`Không cập nhật được ĐVT cho ma_hang="${item.ma_hang}".`)
+            window.alert(
+              `Supabase không cập nhật dòng nào cho ma_hang="${item.ma_hang}" (RLS hoặc mã không tồn tại).`
+            )
+            console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert, { item })
             return
           }
         }
