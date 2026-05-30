@@ -5816,6 +5816,7 @@ export default function AdminHub({
         { preferStoredLineFinancials: true }
       )
       await persistPosOrderAndReload(merged)
+      console.log('KIỂM TRA HOÀN COMBO:', { revenueSub, costSub, profitSub, returnLines: returnLines.map((l) => ({ code: l.code, unitCost: l.unitCost, lineRefund: l.lineRefund, lineCostReturn: l.lineCostReturn })) })
       const ins = await insertPosReturnLedgerEntry({
         atMs: Date.now(),
         orderId: String(base.id || ''),

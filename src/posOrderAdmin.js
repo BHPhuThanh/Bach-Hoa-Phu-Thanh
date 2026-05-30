@@ -12,6 +12,7 @@ import {
   orderLineIsCombo,
   enrichComboBomWithVariantIds,
   resolveComboBomForOrderLine,
+  computeComboOrderLineUnitCost,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
 
@@ -82,18 +83,38 @@ export function posOrderReturnProfitReversal(item, returnQty, unitCost) {
 }
 
 /**
- * Giá vốn đơn vị khi hoàn trả: ưu tiên đơn gốc; chỉ fallback DB/BOM khi đơn thiếu vốn.
+ * Giá vốn đơn vị khi hoàn trả: ưu tiên đơn gốc; fallback BOM catalog → Supabase khi đơn thiếu vốn.
  * @param {Array} catalogList
  * @param {object} item — dòng đơn (preferStoredLineFinancials)
  */
 export async function resolvePosReturnLineUnitCost(catalogList, item) {
   const fromOrder = posOrderLineUnitCostFromStoredOrder(item)
-  if (fromOrder != null && fromOrder > 0) return fromOrder
+  if (fromOrder != null && fromOrder > 0) {
+    console.log('[resolvePosReturnLineUnitCost] dùng giá vốn từ đơn gốc:', { code: item?.code, fromOrder })
+    return fromOrder
+  }
 
   const code = String(item?.code ?? '').trim()
   if (code && orderLineIsCombo(catalogList, item)) {
+    // Bước 1: thử tính từ BOM catalog hiện tại (không cần network)
+    const fromCatalogBom = computeComboOrderLineUnitCost(catalogList, item)
+    if (fromCatalogBom > 0) {
+      console.log('[resolvePosReturnLineUnitCost] dùng giá vốn từ BOM catalog:', { code, fromCatalogBom })
+      return fromCatalogBom
+    }
+    // Bước 2: fallback Supabase (đơn cũ, catalog thiếu BOM / cost thành phần)
     const fromDb = await fetchComboUnitCostFromSupabaseByMaHang(code, catalogList)
-    if (fromDb > 0) return fromDb
+    if (fromDb > 0) {
+      console.log('[resolvePosReturnLineUnitCost] dùng giá vốn từ Supabase:', { code, fromDb })
+      return fromDb
+    }
+    console.warn('[resolvePosReturnLineUnitCost] KHÔNG tìm được giá vốn combo:', {
+      code,
+      fromOrder,
+      fromCatalogBom,
+      fromDb,
+      itemKeys: Object.keys(item || {}),
+    })
   }
 
   return fromOrder != null ? Math.max(0, fromOrder) : 0
@@ -275,6 +296,15 @@ export function normalizePosOrder(o, catalogList, opts = {}) {
       raw.lineProfit != null && Number.isFinite(Number(raw.lineProfit))
         ? Number(raw.lineProfit)
         : lineRevenue - lineCost
+    // Back-derive cost từ lineRevenue − lineProfit nếu vẫn còn 0
+    // (đơn cũ combo không lưu cost/lineCost nhưng lưu lineProfit đúng)
+    if (preferStored && qty > 0 && cost <= 0 && lineCost <= 0) {
+      const derivedTotalCost = lineRevenue - lineProfit
+      if (derivedTotalCost > 0) {
+        cost = Math.round(derivedTotalCost / qty)
+        lineCost = Math.round(derivedTotalCost)
+      }
+    }
     const orderLineId =
       String(raw.orderLineId || raw.lineId || '').trim() || `leg-${oid}-${idx}`
     return {
