@@ -3130,21 +3130,21 @@ export default function AdminHub({
       nameTrim,
       prevByVariantId: prevById,
     })
-    const payload = replacements.map((v) => {
+    const newProducts = replacements.map((v) => {
       const prev = prevById.get(v.id)
       const ma_hang = String(v.persistMaHang ?? prev?.code ?? v.code ?? '').trim()
+      const sqRaw = v.stockQty
+      const sqNum = Number(sqRaw)
       return {
         ma_hang,
+        don_vi_tinh: normalizeCatalogUnitLabel(v.unitLabel),
         ma_vach: String(v.barcode ?? '').trim(),
         ten_hang: nameTrim,
         thuong_hieu: String(v.brand ?? '').trim(),
         gia_ban: Number(v.price) || 0,
         gia_von: Number(v.cost) || 0,
         ton_kho:
-          v.stockQty != null && v.stockQty !== '' && Number.isFinite(Number(v.stockQty))
-            ? Number(v.stockQty)
-            : 0,
-        dvt: normalizeCatalogUnitLabel(v.unitLabel),
+          sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
         quy_doi:
           v.conversion != null &&
           String(v.conversion).trim() !== '' &&
@@ -3157,20 +3157,32 @@ export default function AdminHub({
       try {
         const sb = getSupabaseClient()
         if (!sb) throw new Error('Không tạo được Supabase client.')
-        console.warn('KIỂM TRA CẤU TRÚC PAYLOAD:', payload)
-        if (!Array.isArray(payload) || payload.length === 0) {
-          window.alert('Lỗi lưu ĐVT: payload trống — không gửi lên Supabase.')
+        const payloadToUpsert = newProducts.map((p) => ({
+          ma_hang: p.ma_hang,
+          dvt: p.don_vi_tinh,
+          ma_vach: p.ma_vach,
+          ten_hang: p.ten_hang,
+          thuong_hieu: p.thuong_hieu,
+          gia_ban: p.gia_ban,
+          gia_von: p.gia_von,
+          ton_kho: p.ton_kho,
+          quy_doi: p.quy_doi,
+        }))
+        console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
+        if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
+          window.alert('Payload rỗng! Dừng lại!')
           return
         }
-        const missingMa = payload.filter((row) => !String(row?.ma_hang ?? '').trim())
-        if (missingMa.length > 0) {
-          console.warn('[Đơn vị tính · Lưu] Dòng thiếu ma_hang:', missingMa)
-          window.alert('Lỗi lưu ĐVT: thiếu mã hàng (ma_hang) trên một hoặc nhiều dòng.')
+        const { data, error } = await sb.from('products').upsert(payloadToUpsert).select('*')
+        if (error) {
+          console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
+          throw error
+        }
+        if (!Array.isArray(data) || data.length === 0) {
+          console.error('PAYLOAD PHẢI CÓ DỮ LIỆU:', payloadToUpsert)
+          window.alert('Lưu ĐVT thất bại: Supabase không trả về dòng đã ghi.')
           return
         }
-        const response = await sb.from('products').upsert(payload)
-        console.error('--- DEBUG SAU KHI UPSERT ĐVT ---', response)
-        if (response?.error) throw response.error
       } catch (e) {
         console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
         window.alert('Lỗi lưu ĐVT lên Supabase!')

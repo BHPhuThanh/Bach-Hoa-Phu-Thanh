@@ -3206,8 +3206,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const flat = flattenDisplayCatalogToVariants(prev)
       const target = flat.find((v) => String(v?.id) === String(variantId))
       if (!target) return { ok: false, error: new Error('Không tìm thấy sản phẩm trong danh mục.') }
-      /** Khóa mã gốc trước khi patch/form đổi `code` — chỉ dùng giá trị này trong `.eq('ma_hang', …)`. */
-      const originalMaHang = String(oldMaHang ?? target.code ?? '').trim()
+      const product = {
+        ...target,
+        ma_hang: String(oldMaHang ?? target.code ?? '').trim(),
+      }
+      const originalMaHang = product.ma_hang
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       let next = prev
       const stockRaw = patch?.stockQty
@@ -3287,6 +3290,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       try {
         if (isSupabaseConfigured()) {
+          const flatPrev = flattenDisplayCatalogToVariants(prev)
           const flatNext = flattenDisplayCatalogToVariants(next)
           const idSet = new Set(affectedIdsForLog.map(String))
           const upsertOnly = flatNext.filter((v) => idSet.has(String(v?.id)))
@@ -3294,17 +3298,53 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
 
-          const r = await updateProductDisplayVariantsSequential(
-            upsertOnly.map((v) => ({
-              ...v,
-              persistMaHang:
-                String(v.id) === String(variantId)
-                  ? originalMaHang
-                  : String(v.code ?? '').trim(),
-            }))
-          )
-          if (!r.ok) {
-            throw r.error || new Error(describeCatalogPersistError(r.error))
+          const sb = getSupabaseClient()
+          if (!sb) throw new Error('Không tạo được Supabase client.')
+
+          for (const v of upsertOnly) {
+            const eqMaHang =
+              String(v.id) === String(variantId)
+                ? originalMaHang
+                : String(flatPrev.find((x) => String(x?.id) === String(v.id))?.code ?? '').trim()
+            if (!eqMaHang) {
+              throw new Error('Thiếu mã hàng gốc để cập nhật (eq ma_hang).')
+            }
+            const newCode = String(v.code ?? '').trim()
+            const sqRaw = v.stockQty ?? v.ton_kho
+            const sqNum = Number(sqRaw)
+            const payload = {
+              ma_hang: newCode,
+              ma_vach: String(v.barcode ?? '').trim(),
+              ten_hang: String(v.name ?? '').trim(),
+              thuong_hieu: String(v.brand ?? '').trim(),
+              gia_ban: Number(v.price) || 0,
+              gia_von: Number(v.cost) || 0,
+              ton_kho:
+                sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
+              dvt: normalizeCatalogUnitLabel(v.unitLabel),
+              quy_doi:
+                v.conversion != null &&
+                String(v.conversion).trim() !== '' &&
+                Number.isFinite(Number(v.conversion))
+                  ? String(v.conversion)
+                  : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
+            }
+            const { data, error } = await sb
+              .from('products')
+              .update(payload)
+              .eq('ma_hang', eqMaHang)
+              .select('*')
+            if (error) {
+              console.error('Lỗi Update:', error)
+              throw error
+            }
+            if (!Array.isArray(data) || data.length === 0) {
+              console.error('Lỗi Update: không có dòng nào được cập nhật', {
+                eqMaHang,
+                payload,
+              })
+              throw new Error(`Không cập nhật được sản phẩm ma_hang="${eqMaHang}".`)
+            }
           }
 
           startTransition(() => setProducts(next))
