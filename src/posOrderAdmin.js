@@ -1,5 +1,9 @@
 import { normalizeBarcodeValue } from './catalogCsv.js'
-import { fetchComboBomFromSupabaseByMaHang } from './catalogRepository.js'
+import {
+  fetchComboBomFromSupabaseByMaHang,
+  flattenDisplayCatalogToVariants,
+  resolveProductsDbIdForDisplayVariant,
+} from './catalogRepository.js'
 import {
   isComboCatalogProduct,
   findComboProductByMaHang,
@@ -66,6 +70,19 @@ export function posOrderLineUnitCostFromStoredOrder(item) {
     }
   }
   return null
+}
+
+/** Gắn `productsDbId` (UUID) cho dòng hoàn tồn — tra catalog theo variantId / ma_hang. */
+export function attachProductsDbIdToRestoreCartLines(catalogList, cartLines) {
+  const catalog = Array.isArray(catalogList) ? catalogList : []
+  return (cartLines || []).map((line) => {
+    const flat = flattenDisplayCatalogToVariants(catalog)
+    const hit =
+      flat.find((v) => String(v.id) === String(line?.variantId ?? '')) ||
+      flat.find((v) => String(v.code ?? '').trim() === String(line?.code ?? '').trim())
+    const productsDbId = resolveProductsDbIdForDisplayVariant(catalog, { ...hit, ...line })
+    return productsDbId ? { ...line, productsDbId, product_id: productsDbId } : line
+  })
 }
 
 /** Ledger trả hàng — chỉ lấy doanh thu / lợi nhuận đã lưu trên đơn gốc. */

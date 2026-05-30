@@ -112,6 +112,7 @@ import {
   revalidateCatalogFromStore,
   describeCatalogPersistError,
   catalogDbErrorToastMessage,
+  resolveProductsDbIdForDisplayVariant,
   collectMaHangCodesForVariantIds,
   deleteProductsFromSupabaseByMaHang,
   deleteProductsForRemovedVariants,
@@ -3084,7 +3085,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw dr.error || new Error('Không xóa được đơn vị tính đã gỡ trên Supabase.')
               }
             }
-            const r = await updateProductDisplayVariantsSequential(replacements)
+            const r = await updateProductDisplayVariantsSequential(replacements, prev)
             if (!r.ok) {
               throw r.error || new Error(describeCatalogPersistError(r.error))
             }
@@ -3287,16 +3288,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             throw new Error('Không có biến thể hợp lệ để ghi lên Supabase.')
           }
 
-          const flatPrev = flattenDisplayCatalogToVariants(prev)
-          const targetBefore = flatPrev.find((x) => String(x?.id) === String(variantId))
           const r = await updateProductDisplayVariantsSequential(
-            upsertOnly.map((v) => {
-              const prevRow = flatPrev.find((x) => String(x?.id) === String(v?.id))
-              const productsDbId = String(
-                v?.productsDbId ?? prevRow?.productsDbId ?? prevRow?.raw?.id ?? targetBefore?.productsDbId ?? targetBefore?.raw?.id ?? ''
-              ).trim()
-              return { ...v, productsDbId }
-            })
+            upsertOnly.map((v) => ({
+              ...v,
+              productsDbId: resolveProductsDbIdForDisplayVariant(prev, v),
+              product_id: resolveProductsDbIdForDisplayVariant(prev, v),
+            })),
+            prev
           )
           if (!r.ok) {
             throw r.error || new Error(describeCatalogPersistError(r.error))
@@ -3411,7 +3409,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const flatNext = flattenDisplayCatalogToVariants(next)
         const touchedIds = new Set(valid.map((e) => String(e.variantId)))
         const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants)
+        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants, snapshotPrev)
         if (!r.ok) {
           const msg =
             describeCatalogPersistError(r.error) || 'Không ghi được sản phẩm lên Supabase.'

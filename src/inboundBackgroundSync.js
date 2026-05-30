@@ -34,7 +34,10 @@ export async function runInboundSupabaseSync({
     return { ok: true, skipped: true, row: orderRow }
   }
 
-  const productsResult = await updateProductDisplayVariantsSequential(upsertOnlyVariants || [])
+  const productsResult = await updateProductDisplayVariantsSequential(
+    upsertOnlyVariants || [],
+    catalogProductsNext || []
+  )
 
   if (!productsResult?.ok) {
     throw new Error(
