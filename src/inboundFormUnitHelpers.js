@@ -2,6 +2,7 @@
  * Quy đổi ĐƠN VỊ TÍNH phiếu nhập — tách khỏi AdminHub để tab Doanh thu / hub không phụ thuộc module này khi tải.
  */
 import { normalizeCatalogUnitLabel } from './productUnits.js'
+import { normalizeGroupRoot } from './productUnits.js'
 
 function sortVariantsSmallestUnitFirst(variants) {
   return [...(variants || [])].sort((a, b) => {
@@ -17,14 +18,34 @@ function sortVariantsSmallestUnitFirst(variants) {
 export function findVariantContext(products, variantId) {
   const vid = String(variantId ?? '').trim()
   if (!vid) return null
+  let clicked = null
+  let clickedProduct = null
+  const flat = []
   for (const p of products || []) {
-    const vars = p.groupVariants || [p]
-    const hit = vars.find((x) => String(x.id) === vid)
-    if (hit) {
-      return { product: p, variants: sortVariantsSmallestUnitFirst(vars), clicked: hit }
+    const vars = Array.isArray(p.groupVariants) && p.groupVariants.length ? p.groupVariants : [p]
+    for (const v of vars) {
+      flat.push(v)
+      if (!clicked && String(v?.id) === vid) {
+        clicked = v
+        clickedProduct = p
+      }
     }
   }
-  return null
+  if (!clicked) return null
+
+  const root = normalizeGroupRoot(clicked.code, clicked.linkedMasterCode)
+  const siblings = []
+  const seen = new Set()
+  for (const v of flat) {
+    if (!v) continue
+    if (normalizeGroupRoot(v.code, v.linkedMasterCode) !== root) continue
+    const id = String(v.id ?? '').trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    siblings.push(v)
+  }
+  const variants = siblings.length > 0 ? siblings : [clicked]
+  return { product: clickedProduct || clicked, variants: sortVariantsSmallestUnitFirst(variants), clicked }
 }
 
 /** Khớp dòng phiếu / snapshot chọn nhanh với danh mục phiếu nhập (id có thể lệch sau đồng bộ). */

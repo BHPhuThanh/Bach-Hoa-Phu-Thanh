@@ -185,7 +185,10 @@ export function assignFinalProductCodes(linesSorted, rootFallback) {
     'SP'
   return linesSorted.map((row, i) => {
     let c = String(row.code ?? '').trim()
-    if (!c) c = i === 0 ? root : `${root}-${i}`
+    // Quy tắc mới: không tự thêm hậu tố -1/-2 cho ĐVT phụ.
+    // - Dòng gốc (i===0) luôn có mã (root nếu trống).
+    // - Dòng phụ: giữ mã người dùng nhập; để trống thì tạo mới sẽ auto-assign HH tăng dần.
+    if (!c) c = i === 0 ? root : ''
     return c
   })
 }
@@ -202,7 +205,8 @@ export function validateUnitModalLines(linesSorted, rootFallback) {
     if (parsePositiveConversion(row.conversion) == null) return 'Giá trị quy đổi phải là số dương.'
   }
   const codes = assignFinalProductCodes(linesSorted, rootFallback)
-  const set = new Set(codes)
-  if (set.size !== codes.length) return 'Mã hàng sau quy đổi không được trùng nhau.'
+  const nonEmpty = codes.map((c) => String(c ?? '').trim()).filter(Boolean)
+  const set = new Set(nonEmpty.map((c) => c.toLowerCase()))
+  if (set.size !== nonEmpty.length) return 'Mã hàng sau quy đổi không được trùng nhau.'
   return ''
 }

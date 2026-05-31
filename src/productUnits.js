@@ -1,5 +1,5 @@
 /**
- * Gom sản phẩm theo mã gốc (Mã HH Liên Kết hoặc mã bỏ hậu tố -1, -2…).
+ * Gom sản phẩm theo mã gốc bằng cột liên kết `ma_hh_lien_quan` (field `linkedMasterCode`).
  */
 
 /**
@@ -284,15 +284,13 @@ export function parseConversionRatio(raw) {
 }
 
 /**
- * Mã gốc nhóm: ưu tiên cột liên kết; không có thì bỏ hậu tố -số (PVN6903-1 → PVN6903).
+ * Mã gốc nhóm: ưu tiên cột liên kết `ma_hh_lien_quan`; nếu trống thì tự là `ma_hang`.
+ * Tuyệt đối không cắt mã theo hậu tố `-1/-2`.
  */
 export function normalizeGroupRoot(productCode, linkedMasterCode) {
   const link = String(linkedMasterCode ?? '').trim()
   if (link) return link
   const c = String(productCode ?? '').trim()
-  if (!c) return c
-  const m = c.match(/^(.*)-(\d+)$/)
-  if (m && m[1]) return m[1]
   return c
 }
 
