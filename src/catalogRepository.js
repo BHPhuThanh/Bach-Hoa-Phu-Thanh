@@ -26,7 +26,6 @@ import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSche
 import {
   CATALOG_PRODUCT_TYPE_COMBO,
   computeDefaultComboCost,
-  enrichComboBomWithVariantIds,
   getComboBom,
   isComboCatalogProduct,
 } from './comboCatalog.js'
@@ -481,6 +480,30 @@ export function flattenDisplayCatalogToVariants(products) {
   return (Array.isArray(products) ? products : []).flatMap((p) =>
     Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
   )
+}
+
+function enrichComboBomWithCatalogVariantIdsLocal(catalogList, bom) {
+  const rows = Array.isArray(bom) ? bom : []
+  const out = []
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+  for (const row of rows) {
+    const per = Number(row?.qty)
+    if (!Number.isFinite(per) || per <= 0) continue
+    let variantId = String(row?.variantId ?? '').trim()
+    const codeSnap = String(row?.codeSnap ?? row?.ma_hang ?? row?.code ?? '').trim()
+    if (!variantId && codeSnap) {
+      const hit = flat.find((v) => String(v?.code ?? '').trim() === codeSnap)
+      variantId = String(hit?.id ?? '').trim()
+    }
+    if (!variantId && !codeSnap) continue
+    out.push({
+      ...row,
+      variantId,
+      qty: per,
+      codeSnap: codeSnap || String(row?.codeSnap ?? '').trim(),
+    })
+  }
+  return out
 }
 
 /**
@@ -1767,7 +1790,7 @@ export async function fetchComboBomFromSupabaseByMaHang(maHang, catalogList = []
     if (error) throw error
     if (!data) return []
     const bom = parseComboBomFromProductsDbRow(data)
-    return enrichComboBomWithVariantIds(catalogList, bom)
+    return enrichComboBomWithCatalogVariantIdsLocal(catalogList, bom)
   } catch (e) {
     console.error('[catalogRepository] fetchComboBomFromSupabaseByMaHang', code, e)
     return []

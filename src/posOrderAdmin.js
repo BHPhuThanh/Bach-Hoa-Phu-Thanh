@@ -7,7 +7,6 @@ import {
   findVariantIdByMaHangInCatalog,
   getComboBom,
   orderLineIsCombo,
-  enrichComboBomWithVariantIds,
   resolveComboBomForOrderLine,
 } from './comboCatalog.js'
 import { normalizeCatalogUnitLabel } from './productUnits.js'
@@ -35,6 +34,28 @@ export function resolvePosItemVariantId(catalogList, item) {
   }
 
   return ''
+}
+
+function enrichComboBomWithCatalogVariantIdsLocal(catalogList, bom) {
+  const rows = Array.isArray(bom) ? bom : []
+  const out = []
+  for (const row of rows) {
+    const per = Number(row?.qty)
+    if (!Number.isFinite(per) || per <= 0) continue
+    let variantId = String(row?.variantId ?? '').trim()
+    const codeSnap = String(row?.codeSnap ?? row?.ma_hang ?? row?.code ?? '').trim()
+    if (!variantId && codeSnap) {
+      variantId = findVariantIdByMaHangInCatalog(catalogList, codeSnap)
+    }
+    if (!variantId && !codeSnap) continue
+    out.push({
+      ...row,
+      variantId,
+      qty: per,
+      codeSnap: codeSnap || String(row?.codeSnap ?? '').trim(),
+    })
+  }
+  return out
 }
 
 /**
@@ -121,7 +142,7 @@ async function resolveComboBomForPosReturnRestore(catalogList, item) {
   bom = await fetchComboBomFromSupabaseByMaHang(code, catalogList)
   if (bom.length) return bom
   const p = findComboProductByMaHang(catalogList, code)
-  return enrichComboBomWithVariantIds(catalogList, getComboBom(p))
+  return enrichComboBomWithCatalogVariantIdsLocal(catalogList, getComboBom(p))
 }
 
 function expandPosReturnLinesFromBom(catalogList, item, comboReturnQty, bom) {
