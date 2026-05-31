@@ -186,6 +186,7 @@ import {
   computeInboundFulfillmentPlan,
 } from './inboundWeightedCost.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { updateProductDvtFieldsSequential } from './productDvtSupabaseUpdate.js'
 import { persistCatalogStockRestoreFromCartLines } from './catalogStockRestore.js'
 import { buildDisplayCatalog, normalizeGroupRoot } from './productUnits.js'
 import {
@@ -2171,7 +2172,10 @@ export default function AdminHub({
         ? persistOpts.useUpdateSequential === true
           ? await updateProductDisplayVariantsSequential(upsertOnlyVariants)
           : await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
-              existingCatalogProducts: nextProducts,
+              existingCatalogProducts:
+                nextProducts ??
+                standaloneCatalog?.products ??
+                (Array.isArray(catalogList) ? catalogList : []),
             })
         : await persistCatalogSnapshotAndProducts(nextProducts, fn)
     if (!persistResult.ok) {
@@ -2211,6 +2215,12 @@ export default function AdminHub({
         }
         return { ok: true, preparedVariants: prepared }
       }
+      if (isSupabaseConfigured()) {
+        return {
+          ok: false,
+          error: 'Chế độ Supabase: không gộp sản phẩm vào giao diện khi chưa revalidate từ DB.',
+        }
+      }
       const base = Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []
       const merged = applyProductDataToCatalog(base, {
         type: 'append_flat_variants',
@@ -2231,6 +2241,7 @@ export default function AdminHub({
         })
         return { ok: true }
       }
+      return { ok: false, error: 'Không tải lại danh mục từ Supabase.' }
     }
     if (!nextProducts?.length) {
       setStandaloneCatalog(null)
@@ -2270,23 +2281,21 @@ export default function AdminHub({
         })()
         return
       }
-      const without =
-        mode === 'edit' && replaceCatalogId
-          ? flat.filter((row) => {
-              const p = catalogList.find((x) => x.id === replaceCatalogId)
-              if (!p) return true
-              const ids = new Set((p.groupVariants || [p]).map((v) => String(v.id)))
-              return !ids.has(String(row.id))
-            })
-          : flat
-      const nextFlat = mergeFlatCatalogRowsBySmartUomGroups([...without, flatRow])
-      const nextProducts = prepareCatalogForPosSearch(buildDisplayCatalog(nextFlat))
-      void persistStandaloneProducts(
-        nextProducts,
-        standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong'
-      )
-      setComboModal(null)
-      triggerGoodsSaveSuccessToast()
+      void (async () => {
+        const res = await persistStandaloneProducts(
+          null,
+          standaloneCatalog?.fileName || catalogFileName || 'hang-hoa-thu-cong',
+          [flatRow]
+        )
+        if (!res?.ok) {
+          window.alert(
+            String(res?.error || 'Không lưu combo lên Supabase — kiểm tra Database.')
+          )
+          return
+        }
+        setComboModal(null)
+        triggerGoodsSaveSuccessToast()
+      })()
     },
     [
       catalogList,
@@ -2348,7 +2357,7 @@ export default function AdminHub({
             }
           }
           if (!opts.catalogAlreadyPersisted) {
-            const pr = await persistStandaloneProducts(nextDisplay, fn, replacements, {
+            const pr = await persistStandaloneProducts(null, fn, replacements, {
               useUpdateSequential: true,
             })
             if (!pr?.ok) {
@@ -3221,55 +3230,41 @@ export default function AdminHub({
             : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
       }
     })
-    try {
-      if (isSupabaseConfigured()) {
-        const sb = getSupabaseClient()
-        if (!sb) throw new Error('Không tạo được Supabase client.')
-        const payloadToUpsert = newProducts.map((p) => ({
-          ma_hang: String(p.ma_hang ?? '')
-            .replace(/[\u200B-\u200D\uFEFF]/g, '')
-            .replace(/\u00A0/g, ' ')
-            .trim(),
-          quy_doi: p.quy_doi,
-          gia_ban: p.gia_ban,
-          gia_von: p.gia_von,
-          dvt: p.don_vi_tinh,
-        }))
-        if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
-          window.alert('Payload rỗng! Dừng lại!')
+    const payloadToUpsert = newProducts.map((p) => ({
+      ma_hang: String(p.ma_hang ?? '')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/\u00A0/g, ' ')
+        .trim(),
+      quy_doi: p.quy_doi,
+      gia_ban: p.gia_ban,
+      gia_von: p.gia_von,
+      dvt: p.don_vi_tinh,
+    }))
+    if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
+      window.alert('Payload rỗng! Dừng lại!')
+      return
+    }
+    if (isSupabaseConfigured()) {
+      const dvtRes = await updateProductDvtFieldsSequential(payloadToUpsert)
+      if (!dvtRes.ok) {
+        window.alert(dvtRes.error || 'Lỗi lưu ĐVT lên Supabase.')
+        return
+      }
+      if (typeof onRevalidateCatalog === 'function') {
+        await onRevalidateCatalog()
+      } else if (!parentCatalogSupplied) {
+        const fresh = await revalidateCatalogFromStore()
+        if (!fresh?.products?.length) {
+          window.alert(
+            'Đã lưu ĐVT trên DB nhưng không tải lại danh mục. F5 trang để đồng bộ.'
+          )
           return
         }
-        for (const item of payloadToUpsert) {
-          const { data, error } = await sb
-            .from('products')
-            .update({
-              quy_doi: item.quy_doi,
-              gia_ban: String(item.gia_ban ?? ''),
-              gia_von: String(item.gia_von ?? ''),
-              dvt: item.dvt,
-            })
-            .eq('ma_hang', item.ma_hang.trim())
-            .select('ma_hang, dvt, quy_doi, gia_ban, gia_von')
-          if (error) {
-            window.alert(
-              `Lỗi Supabase khi lưu ĐVT «${item.ma_hang}»: ${error.message}\n(Kiểm tra cột quy_doi / dvt / gia_ban / gia_von trên bảng products.)`
-            )
-            console.error('LỖI SUPABASE ĐVT:', error, item)
-            return
-          }
-          if (!Array.isArray(data) || data.length === 0) {
-            window.alert(
-              `Supabase không cập nhật dòng nào cho ma_hang="${item.ma_hang}" — mã không tồn tại trên DB (không phải RLS nếu đã tắt).`
-            )
-            console.error('LỖI SUPABASE ĐVT: 0 rows', { item, payloadToUpsert })
-            return
-          }
-        }
+        setStandaloneCatalog({
+          products: refreshCatalogSearchTexts(fresh.products),
+          fileName: standaloneCatalog?.fileName || catalogFileName || '',
+        })
       }
-    } catch (e) {
-      console.error('[Đơn vị tính · Lưu] lỗi Supabase:', e)
-      window.alert('Lỗi lưu ĐVT lên Supabase!')
-      return
     }
     const nextIds = new Set(replacements.map((v) => String(v.id)))
     const implicitDeleted = ctx.variants
@@ -3331,6 +3326,10 @@ export default function AdminHub({
     soloGoodsVariant,
     replaceCatalogGroupFromModal,
     triggerGoodsSaveSuccessToast,
+    onRevalidateCatalog,
+    parentCatalogSupplied,
+    standaloneCatalog?.fileName,
+    catalogFileName,
   ])
 
   const updateUnitModalConversionAtKey = useCallback((key, raw) => {
@@ -4122,8 +4121,8 @@ export default function AdminHub({
 
   /** Nhánh standalone: modal gọi persist — staging + lưới giống trên sau khi lưu thành công. */
   const persistStandaloneProductsForInboundModal = useCallback(
-    async (nextProducts, fileNameHint, upsertOnlyVariants) => {
-      const result = await persistStandaloneProducts(nextProducts, fileNameHint, upsertOnlyVariants)
+    async (_nextProducts, fileNameHint, upsertOnlyVariants) => {
+      const result = await persistStandaloneProducts(null, fileNameHint, upsertOnlyVariants)
       if (
         result?.ok &&
         activeTabForInboundSyncRef.current === TAB_INBOUND_DRAFT &&
