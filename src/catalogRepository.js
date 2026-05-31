@@ -1390,8 +1390,12 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   )
 
   const prepared = []
+  /** Nhóm ĐVT: map mã gốc nhập tay -> mã gốc thực tế sau auto-assign (HHxxxx). */
+  const createdRootCodeByGroupKey = new Map()
   for (const v of flatVariants) {
-    let code = String(v.code ?? '').trim()
+    const requestedCode = String(v.code ?? '').trim()
+    const requestedLink = String(v.linkedMasterCode ?? v.ma_hh_lien_quan ?? '').trim()
+    let code = requestedCode
     const codeLc = code.toLowerCase()
     const mustAutoAssign =
       !code ||
@@ -1424,7 +1428,22 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     if (barcode && barcodeSet.has(barcode)) barcode = ''
     if (barcode) barcodeSet.add(barcode)
 
-    const row = { ...v, code, barcode }
+    const groupKey = (requestedLink || requestedCode).toLowerCase()
+    if (!requestedLink && groupKey) {
+      createdRootCodeByGroupKey.set(groupKey, code)
+    }
+    const resolvedLinkedMasterCode =
+      requestedLink && requestedLink.length > 0
+        ? createdRootCodeByGroupKey.get(requestedLink.toLowerCase()) || requestedLink
+        : ''
+
+    const row = {
+      ...v,
+      code,
+      barcode,
+      linkedMasterCode: resolvedLinkedMasterCode,
+      ma_hh_lien_quan: resolvedLinkedMasterCode,
+    }
     // eslint-disable-next-line no-console
     console.log('Bắt đầu gọi insertSingleProductFromDisplayVariant:', code)
     const r = await insertSingleProductFromDisplayVariant(row)
