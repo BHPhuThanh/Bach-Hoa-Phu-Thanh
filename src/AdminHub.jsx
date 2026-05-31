@@ -3212,8 +3212,14 @@ export default function AdminHub({
       const ma_hang = String(v.persistMaHang ?? prev?.code ?? v.code ?? '').trim()
       const sqRaw = v.stockQty
       const sqNum = Number(sqRaw)
+      const linkedMasterCode = String(
+        v.linkedMasterCode ?? prev?.linkedMasterCode ?? v.ma_hh_lien_quan ?? ''
+      ).trim()
       return {
+        ...v,
         ma_hang,
+        linkedMasterCode,
+        ma_hh_lien_quan: linkedMasterCode,
         don_vi_tinh: normalizeCatalogUnitLabel(v.unitLabel),
         ma_vach: String(v.barcode ?? '').trim(),
         ten_hang: nameTrim,
@@ -3235,6 +3241,7 @@ export default function AdminHub({
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\u00A0/g, ' ')
         .trim(),
+      ma_hh_lien_quan: String(p.linkedMasterCode ?? p.ma_hh_lien_quan ?? '').trim(),
       quy_doi: p.quy_doi,
       gia_ban: p.gia_ban,
       gia_von: p.gia_von,

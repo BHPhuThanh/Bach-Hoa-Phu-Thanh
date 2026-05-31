@@ -2,7 +2,7 @@ import { getSupabaseClient } from './supabaseClient.js'
 
 /**
  * Cập nhật ĐVT / giá trên `products` — ép text, chỉ báo UI sau khi DB phản hồi.
- * @param {Array<{ ma_hang: string, gia_ban?: unknown, gia_von?: unknown, quy_doi?: unknown, dvt?: unknown }>} items
+ * @param {Array<{ ma_hang: string, gia_ban?: unknown, gia_von?: unknown, quy_doi?: unknown, dvt?: unknown, ma_hh_lien_quan?: unknown, linkedMasterCode?: unknown }>} items
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function updateProductDvtFieldsSequential(items) {
@@ -28,6 +28,10 @@ export async function updateProductDvtFieldsSequential(items) {
       gia_ban: String(item.gia_ban ?? ''),
       gia_von: String(item.gia_von ?? ''),
     }
+    const linkedCode = String(item.ma_hh_lien_quan ?? item.linkedMasterCode ?? '').trim()
+    if (linkedCode) {
+      payload.ma_hh_lien_quan = linkedCode
+    }
     if (item.quy_doi !== undefined && item.quy_doi !== null && String(item.quy_doi) !== '') {
       payload.quy_doi = String(item.quy_doi)
     }
@@ -39,7 +43,7 @@ export async function updateProductDvtFieldsSequential(items) {
       .from('products')
       .update(payload)
       .eq('ma_hang', ma_hang)
-      .select('ma_hang, dvt, quy_doi, gia_ban, gia_von')
+      .select('ma_hang, ma_hh_lien_quan, dvt, quy_doi, gia_ban, gia_von')
 
     if (error) {
       console.error('LỖI UPDATE ĐVT:', error.message)
