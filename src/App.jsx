@@ -3091,13 +3091,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 throw r.error || new Error(describeCatalogPersistError(r.error))
               }
             }
-            startTransition(() => setProducts(next))
+            const fresh = await applyServerCatalogAfterPersist()
+            if (!fresh?.products?.length) {
+              throw new Error(
+                'Không tải lại danh mục sau khi lưu — không cập nhật giao diện (tránh lệch DB).'
+              )
+            }
             setCatalogSupabaseDirty(pendingDeletedMaHangForSupabaseRef.current.size > 0)
           } else {
             const r = await persistCatalogSnapshotAndProducts(next, catalogFileNameRef.current)
             if (!r.ok) {
               throw r.error || new Error(describeCatalogPersistError(r.error))
             }
+            startTransition(() => setProducts(next))
           }
           return { ok: true }
         } catch (e) {
@@ -3127,9 +3133,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
 
       const runPersist = async () => {
-        const prev = productsRef.current
         const r = await insertProductDisplayVariantsSequential(variants, {
-          existingCatalogProducts: prev,
+          existingCatalogProducts: productsRef.current,
         })
         if (!r.ok) {
           const msg =
@@ -3149,18 +3154,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         const fresh = await applyServerCatalogAfterPersist()
         if (!fresh?.products?.length) {
-          const merged = applyProductDataToCatalog(prev, {
-            type: 'append_flat_variants',
-            variants: prepared,
-          })
-          const nextCatalog = prepareCatalogForPosSearch(merged)
-          setProducts(nextCatalog)
-          productsRef.current = nextCatalog
+          const err = new Error(
+            'Đã ghi Supabase nhưng không tải lại được danh mục — không cập nhật giao diện (tránh mã ảo). F5 và kiểm tra bảng products.'
+          )
+          showPosPersistErrorToast(err.message)
+          return { ok: false, error: err }
         }
         try {
           inboundCatalogUpsertReconcileRef.current?.({
-            requested: prepared,
-            returned: r.returnedDisplayVariants ?? prepared,
+            requested: variants,
+            returned: prepared,
           })
         } catch (e) {
           console.warn('[App] Đồng bộ id nhập hàng sau insert', e)
@@ -3187,9 +3190,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (!upsertOnlyVariants?.length) {
         return { ok: false, error: 'Thiếu biến thể để ghi lên Supabase.' }
       }
-      const prev = productsRef.current
       const r = await insertProductDisplayVariantsSequential(upsertOnlyVariants, {
-        existingCatalogProducts: prev,
+        existingCatalogProducts: productsRef.current,
       })
       if (!r.ok) {
         console.error('Lỗi Insert Supabase:', r.error)
@@ -3208,13 +3210,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       const fresh = await applyServerCatalogAfterPersist()
       if (!fresh?.products?.length) {
-        const merged = applyProductDataToCatalog(prev, {
-          type: 'append_flat_variants',
-          variants: prepared,
-        })
-        const nextCatalog = prepareCatalogForPosSearch(merged)
-        setProducts(nextCatalog)
-        productsRef.current = nextCatalog
+        const err = new Error(
+          'Đã ghi Supabase nhưng không tải lại được danh mục — không cập nhật giao diện (tránh mã ảo).'
+        )
+        showPosPersistErrorToast(err.message)
+        return { ok: false, error: err }
       }
       return { ok: true, preparedVariants: prepared }
     },

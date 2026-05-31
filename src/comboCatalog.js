@@ -183,7 +183,7 @@ export function findVariantIdByMaHangInCatalog(catalogList, maHang) {
  * BOM thành phần — bổ sung `variantId` từ `codeSnap` / mã hàng nếu thiếu.
  * @returns {Array<{ variantId: string, qty: number, codeSnap?: string, unitLabelSnap?: string }>}
  */
-export function enrichComboBomWithVariantIds(catalogList, bom) {
+export function resolveComboBomVariantIds(catalogList, bom) {
   const rows = Array.isArray(bom) ? bom : []
   const out = []
   for (const row of rows) {
@@ -222,7 +222,7 @@ export function resolveComboBomForOrderLine(catalogList, item) {
   let bom = p ? getComboBom(p) : []
   if (!bom.length && Array.isArray(item.comboBom)) bom = item.comboBom
   if (!bom.length && Array.isArray(item.combo_items)) bom = item.combo_items
-  return enrichComboBomWithVariantIds(catalogList, bom)
+  return resolveComboBomVariantIds(catalogList, bom)
 }
 
 /** Loại biến thể thuộc «vỏ» combo — không PATCH tồn / không ghi log cho mã combo tổng. */

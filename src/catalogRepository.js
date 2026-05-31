@@ -26,7 +26,6 @@ import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSche
 import {
   CATALOG_PRODUCT_TYPE_COMBO,
   computeDefaultComboCost,
-  enrichComboBomWithVariantIds,
   getComboBom,
   isComboCatalogProduct,
 } from './comboCatalog.js'
@@ -481,6 +480,30 @@ export function flattenDisplayCatalogToVariants(products) {
   return (Array.isArray(products) ? products : []).flatMap((p) =>
     Array.isArray(p.groupVariants) && p.groupVariants.length > 0 ? p.groupVariants : [p]
   )
+}
+
+function enrichComboBomWithCatalogVariantIdsLocal(catalogList, bom) {
+  const rows = Array.isArray(bom) ? bom : []
+  const out = []
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+  for (const row of rows) {
+    const per = Number(row?.qty)
+    if (!Number.isFinite(per) || per <= 0) continue
+    let variantId = String(row?.variantId ?? '').trim()
+    const codeSnap = String(row?.codeSnap ?? row?.ma_hang ?? row?.code ?? '').trim()
+    if (!variantId && codeSnap) {
+      const hit = flat.find((v) => String(v?.code ?? '').trim() === codeSnap)
+      variantId = String(hit?.id ?? '').trim()
+    }
+    if (!variantId && !codeSnap) continue
+    out.push({
+      ...row,
+      variantId,
+      qty: per,
+      codeSnap: codeSnap || String(row?.codeSnap ?? '').trim(),
+    })
+  }
+  return out
 }
 
 /**
@@ -1390,8 +1413,12 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   )
 
   const prepared = []
+  /** Nhóm ĐVT: map mã gốc nhập tay -> mã gốc thực tế sau auto-assign (HHxxxx). */
+  const createdRootCodeByGroupKey = new Map()
   for (const v of flatVariants) {
-    let code = String(v.code ?? '').trim()
+    const requestedCode = String(v.code ?? '').trim()
+    const requestedLink = String(v.linkedMasterCode ?? v.ma_hh_lien_quan ?? '').trim()
+    let code = requestedCode
     const codeLc = code.toLowerCase()
     const mustAutoAssign =
       !code ||
@@ -1424,7 +1451,22 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     if (barcode && barcodeSet.has(barcode)) barcode = ''
     if (barcode) barcodeSet.add(barcode)
 
-    const row = { ...v, code, barcode }
+    const groupKey = (requestedLink || requestedCode).toLowerCase()
+    if (!requestedLink && groupKey) {
+      createdRootCodeByGroupKey.set(groupKey, code)
+    }
+    const resolvedLinkedMasterCode =
+      requestedLink && requestedLink.length > 0
+        ? createdRootCodeByGroupKey.get(requestedLink.toLowerCase()) || requestedLink
+        : ''
+
+    const row = {
+      ...v,
+      code,
+      barcode,
+      linkedMasterCode: resolvedLinkedMasterCode,
+      ma_hh_lien_quan: resolvedLinkedMasterCode,
+    }
     // eslint-disable-next-line no-console
     console.log('Bắt đầu gọi insertSingleProductFromDisplayVariant:', code)
     const r = await insertSingleProductFromDisplayVariant(row)
@@ -1748,7 +1790,7 @@ export async function fetchComboBomFromSupabaseByMaHang(maHang, catalogList = []
     if (error) throw error
     if (!data) return []
     const bom = parseComboBomFromProductsDbRow(data)
-    return enrichComboBomWithVariantIds(catalogList, bom)
+    return enrichComboBomWithCatalogVariantIdsLocal(catalogList, bom)
   } catch (e) {
     console.error('[catalogRepository] fetchComboBomFromSupabaseByMaHang', code, e)
     return []
