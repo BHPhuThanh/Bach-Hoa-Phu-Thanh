@@ -1467,14 +1467,79 @@ export default function AdminHub({
         )
       }
 
-      if (cartLines.length > 0) {
+      const codeRootWithLegacy = (codeRaw, linkedRaw) => {
+        const linked = String(linkedRaw ?? '').trim()
+        if (linked) return linked
+        const code = String(codeRaw ?? '').trim()
+        if (!code) return ''
+        const legacy = code.match(/^(.*)-(\d+)$/)
+        if (legacy && legacy[1]) return String(legacy[1]).trim()
+        return code
+      }
+
+      const resolvedCartLines = (() => {
+        if (!Array.isArray(cartLines) || cartLines.length === 0) return []
+        const flat = (Array.isArray(catalog) ? catalog : []).flatMap((p) => p.groupVariants || [p])
+        const byId = new Map()
+        const byCodeLc = new Map()
+        const byRootLc = new Map()
+        for (const v of flat) {
+          const id = String(v?.id ?? '').trim()
+          const code = String(v?.code ?? '').trim()
+          const root = codeRootWithLegacy(code, v?.linkedMasterCode)
+          if (id) byId.set(id, v)
+          if (code) {
+            const k = code.toLowerCase()
+            const arr = byCodeLc.get(k) || []
+            arr.push(v)
+            byCodeLc.set(k, arr)
+          }
+          if (root) {
+            const k = root.toLowerCase()
+            const arr = byRootLc.get(k) || []
+            arr.push(v)
+            byRootLc.set(k, arr)
+          }
+        }
+
+        return cartLines.map((line) => {
+          const unit = normalizeCatalogUnitLabel(line?.unitLabel)
+          let hit = byId.get(String(line?.variantId ?? '').trim()) || null
+          const code = String(line?.code ?? line?.ma_hang ?? '').trim()
+          if (!hit && code) {
+            const sameCode = byCodeLc.get(code.toLowerCase()) || []
+            hit =
+              sameCode.find((v) => normalizeCatalogUnitLabel(v?.unitLabel) === unit) ||
+              sameCode[0] ||
+              null
+          }
+          if (!hit && code) {
+            const root = codeRootWithLegacy(code, '')
+            const siblings = byRootLc.get(String(root).toLowerCase()) || []
+            hit =
+              siblings.find((v) => String(v?.code ?? '').trim().toLowerCase() === code.toLowerCase()) ||
+              siblings.find((v) => normalizeCatalogUnitLabel(v?.unitLabel) === unit) ||
+              siblings[0] ||
+              null
+          }
+          if (!hit) return line
+          return {
+            ...line,
+            variantId: String(hit.id ?? line.variantId ?? '').trim(),
+            code: String(hit.code ?? line.code ?? '').trim(),
+          }
+        })
+      })()
+
+      if (resolvedCartLines.length > 0) {
         const delDocCode = `DEL-${String(base.invoiceNo || base.id || '').trim() || '—'}`
         const stockRestoreResult = await persistCatalogStockRestoreFromCartLines({
           catalog,
-          cartLines,
+          cartLines: resolvedCartLines,
           catalogFileName,
           onBulkPatchCatalogVariants,
           setStandaloneCatalog: parentCatalogSupplied ? undefined : setStandaloneCatalog,
+          bulkPatchOpts: { allowCodeAsOldMaHang: true },
         })
         if (!stockRestoreResult.ok) {
           throw new Error(

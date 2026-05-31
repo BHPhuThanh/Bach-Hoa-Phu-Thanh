@@ -3485,7 +3485,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         const flatNext = flattenDisplayCatalogToVariants(next)
         const touchedIds = new Set(valid.map((e) => String(e.variantId)))
         const upsertOnlyVariants = flatNext.filter((v) => touchedIds.has(String(v.id)))
-        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants)
+        const r = await updateProductDisplayVariantsSequential(upsertOnlyVariants, {
+          allowCodeAsOldMaHang: opts?.allowCodeAsOldMaHang === true,
+        })
         if (!r.ok) {
           const msg =
             describeCatalogPersistError(r.error) || 'Không ghi được sản phẩm lên Supabase.'

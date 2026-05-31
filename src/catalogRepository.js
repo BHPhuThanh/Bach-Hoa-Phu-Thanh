@@ -1259,9 +1259,15 @@ function finalizeDisplayVariantForDbWrite(variant, { omitMaHang = false } = {}) 
 /** UPDATE một dòng `products` theo `ma_hang` cũ (để đổi mã hàng không tạo dòng mới). */
 export async function updateSingleProductFromDisplayVariant(variant, options = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true }
-  const oldMaHang = String(
+  let oldMaHang = String(
     options.oldMaHang ?? options.persistMaHang ?? variant?.persistMaHang ?? ''
   ).trim()
+  if (!oldMaHang) {
+    if (options.allowCodeAsOldMaHang === true) {
+      const codeAsOld = String(variant?.code ?? '').trim()
+      if (codeAsOld) oldMaHang = codeAsOld
+    }
+  }
   if (!oldMaHang) {
     return { ok: false, error: new Error('Thiếu mã hàng cũ (old_ma_hang) để cập nhật.') }
   }
@@ -1354,7 +1360,7 @@ export async function insertSingleProductFromDisplayVariant(variant) {
 /**
  * Cập nhật lần lượt từng biến thể — dùng cho sửa giá/tồn/1 vài SP.
  */
-export async function updateProductDisplayVariantsSequential(flatVariants) {
+export async function updateProductDisplayVariantsSequential(flatVariants, options = {}) {
   if (!Array.isArray(flatVariants) || flatVariants.length === 0) {
     return { ok: false, error: new Error('Không có sản phẩm để cập nhật.') }
   }
@@ -1365,6 +1371,7 @@ export async function updateProductDisplayVariantsSequential(flatVariants) {
   for (const v of flatVariants) {
     const r = await updateSingleProductFromDisplayVariant(v, {
       oldMaHang: String(v?.persistMaHang ?? '').trim(),
+      allowCodeAsOldMaHang: options.allowCodeAsOldMaHang === true,
     })
     if (!r.ok) return { ok: false, error: r.error, written }
     if (r.updated === false) {
