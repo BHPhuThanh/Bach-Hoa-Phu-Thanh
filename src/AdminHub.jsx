@@ -10104,7 +10104,7 @@ export default function AdminHub({
               Nhập <strong>số lượng trả</strong> cho từng dòng (mặc định 0). Khi hoàn tất, hệ thống{' '}
               <strong>trừ tồn kho</strong> theo số lượng trả. Bạn vẫn có thể chuyển tab khác.
             </p>
-            <div className="ah-inbound-float-panel__scroll">
+            <div className="ah-inbound-float-panel__scroll ah-inbound-float-panel__scroll--mobile-safe">
               <div className="ah-return-lines-wrap">
               <table className="ah-inbound-ret-table ah-return-lines-table">
                 <thead>
@@ -10198,7 +10198,7 @@ export default function AdminHub({
               </table>
               </div>
             </div>
-            <footer className="ah-inbound-float-panel__foot">
+            <footer className="ah-inbound-float-panel__foot ah-inbound-float-panel__foot--mobile-safe">
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--ghost"
@@ -10286,7 +10286,7 @@ export default function AdminHub({
               đơn</strong>. Khi hoàn tất, hệ thống trừ doanh thu / vốn / lợi nhuận vào <strong>báo cáo ngày hôm
               nay</strong>; dòng khớp được biến thể trong danh mục thì <strong>cộng tồn kho</strong> tương ứng.
             </p>
-            <div className="ah-inbound-float-panel__scroll">
+            <div className="ah-inbound-float-panel__scroll ah-inbound-float-panel__scroll--mobile-safe">
               <div className="ah-return-lines-wrap">
               <table className="ah-inbound-ret-table ah-return-lines-table">
                 <thead>
@@ -10389,7 +10389,7 @@ export default function AdminHub({
               </table>
               </div>
             </div>
-            <footer className="ah-inbound-float-panel__foot">
+            <footer className="ah-inbound-float-panel__foot ah-inbound-float-panel__foot--mobile-safe">
               <button
                 type="button"
                 className="ah-iv-btn ah-iv-btn--ghost"

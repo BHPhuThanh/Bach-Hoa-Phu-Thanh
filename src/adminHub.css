@@ -5123,6 +5123,37 @@ a.ah-inbound-line-code-link:hover {
   text-align: right;
 }
 
+@media (max-width: 768px) {
+  .ah-inbound-float-panel__scroll--mobile-safe {
+    padding-bottom: 6rem;
+  }
+
+  .ah-inbound-float-panel__foot--mobile-safe {
+    padding-bottom: calc(max(0.75rem, env(safe-area-inset-bottom, 0px)) + 4.25rem);
+  }
+
+  .ah-inbound-suggest-item--draft {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .ah-inbound-suggest-item--draft .ah-inbound-sug-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ah-inbound-suggest-item--draft .ah-inbound-sug-stock {
+    white-space: nowrap;
+    flex-shrink: 0;
+    text-align: right;
+  }
+}
+
 .ah-inbound-suggest-item--quick-add {
   display: flex;
   align-items: center;
