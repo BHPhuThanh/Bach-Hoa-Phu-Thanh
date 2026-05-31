@@ -6021,6 +6021,7 @@ export default function AdminHub({
         catalogFileName: standaloneCatalog?.fileName || catalogFileName || '',
         onBulkPatchCatalogVariants,
         setStandaloneCatalog: parentCatalogSupplied ? undefined : setStandaloneCatalog,
+        bulkPatchOpts: { allowCodeAsOldMaHang: true },
       })
       if (!stockRestoreResult.ok) {
         throw new Error(
