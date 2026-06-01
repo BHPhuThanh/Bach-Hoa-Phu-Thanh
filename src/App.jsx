@@ -3304,6 +3304,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       const newCode = cleanMaHangKey(
         Object.prototype.hasOwnProperty.call(patch, 'code') ? patch.code : lockedOriginalMaHang
       )
+      const oldCode = lockedOriginalMaHang
 
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) {
         startTransition(() => setProducts(next))
@@ -3374,7 +3375,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             }
           }
 
+          if (oldCode && newCode && oldCode !== newCode) {
+            const { error: childUpdateErr } = await sb
+              .from('products')
+              .update({ ma_hh_lien_quan: newCode })
+              .eq('ma_hh_lien_quan', oldCode)
+            if (childUpdateErr) console.error('Lỗi update ĐVT phụ:', childUpdateErr)
+          }
+
           startTransition(() => setProducts(next))
+          await applyServerCatalogAfterPersist()
           if (inventoryLogMeta) {
             try {
               const rows = buildStockAdjustInventoryLogRows(
@@ -3415,7 +3425,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: e }
       }
     },
-    [showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
+    [showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications, applyServerCatalogAfterPersist]
   )
 
   const showPosScanToastMessage = useCallback((text) => {
