@@ -1334,6 +1334,7 @@ export default function AdminHub({
   const [ovTo, setOvTo] = useState(todayYmd)
   const [selected, setSelected] = useState(null)
   const [deletingOrderId, setDeletingOrderId] = useState('')
+  const [isPrinting, setIsPrinting] = useState(false)
   const isDeletingOrder = String(deletingOrderId || '').trim().length > 0
 
   const ovFiltered = useMemo(
@@ -1413,6 +1414,18 @@ export default function AdminHub({
       ...(einv.qrLookup ? { eInvoice: { showQrLookup: true } } : {}),
     })
     printReceiptHtml(html)
+  }
+
+  const handlePosDetailReprintClick = async (order) => {
+    if (isPrinting) return
+    setIsPrinting(true)
+    try {
+      // Yield one tick so disabled/loading UI paints before heavy print work.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      handleReprint(order)
+    } finally {
+      setIsPrinting(false)
+    }
   }
 
   async function handleDeleteOrder(orderRaw) {
@@ -9110,20 +9123,33 @@ export default function AdminHub({
                       {' · LN '}
                       <strong>{Number(posDetailNorm.totalProfit).toLocaleString('vi-VN')} đ</strong>
                     </p>
-                    <span
-                      className={`ah-inbound-status ah-inbound-status--${
-                        posDetailNorm.status === 'cancelled'
-                          ? 'cancelled'
-                          : posDetailNorm.status === 'returned_full'
-                            ? 'returned_full'
-                            : posDetailNorm.status === 'returned_partial'
-                              ? 'returned_partial'
-                              : 'completed'
-                      }`}
-                      title={posOrderStatusLabel(posDetailNorm.status)}
-                    >
-                      {posOrderStatusLabel(posDetailNorm.status)}
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <span
+                        className={`ah-inbound-status ah-inbound-status--${
+                          posDetailNorm.status === 'cancelled'
+                            ? 'cancelled'
+                            : posDetailNorm.status === 'returned_full'
+                              ? 'returned_full'
+                              : posDetailNorm.status === 'returned_partial'
+                                ? 'returned_partial'
+                                : 'completed'
+                        }`}
+                        title={posOrderStatusLabel(posDetailNorm.status)}
+                      >
+                        {posOrderStatusLabel(posDetailNorm.status)}
+                      </span>
+                      <button
+                        type="button"
+                        className={`px-3 py-1 bg-blue-600 text-white rounded flex items-center gap-2${
+                          isPrinting ? ' opacity-50 cursor-not-allowed' : ''
+                        }`}
+                        onClick={() => handlePosDetailReprintClick(posDetailNorm)}
+                        disabled={isPrinting}
+                      >
+                        <span aria-hidden="true">{isPrinting ? '⏳' : '🖨️'}</span>
+                        <span>{isPrinting ? 'Đang chuẩn bị...' : 'In hóa đơn'}</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="ah-inbound-detail-tools" role="toolbar" aria-label="Thao tác đơn bán POS">
                     <button
