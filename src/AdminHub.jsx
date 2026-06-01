@@ -3811,10 +3811,10 @@ export default function AdminHub({
     setSuppliers(rows)
   }, [])
 
-  /** Một lần / phiên làm việc khi lần đầu mở tab Nhập hàng — không phụ thuộc refreshKey, không lặp khi đổi tab. */
+  /** Một lần / phiên làm việc khi mở tab cần dùng dropdown NCC (Nhập hàng/Hàng hóa). */
   const suppliersInboundFetchedOnceRef = useRef(false)
   useEffect(() => {
-    if (activeTab !== TAB_INBOUND && activeTab !== TAB_INBOUND_DRAFT) return
+    if (activeTab !== TAB_INBOUND && activeTab !== TAB_INBOUND_DRAFT && activeTab !== TAB_GOODS) return
     if (suppliersInboundFetchedOnceRef.current) return
     let cancelled = false
     void (async () => {
@@ -3874,6 +3874,14 @@ export default function AdminHub({
   const triggerSupplierSavedToast = useCallback(() => {
     setSupplierSavedToastGen((g) => g + 1)
   }, [])
+  const supplierCreateResolverRef = useRef(null)
+  const resolveSupplierCreateRequest = useCallback((createdName = '') => {
+    const resolve = supplierCreateResolverRef.current
+    supplierCreateResolverRef.current = null
+    if (typeof resolve === 'function') {
+      resolve(String(createdName || '').trim())
+    }
+  }, [])
   /** Toast ngắn sau Lưu phiếu / Hoàn thành (thay cho alert). */
   const [inboundSaveToastGen, setInboundSaveToastGen] = useState(0)
   const triggerInboundSaveToast = useCallback(() => {
@@ -3904,6 +3912,9 @@ export default function AdminHub({
   }, [inboundSyncErrMsg])
   const openGoodsBrandSupplierModal = useCallback(() => {
     setSupplierModalOpen(true)
+    return new Promise((resolve) => {
+      supplierCreateResolverRef.current = resolve
+    })
   }, [])
   const [customerSaving, setCustomerSaving] = useState(false)
   const [employeeSaving, setEmployeeSaving] = useState(false)
@@ -3946,8 +3957,8 @@ export default function AdminHub({
     [catalogList]
   )
 
-  /** Gợi ý NCC: ưu tiên bảng `suppliers` (Supabase), thêm thương hiệu trong danh mục nếu chưa có. */
-  const inboundNccAutocompleteOptions = useMemo(() => {
+  /** Nguồn chuẩn cho dropdown Thương hiệu/NPP trên form Tạo/Sửa sản phẩm: bảng `suppliers`. */
+  const supplierNameOptions = useMemo(() => {
     const seen = new Set()
     const out = []
     for (const s of suppliers || []) {
@@ -3958,6 +3969,13 @@ export default function AdminHub({
       seen.add(k)
       out.push(n)
     }
+    return out.sort((a, b) => a.localeCompare(b, 'vi'))
+  }, [suppliers])
+
+  /** Gợi ý NCC cho phiếu nhập: suppliers + thương hiệu sẵn có trong catalog. */
+  const inboundNccAutocompleteOptions = useMemo(() => {
+    const seen = new Set(supplierNameOptions.map((x) => String(x).toLowerCase()))
+    const out = [...supplierNameOptions]
     for (const br of catalogThuongHieuUnique || []) {
       const n = String(br || '').trim()
       if (!n) continue
@@ -3967,7 +3985,7 @@ export default function AdminHub({
       out.push(n)
     }
     return out.sort((a, b) => a.localeCompare(b, 'vi'))
-  }, [suppliers, catalogThuongHieuUnique])
+  }, [supplierNameOptions, catalogThuongHieuUnique])
 
   const inboundProductSuggest = useMemo(() => {
     const raw = inboundFormProductDebounced.trim()
@@ -4378,6 +4396,7 @@ export default function AdminHub({
         setInboundFormSupplierName(name)
         setInboundFormSupplierQ(name)
         setSupplierModalOpen(false)
+        resolveSupplierCreateRequest(name)
         triggerSupplierSavedToast()
       } catch (e) {
         window.alert(formatPostgrestErrorForUser(e))
@@ -4385,7 +4404,7 @@ export default function AdminHub({
         setSupplierSaving(false)
       }
     },
-    [suppliers, persistSuppliers, triggerSupplierSavedToast]
+    [suppliers, persistSuppliers, triggerSupplierSavedToast, resolveSupplierCreateRequest]
   )
 
   const submitNewCustomerAdmin = useCallback(async (draft) => {
@@ -5896,7 +5915,7 @@ export default function AdminHub({
             setComboModal({ mode: 'edit', product: inboundQuickEditCtx.product })
           }
         }}
-        goodsBrandAutocompleteOptions={inboundNccAutocompleteOptions}
+        goodsBrandAutocompleteOptions={supplierNameOptions}
         onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
         onCloseGoodsDetail={closeInboundProductQuickEdit}
       />
@@ -5920,7 +5939,7 @@ export default function AdminHub({
     deleteGoodsDetailVariant,
     openInboundGoodsUnitModal,
     catalogList,
-    inboundNccAutocompleteOptions,
+    supplierNameOptions,
     revenueReadOnly,
     openGoodsBrandSupplierModal,
     closeInboundProductQuickEdit,
@@ -10002,6 +10021,7 @@ export default function AdminHub({
         onClose={() => {
           if (supplierSaving) return
           setSupplierModalOpen(false)
+          resolveSupplierCreateRequest('')
         }}
         onSubmit={(draft) => submitNewSupplier(draft)}
       />
@@ -10556,7 +10576,7 @@ export default function AdminHub({
         open={goodsNewModalOpen}
         onClose={() => setGoodsNewModalOpen(false)}
         catalogList={activeTab === TAB_INBOUND_DRAFT ? catalogListForInbound : catalogList}
-        brandAutocompleteOptions={inboundNccAutocompleteOptions}
+        brandAutocompleteOptions={supplierNameOptions}
         onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
         revenueReadOnly={revenueReadOnly}
         onAppendCatalogVariants={appendCatalogVariantsFromInboundProductModal}

@@ -324,13 +324,6 @@ export default function AdminHubGoodsCreateModal({
 
   const batchBrandOptions = useMemo(() => {
     const brands = new Set()
-    const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
-    for (const v of flat) {
-      const b = String(v.brand ?? v.thuong_hieu ?? '')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (b) brands.add(b)
-    }
     for (const o of brandAutocompleteOptions || []) {
       const b =
         typeof o === 'string'
@@ -340,7 +333,7 @@ export default function AdminHubGoodsCreateModal({
       if (t) brands.add(t)
     }
     return [...brands].sort((a, b) => a.localeCompare(b, 'vi'))
-  }, [catalogList, brandAutocompleteOptions])
+  }, [brandAutocompleteOptions])
 
   useEffect(() => {
     if (!open) return
@@ -1188,7 +1181,11 @@ export default function AdminHubGoodsCreateModal({
                       filterDebounceMs={280}
                       listMaxHeight={228}
                       showAddSupplierEntry={Boolean(onRequestAddSupplier)}
-                      onRequestAddSupplier={onRequestAddSupplier}
+                      onRequestAddSupplier={async () => {
+                        const createdName = await Promise.resolve(onRequestAddSupplier?.())
+                        const normalizedName = String(createdName || '').trim()
+                        if (normalizedName) setGoodsNewBrand(normalizedName)
+                      }}
                     />
                   </div>
                 </label>

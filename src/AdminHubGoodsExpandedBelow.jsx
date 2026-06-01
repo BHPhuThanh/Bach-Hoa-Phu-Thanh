@@ -546,7 +546,16 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                   filterDebounceMs={280}
                                                   listMaxHeight={228}
                                                   showAddSupplierEntry={Boolean(onRequestAddSupplier)}
-                                                  onRequestAddSupplier={onRequestAddSupplier}
+                                                  onRequestAddSupplier={async () => {
+                                                    const createdName = await Promise.resolve(
+                                                      onRequestAddSupplier?.()
+                                                    )
+                                                    const normalizedName = String(createdName || '').trim()
+                                                    if (!normalizedName) return
+                                                    setGoodsDetailDraft((x) =>
+                                                      x ? { ...x, brand: normalizedName } : x
+                                                    )
+                                                  }}
                                                 />
                                               </div>
                                             </div>
