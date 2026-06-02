@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AutoSizer } from 'react-virtualized-auto-sizer'
 import EntityPersonModal from './EntityPersonModal.jsx'
 import {
   formatPostgrestErrorForUser,
@@ -8,7 +7,6 @@ import {
   updateSupplierSupabase,
 } from './entityContactsRepository.js'
 import { supabase, isSupabaseConfigured } from './supabaseClient.js'
-import { SimpleVirtualList } from './SimpleVirtualList.jsx'
 import { useViewportMaxWidth } from './useViewportMaxWidth.js'
 import './adminHub.css'
 
@@ -31,8 +29,6 @@ function localFallbackSupplierId() {
 /**
  * Tab «Nhà cung cấp» — tách khỏi Nhập hàng. Fetch một lần khi mount (tab được chọn lần đầu).
  */
-const SUPPLIER_VIRTUAL_MIN = 50
-
 export default function SupplierManager({ revenueReadOnly = false, onSupplierCreated }) {
   const isMobileLayout = useViewportMaxWidth(768)
   const [suppliers, setSuppliers] = useState([])
@@ -202,88 +198,6 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
     }
   }, [editingSupplier])
 
-  const renderSupplierVirtualRow = useCallback(
-    (r) => {
-      const row = r && typeof r === 'object' ? r : {}
-      const idLabel = String(row.id ?? '').trim() || '—'
-      const nameLabel = String(row.name ?? '').trim() || '—'
-      const phoneLabel = String(row.phone ?? '').trim() || '—'
-      const addressLabel = String(row.address ?? '').trim()
-      const cccdLabel = String(row.cccd ?? '').trim()
-      const mailLabel = String(row.mail ?? '').trim() || '—'
-      if (isMobileLayout) {
-        return (
-          <div className="ah-supplier-virt-card ah-hub-entity-mobile-card">
-            <div className="ah-supplier-virt-card-top">
-              <span className="ah-supplier-virt-id">{idLabel}</span>
-              <div className="ah-supplier-virt-card-actions">
-                <button
-                  type="button"
-                  className="ah-inbound-code-link ah-supplier-virt-name-btn"
-                  onClick={() => openEdit(row)}
-                  disabled={revenueReadOnly}
-                >
-                  {nameLabel}
-                </button>
-                {!revenueReadOnly ? (
-                  <button
-                    type="button"
-                    className="ah-hub-entity-delete-btn"
-                    onClick={() => void handleDeleteSupplier(row)}
-                    title="Xóa nhà cung cấp"
-                    aria-label={`Xóa ${nameLabel}`}
-                  >
-                    Xóa
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className="ah-supplier-virt-meta">
-              <span>{phoneLabel}</span>
-              <span className="ah-supplier-virt-meta-sep">·</span>
-              <span>{mailLabel}</span>
-            </div>
-            {addressLabel ? <div className="ah-supplier-virt-addr">{addressLabel}</div> : null}
-          </div>
-        )
-      }
-      return (
-        <div className="ah-sup-virt-row">
-          <div className="ah-sup-virt-cell ah-sup-virt-id">{idLabel}</div>
-          <div className="ah-sup-virt-cell">
-            <button
-              type="button"
-              className="ah-inbound-code-link"
-              onClick={() => openEdit(row)}
-              disabled={revenueReadOnly}
-            >
-              {nameLabel}
-            </button>
-          </div>
-          <div className="ah-sup-virt-cell">{phoneLabel}</div>
-          <div className="ah-sup-virt-cell ah-sup-virt-muted">{addressLabel || '—'}</div>
-          <div className="ah-sup-virt-cell">{cccdLabel || '—'}</div>
-          <div className="ah-sup-virt-cell ah-sup-virt-muted">{mailLabel}</div>
-          <div className="ah-sup-virt-cell ah-sup-virt-actions">
-            {!revenueReadOnly ? (
-              <button
-                type="button"
-                className="ah-hub-entity-delete-btn"
-                onClick={() => void handleDeleteSupplier(row)}
-                title="Xóa nhà cung cấp"
-              >
-                Xóa
-              </button>
-            ) : null}
-          </div>
-        </div>
-      )
-    },
-    [isMobileLayout, openEdit, revenueReadOnly, handleDeleteSupplier]
-  )
-
-  const supplierVirtRowHeight = isMobileLayout ? 132 : 48
-
   const showLoading = fetchPhase === 'loading' && isSupabaseConfigured()
 
   return (
@@ -346,32 +260,6 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
               </tr>
             </tbody>
           </table>
-        ) : filtered.length >= SUPPLIER_VIRTUAL_MIN ? (
-          <div className="ah-sup-virt-host">
-            {!isMobileLayout ? (
-              <div className="ah-sup-virt-header" aria-hidden>
-                <span>Mã NCC</span>
-                <span>Tên NCC</span>
-                <span>Điện thoại</span>
-                <span>Địa chỉ</span>
-                <span>CCCD</span>
-                <span>Mail</span>
-                <span />
-              </div>
-            ) : null}
-            <AutoSizer>
-              {({ height, width }) => (
-                <SimpleVirtualList
-                  height={height}
-                  width={width}
-                  rows={filtered}
-                  rowHeight={supplierVirtRowHeight}
-                  renderRow={renderSupplierVirtualRow}
-                  overscanCount={10}
-                />
-              )}
-            </AutoSizer>
-          </div>
         ) : isMobileLayout ? (
           <div className="ah-hub-entity-mobile-list">
             {filtered.map((r, idx) => {
