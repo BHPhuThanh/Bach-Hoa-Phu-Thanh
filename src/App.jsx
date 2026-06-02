@@ -3340,6 +3340,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               ten_hang: String(v.name ?? '').trim(),
               thuong_hieu: String(v.brand ?? '').trim(),
               gia_ban: Number(v.price) || 0,
+              gia_si: Number(v.wholesalePrice) || 0,
               gia_von: Number(v.cost) || 0,
               ton_kho:
                 sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
