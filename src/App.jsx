@@ -6748,6 +6748,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           <div className="pos-main-body">
           <div className="pos-left" key={activeSellOrderId ?? 'pos-no-active-order'}>
             <div className="pos-table-wrap">
+              <div style={{ flex: 1, minHeight: 0, height: 'calc(100vh - 360px)', overflowY: 'auto' }}>
               <table className="pos-table pos-table--cart">
                 <colgroup>
                   <col className="pos-cart-col pos-cart-col--act" style={{ width: '4%' }} />
@@ -7083,6 +7084,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   })}
                 </tbody>
               </table>
+              </div>
               {cart.length === 0 && (
                 <p className="pos-table-empty">
                   Chưa có món — mở tab <strong>Bán chạy</strong> phía dưới hoặc dùng ô tìm <strong>F3</strong>.
