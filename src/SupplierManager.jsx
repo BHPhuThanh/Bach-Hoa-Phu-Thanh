@@ -33,7 +33,7 @@ function localFallbackSupplierId() {
  */
 const SUPPLIER_VIRTUAL_MIN = 50
 
-export default function SupplierManager({ revenueReadOnly = false }) {
+export default function SupplierManager({ revenueReadOnly = false, onSupplierCreated }) {
   const isMobileLayout = useViewportMaxWidth(768)
   const [suppliers, setSuppliers] = useState([])
   const [fetchPhase, setFetchPhase] = useState('idle')
@@ -169,15 +169,19 @@ export default function SupplierManager({ revenueReadOnly = false }) {
           return
         }
         if (ins.ok && ins.row?.id) {
-          setSuppliers((prev) => [normalizeSupplierRow(ins.row), ...prev])
+          const created = normalizeSupplierRow(ins.row)
+          setSuppliers((prev) => [created, ...prev])
+          await Promise.resolve(onSupplierCreated?.(created))
         } else if (ins.skipped) {
+          const created = {
+            id: localFallbackSupplierId(),
+            ...payload,
+          }
           setSuppliers((prev) => [
-            {
-              id: localFallbackSupplierId(),
-              ...payload,
-            },
+            created,
             ...prev,
           ])
+          await Promise.resolve(onSupplierCreated?.(created))
         }
         setModalOpen(false)
         setEditingSupplier(null)
@@ -187,7 +191,7 @@ export default function SupplierManager({ revenueReadOnly = false }) {
         setModalSaving(false)
       }
     },
-    [revenueReadOnly, editingSupplier]
+    [revenueReadOnly, editingSupplier, onSupplierCreated]
   )
 
   const modalSeed = useMemo(() => {

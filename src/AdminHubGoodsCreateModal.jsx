@@ -471,7 +471,7 @@ export default function AdminHubGoodsCreateModal({
         resetFormFields()
         resetBatchRowsState()
         goodsCreateScanBufferRef.current = { buf: '', times: [] }
-        onSaved?.()
+        await Promise.resolve(onSaved?.())
       } finally {
         setGoodsCreateSaving(false)
         if (saved) onClose()

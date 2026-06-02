@@ -3811,6 +3811,22 @@ export default function AdminHub({
     setSuppliers(rows)
   }, [])
 
+  const refetchSuppliersForUi = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setSuppliers(loadSuppliersFromStorage())
+      return
+    }
+    try {
+      const remote = await fetchSuppliersFromSupabase()
+      const local = loadSuppliersFromStorage()
+      const merged = mergeSupplierListsDedupe(remote, local)
+      persistSuppliers(merged)
+    } catch (e) {
+      console.warn('[AdminHub] Refetch suppliers', e)
+      setSuppliers(loadSuppliersFromStorage())
+    }
+  }, [persistSuppliers])
+
   /** Một lần / phiên làm việc khi mở tab cần dùng dropdown NCC (Nhập hàng/Hàng hóa). */
   const suppliersInboundFetchedOnceRef = useRef(false)
   useEffect(() => {
@@ -3818,31 +3834,13 @@ export default function AdminHub({
     if (suppliersInboundFetchedOnceRef.current) return
     let cancelled = false
     void (async () => {
-      if (!isSupabaseConfigured()) {
-        if (cancelled) return
-        setSuppliers(loadSuppliersFromStorage())
-        suppliersInboundFetchedOnceRef.current = true
-        return
-      }
-      try {
-        const remote = await fetchSuppliersFromSupabase()
-        if (cancelled) return
-        const local = loadSuppliersFromStorage()
-        const merged = mergeSupplierListsDedupe(remote, local)
-        persistSuppliers(merged)
-        suppliersInboundFetchedOnceRef.current = true
-      } catch (e) {
-        console.warn('[AdminHub] Đồng bộ nhà cung cấp (suppliers)', e)
-        if (!cancelled) {
-          setSuppliers(loadSuppliersFromStorage())
-          suppliersInboundFetchedOnceRef.current = true
-        }
-      }
+      await refetchSuppliersForUi()
+      if (!cancelled) suppliersInboundFetchedOnceRef.current = true
     })()
     return () => {
       cancelled = true
     }
-  }, [activeTab, persistSuppliers])
+  }, [activeTab, refetchSuppliersForUi])
 
   /** Khi true, hiện tab "Phiếu nhập mới" trên nav (cho đến khi đóng / lưu). */
   const [inboundDraftSession, setInboundDraftSession] = useState(() => Boolean(standaloneInboundCreate))
@@ -8318,7 +8316,12 @@ export default function AdminHub({
           </section>
         )}
 
-        {activeTab === TAB_SUPPLIER && <SupplierManager revenueReadOnly={revenueReadOnly} />}
+        {activeTab === TAB_SUPPLIER && (
+          <SupplierManager
+            revenueReadOnly={revenueReadOnly}
+            onSupplierCreated={() => refetchSuppliersForUi()}
+          />
+        )}
 
         {isSoloProductTabId(activeTab) &&
           (soloGoodsCtx && soloGoodsVariant && soloGoodsDraft ? (

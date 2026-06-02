@@ -3152,6 +3152,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           showPosPersistErrorToast(err.message)
           return { ok: false, error: err }
         }
+        // Nạp ngay biến thể đã được DB trả về vào global `products` để POS thấy tức thì (không chờ F5).
+        startTransition(() => {
+          setProducts((prev) =>
+            applyProductDataToCatalog(prev, {
+              type: 'append_flat_variants',
+              variants: prepared,
+            })
+          )
+        })
         const fresh = await applyServerCatalogAfterPersist()
         if (!fresh?.products?.length) {
           const err = new Error(
@@ -3208,6 +3217,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         showPosPersistErrorToast(err.message)
         return { ok: false, error: err }
       }
+      // POS đọc từ `products` (global App state) — append ngay dữ liệu DB trả về để render tức thì.
+      startTransition(() => {
+        setProducts((prev) =>
+          applyProductDataToCatalog(prev, {
+            type: 'append_flat_variants',
+            variants: prepared,
+          })
+        )
+      })
       const fresh = await applyServerCatalogAfterPersist()
       if (!fresh?.products?.length) {
         const err = new Error(
