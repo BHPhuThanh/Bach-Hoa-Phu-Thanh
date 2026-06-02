@@ -7,7 +7,7 @@ import {
   insertSupplierSupabase,
   updateSupplierSupabase,
 } from './entityContactsRepository.js'
-import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { supabase, isSupabaseConfigured } from './supabaseClient.js'
 import { SimpleVirtualList } from './SimpleVirtualList.jsx'
 import { useViewportMaxWidth } from './useViewportMaxWidth.js'
 import './adminHub.css'
@@ -46,23 +46,22 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
     let cancelled = false
     ;(async () => {
       setFetchPhase('loading')
-      const sb = getSupabaseClient()
-      if (!sb || !isSupabaseConfigured()) {
+      if (!supabase || !isSupabaseConfigured()) {
         if (!cancelled) {
           setSuppliers([])
           setFetchPhase('done')
         }
         return
       }
-      const { data, error } = await sb.from('suppliers').select('*').order('created_at', { ascending: false })
+      const { data, error } = await supabase.from('suppliers').select('*')
       if (cancelled) return
       if (error) {
-        console.warn('[SupplierManager] fetch suppliers', error.message)
+        console.error('[SupplierManager] fetch suppliers', error)
         setSuppliers([])
         setFetchPhase('error')
         return
       }
-      const rows = (data || []).map(normalizeSupplierRow).filter((r) => r?.name)
+      const rows = (Array.isArray(data) ? data : []).map(normalizeSupplierRow).filter((r) => r?.name)
       setSuppliers(rows)
       setFetchPhase('done')
     })()
@@ -72,17 +71,15 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
   }, [])
 
   const filtered = useMemo(() => {
+    const list = Array.isArray(suppliers) ? suppliers : []
     const q = String(searchQ || '')
       .trim()
       .toLowerCase()
-    if (!q) return suppliers
-    return suppliers.filter((r) => {
-      const name = String(r.name || '')
-        .toLowerCase()
-      const phone = String(r.phone || '').toLowerCase()
-      return name.includes(q) || phone.includes(q)
+    return list.filter((r) => {
+      if (!q) return true
+      return (r?.name || '').toLowerCase().includes(q)
     })
-  }, [suppliers, searchQ])
+  }, [searchQ, suppliers])
 
   const openAdd = useCallback(() => {
     if (revenueReadOnly) return
@@ -207,27 +204,34 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
 
   const renderSupplierVirtualRow = useCallback(
     (r) => {
+      const row = r && typeof r === 'object' ? r : {}
+      const idLabel = String(row.id ?? '').trim() || '—'
+      const nameLabel = String(row.name ?? '').trim() || '—'
+      const phoneLabel = String(row.phone ?? '').trim() || '—'
+      const addressLabel = String(row.address ?? '').trim()
+      const cccdLabel = String(row.cccd ?? '').trim()
+      const mailLabel = String(row.mail ?? '').trim() || '—'
       if (isMobileLayout) {
         return (
           <div className="ah-supplier-virt-card ah-hub-entity-mobile-card">
             <div className="ah-supplier-virt-card-top">
-              <span className="ah-supplier-virt-id">{r.id || '—'}</span>
+              <span className="ah-supplier-virt-id">{idLabel}</span>
               <div className="ah-supplier-virt-card-actions">
                 <button
                   type="button"
                   className="ah-inbound-code-link ah-supplier-virt-name-btn"
-                  onClick={() => openEdit(r)}
+                  onClick={() => openEdit(row)}
                   disabled={revenueReadOnly}
                 >
-                  {r.name || '—'}
+                  {nameLabel}
                 </button>
                 {!revenueReadOnly ? (
                   <button
                     type="button"
                     className="ah-hub-entity-delete-btn"
-                    onClick={() => void handleDeleteSupplier(r)}
+                    onClick={() => void handleDeleteSupplier(row)}
                     title="Xóa nhà cung cấp"
-                    aria-label={`Xóa ${r.name || 'nhà cung cấp'}`}
+                    aria-label={`Xóa ${nameLabel}`}
                   >
                     Xóa
                   </button>
@@ -235,37 +239,37 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
               </div>
             </div>
             <div className="ah-supplier-virt-meta">
-              <span>{r.phone || '—'}</span>
+              <span>{phoneLabel}</span>
               <span className="ah-supplier-virt-meta-sep">·</span>
-              <span>{r.mail || '—'}</span>
+              <span>{mailLabel}</span>
             </div>
-            {r.address ? <div className="ah-supplier-virt-addr">{r.address}</div> : null}
+            {addressLabel ? <div className="ah-supplier-virt-addr">{addressLabel}</div> : null}
           </div>
         )
       }
       return (
         <div className="ah-sup-virt-row">
-          <div className="ah-sup-virt-cell ah-sup-virt-id">{r.id || '—'}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-id">{idLabel}</div>
           <div className="ah-sup-virt-cell">
             <button
               type="button"
               className="ah-inbound-code-link"
-              onClick={() => openEdit(r)}
+              onClick={() => openEdit(row)}
               disabled={revenueReadOnly}
             >
-              {r.name || '—'}
+              {nameLabel}
             </button>
           </div>
-          <div className="ah-sup-virt-cell">{r.phone || '—'}</div>
-          <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.address || '—'}</div>
-          <div className="ah-sup-virt-cell">{r.cccd || '—'}</div>
-          <div className="ah-sup-virt-cell ah-sup-virt-muted">{r.mail || '—'}</div>
+          <div className="ah-sup-virt-cell">{phoneLabel}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-muted">{addressLabel || '—'}</div>
+          <div className="ah-sup-virt-cell">{cccdLabel || '—'}</div>
+          <div className="ah-sup-virt-cell ah-sup-virt-muted">{mailLabel}</div>
           <div className="ah-sup-virt-cell ah-sup-virt-actions">
             {!revenueReadOnly ? (
               <button
                 type="button"
                 className="ah-hub-entity-delete-btn"
-                onClick={() => void handleDeleteSupplier(r)}
+                onClick={() => void handleDeleteSupplier(row)}
                 title="Xóa nhà cung cấp"
               >
                 Xóa
@@ -335,7 +339,7 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
                 <td colSpan={6} className="admin-hub-muted">
                   {!isSupabaseConfigured()
                     ? 'Chưa cấu hình Supabase — không có dữ liệu từ máy chủ.'
-                    : suppliers.length === 0
+                    : (Array.isArray(suppliers) ? suppliers.length : 0) === 0
                       ? 'Chưa có nhà cung cấp — thêm mới hoặc kiểm tra bảng trên Supabase.'
                       : 'Không có dòng khớp tìm kiếm.'}
                 </td>
@@ -370,24 +374,32 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
           </div>
         ) : isMobileLayout ? (
           <div className="ah-hub-entity-mobile-list">
-            {filtered.map((r) => (
-              <div key={r.id} className="ah-hub-entity-mobile-card ah-supplier-virt-card">
+            {filtered.map((r, idx) => {
+              const row = r && typeof r === 'object' ? r : {}
+              const idLabel = String(row.id ?? '').trim() || `row-${idx + 1}`
+              const nameLabel = String(row.name ?? '').trim() || '—'
+              const phoneLabel = String(row.phone ?? '').trim() || '—'
+              const mailLabel = String(row.mail ?? '').trim() || '—'
+              const addressLabel = String(row.address ?? '').trim()
+              const cccdLabel = String(row.cccd ?? '').trim()
+              return (
+              <div key={idLabel} className="ah-hub-entity-mobile-card ah-supplier-virt-card">
                 <div className="ah-supplier-virt-card-top">
-                  <span className="ah-supplier-virt-id">{r.id || '—'}</span>
+                  <span className="ah-supplier-virt-id">{idLabel}</span>
                   <div className="ah-supplier-virt-card-actions">
                     <button
                       type="button"
                       className="ah-inbound-code-link ah-supplier-virt-name-btn"
-                      onClick={() => openEdit(r)}
+                      onClick={() => openEdit(row)}
                       disabled={revenueReadOnly}
                     >
-                      {r.name || '—'}
+                      {nameLabel}
                     </button>
                     {!revenueReadOnly ? (
                       <button
                         type="button"
                         className="ah-hub-entity-delete-btn"
-                        onClick={() => void handleDeleteSupplier(r)}
+                        onClick={() => void handleDeleteSupplier(row)}
                         title="Xóa nhà cung cấp"
                       >
                         Xóa
@@ -396,16 +408,16 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
                   </div>
                 </div>
                 <div className="ah-supplier-virt-meta">
-                  <span>{r.phone || '—'}</span>
+                  <span>{phoneLabel}</span>
                   <span className="ah-supplier-virt-meta-sep">·</span>
-                  <span>{r.mail || '—'}</span>
+                  <span>{mailLabel}</span>
                 </div>
-                {r.address ? <div className="ah-supplier-virt-addr">{r.address}</div> : null}
-                {r.cccd ? (
-                  <div className="ah-hub-entity-mobile-card-extra">CCCD: {r.cccd}</div>
+                {addressLabel ? <div className="ah-supplier-virt-addr">{addressLabel}</div> : null}
+                {cccdLabel ? (
+                  <div className="ah-hub-entity-mobile-card-extra">CCCD: {cccdLabel}</div>
                 ) : null}
               </div>
-            ))}
+            )})}
           </div>
         ) : (
           <table className="admin-hub-table ah-supplier-data-table">
@@ -421,32 +433,40 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id}>
+              {filtered.map((r, idx) => {
+                const row = r && typeof r === 'object' ? r : {}
+                const idLabel = String(row.id ?? '').trim() || `row-${idx + 1}`
+                const nameLabel = String(row.name ?? '').trim() || '—'
+                const phoneLabel = String(row.phone ?? '').trim() || '—'
+                const addressLabel = String(row.address ?? '').trim() || '—'
+                const cccdLabel = String(row.cccd ?? '').trim() || '—'
+                const mailLabel = String(row.mail ?? '').trim() || '—'
+                return (
+                <tr key={idLabel}>
                   <td className="admin-hub-muted" style={{ fontSize: '0.9em' }}>
-                    {r.id || '—'}
+                    {idLabel}
                   </td>
                   <td>
                     <button
                       type="button"
                       className="ah-inbound-code-link"
-                      onClick={() => openEdit(r)}
+                      onClick={() => openEdit(row)}
                       disabled={revenueReadOnly}
                       title={revenueReadOnly ? 'Chỉ Admin' : 'Sửa nhà cung cấp'}
                     >
-                      {r.name || '—'}
+                      {nameLabel}
                     </button>
                   </td>
-                  <td>{r.phone || '—'}</td>
-                  <td>{r.address || '—'}</td>
-                  <td>{r.cccd || '—'}</td>
-                  <td>{r.mail || '—'}</td>
+                  <td>{phoneLabel}</td>
+                  <td>{addressLabel}</td>
+                  <td>{cccdLabel}</td>
+                  <td>{mailLabel}</td>
                   <td>
                     {!revenueReadOnly ? (
                       <button
                         type="button"
                         className="ah-hub-entity-delete-btn"
-                        onClick={() => void handleDeleteSupplier(r)}
+                        onClick={() => void handleDeleteSupplier(row)}
                         title="Xóa nhà cung cấp"
                       >
                         Xóa
@@ -456,7 +476,7 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
                     )}
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         )}
