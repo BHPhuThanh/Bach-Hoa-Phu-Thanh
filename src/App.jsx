@@ -5105,7 +5105,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return cashGivenNum - payTotal
   }, [cashGivenNum, payTotal])
 
-  const handleThanhToan = useCallback(() => {
+  const handleThanhToan = useCallback(async () => {
     const paidOrderId = activeSellOrderId
     if (checkoutBusyOrderIdRef.current === paidOrderId) return
     const checkoutOrder = sellOrdersRef.current.find((o) => o.id === paidOrderId)
@@ -5258,61 +5258,75 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       precomputedDeductByMaGoc: deductByMaGoc,
       precomputedComboDelta: comboDelta,
     })
-    setProducts(nextProducts)
-    finalizePaidSellOrder(paidOrderId)
-    checkoutBusyOrderIdRef.current = null
-
-    if (eInvoiceSettings.autoPrint) {
-      printReceiptHtml(html)
-    }
-
     const sellerIdSnap = activeSellerId
     const fileNameSnap = catalogFileNameRef.current
 
-    void (async () => {
-      try {
-        await saveOrder(order)
-        setSalesRefresh((k) => k + 1)
-        bumpOrdersSync()
-      } catch (e) {
-        console.error('[handleThanhToan] saveOrder', e)
-        showPosPersistErrorToast(
-          `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
-        )
+    try {
+      // 1) Lưu đơn hàng trước tiên. Nếu lỗi thì giữ nguyên giỏ hàng, không finalize.
+      await saveOrder(order)
+      setSalesRefresh((k) => k + 1)
+      bumpOrdersSync()
+
+      // 2) Chỉ sau khi lưu thành công mới finalize/reset đơn hiện tại.
+      setProducts(nextProducts)
+      finalizePaidSellOrder(paidOrderId)
+
+      // 3) Tách lệnh in ra khỏi luồng lưu dữ liệu để lỗi in không làm hỏng app.
+      if (eInvoiceSettings.autoPrint) {
+        setTimeout(() => {
+          try {
+            printReceiptHtml(html)
+          } catch (printError) {
+            console.error('[handleThanhToan] printReceiptHtml', printError)
+            showPosPersistErrorToast('Lưu đơn thành công nhưng không thể in hóa đơn.')
+          }
+        }, 300)
       }
+
+      // 4) Persist tồn kho/cảnh báo chạy hậu kỳ sau khi lưu đơn thành công.
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-      try {
-        const flat = flattenDisplayCatalogToVariants(nextProducts)
-        const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
-        const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
-          tonKhoOnlyVariants,
-        })
-        if (r.ok) {
-          await applyServerCatalogAfterPersist()
-          if (isSupabaseConfigured()) {
-            const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
-            await insertInventoryLogRows(invRows)
-            runLowStockAlertsInBackground(
-              {
-                catalog: nextProducts,
-                touchedVariantIds,
-                userId: sellerIdSnap,
-              },
-              mergeCreatedLowStockNotifications
+      void (async () => {
+        try {
+          const flat = flattenDisplayCatalogToVariants(nextProducts)
+          const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
+          const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
+            tonKhoOnlyVariants,
+          })
+          if (r.ok) {
+            await applyServerCatalogAfterPersist()
+            if (isSupabaseConfigured()) {
+              const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
+              await insertInventoryLogRows(invRows)
+              runLowStockAlertsInBackground(
+                {
+                  catalog: nextProducts,
+                  touchedVariantIds,
+                  userId: sellerIdSnap,
+                },
+                mergeCreatedLowStockNotifications
+              )
+            }
+          } else if (!r.skipped) {
+            showPosPersistErrorToast(
+              describeCatalogPersistError(r.error) || 'Không cập nhật tồn kho lên máy chủ.'
             )
           }
-        } else if (!r.skipped) {
+        } catch (e) {
+          console.error('[handleThanhToan] persist catalog', e)
           showPosPersistErrorToast(
-            describeCatalogPersistError(r.error) || 'Không cập nhật tồn kho lên máy chủ.'
+            describeCatalogPersistError(e) || 'Không cập nhật tồn kho lên máy chủ.'
           )
         }
-      } catch (e) {
-        console.error('[handleThanhToan] persist catalog', e)
-        showPosPersistErrorToast(
-          describeCatalogPersistError(e) || 'Không cập nhật tồn kho lên máy chủ.'
-        )
-      }
-    })()
+      })()
+    } catch (e) {
+      console.error('[handleThanhToan] saveOrder', e)
+      showPosPersistErrorToast(
+        `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
+      )
+      return
+    } finally {
+      checkoutBusyOrderIdRef.current = null
+    }
   }, [
     cartQtyDraftByLine,
     printReceiptHtml,
