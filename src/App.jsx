@@ -5263,25 +5263,29 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     try {
       // 1) Lưu đơn hàng trước tiên. Nếu lỗi thì giữ nguyên giỏ hàng, không finalize.
-      await saveOrder(order)
+      const savedOrder = await saveOrder(order)
+      if (!savedOrder || savedOrder.error) {
+        throw new Error('Không có phản hồi từ máy chủ!')
+      }
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
-      // 2) Chỉ sau khi lưu thành công mới finalize/reset đơn hiện tại.
-      setProducts(nextProducts)
-      finalizePaidSellOrder(paidOrderId)
-
-      // 3) Tách lệnh in ra khỏi luồng lưu dữ liệu để lỗi in không làm hỏng app.
+      // 2) Gọi lệnh in ngay khi giỏ hàng còn hiện, tách riêng lỗi in.
       if (eInvoiceSettings.autoPrint) {
-        setTimeout(() => {
-          try {
-            printReceiptHtml(html)
-          } catch (printError) {
-            console.error('[handleThanhToan] printReceiptHtml', printError)
-            showPosPersistErrorToast('Lưu đơn thành công nhưng không thể in hóa đơn.')
-          }
-        }, 300)
+        try {
+          await Promise.resolve(printReceiptHtml(html))
+        } catch (printError) {
+          console.error('[handleThanhToan] printReceiptHtml', printError)
+          showPosPersistErrorToast('Lưu đơn thành công, nhưng máy in bị kẹt!')
+        }
       }
+
+      // 3) Trì hoãn reset giỏ 1.5s để tránh race khi trình duyệt chốt lệnh in.
+      setTimeout(() => {
+        setProducts(nextProducts)
+        finalizePaidSellOrder(paidOrderId)
+        checkoutBusyOrderIdRef.current = null
+      }, 1500)
 
       // 4) Persist tồn kho/cảnh báo chạy hậu kỳ sau khi lưu đơn thành công.
       if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
@@ -5323,9 +5327,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       showPosPersistErrorToast(
         `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
       )
-      return
-    } finally {
       checkoutBusyOrderIdRef.current = null
+      return
     }
   }, [
     cartQtyDraftByLine,

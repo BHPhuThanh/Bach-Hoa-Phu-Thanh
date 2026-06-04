@@ -36,12 +36,12 @@ export async function saveOrder(order) {
       { onConflict: 'id' }
     )
     if (error) throw error
-    return
+    return { ok: true, id: order.id }
   }
   const db = await openIdb()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite')
-    tx.oncomplete = () => resolve()
+    tx.oncomplete = () => resolve({ ok: true, id: order.id })
     tx.onerror = () => reject(tx.error)
     tx.objectStore(IDB_STORE).put(order)
   })
