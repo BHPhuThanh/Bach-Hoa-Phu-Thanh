@@ -2474,6 +2474,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   /** Tab panel dưới cùng: thao tác nhanh | danh sách sản phẩm */
   const [posDockTab, setPosDockTab] = useState('products')
   const [posDockExpanded, setPosDockExpanded] = useState(true)
+  const [isActionModalOpen, setIsActionModalOpen] = useState(false)
   const [returnPickModalOpen, setReturnPickModalOpen] = useState(false)
   const [returnPickModalLoading, setReturnPickModalLoading] = useState(false)
   const [returnPickModalOrders, setReturnPickModalOrders] = useState([])
@@ -2533,6 +2534,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [adminPinChangeSaving, setAdminPinChangeSaving] = useState(false)
   const [roleSwitchToast, setRoleSwitchToast] = useState(null)
   const roleSwitchToastClearRef = useRef(null)
+  const [toastMessage, setToastMessage] = useState('')
+  const toastMessageClearRef = useRef(null)
+  const pendingHomeAfterPinRef = useRef(false)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
@@ -2557,9 +2561,25 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         window.clearTimeout(roleSwitchToastClearRef.current)
         roleSwitchToastClearRef.current = null
       }
+      if (toastMessageClearRef.current != null) {
+        window.clearTimeout(toastMessageClearRef.current)
+        toastMessageClearRef.current = null
+      }
     },
     []
   )
+  const showToastMessage = useCallback((message) => {
+    const text = String(message ?? '').trim()
+    if (!text) return
+    setToastMessage(text)
+    if (toastMessageClearRef.current != null) {
+      window.clearTimeout(toastMessageClearRef.current)
+    }
+    toastMessageClearRef.current = window.setTimeout(() => {
+      setToastMessage('')
+      toastMessageClearRef.current = null
+    }, 3000)
+  }, [])
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
   const lowStockAlertWrapRef = useRef(null)
@@ -4081,6 +4101,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return
       }
       if (accId === 'admin' && activeSellerId === 'staff') {
+        pendingHomeAfterPinRef.current = false
         setAdminPinModalOpen(true)
         setSellerMenuOpen(false)
         return
@@ -4117,16 +4138,25 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         if (!ck.matched) {
           showRoleSwitchToast('Sai mật khẩu', 'error')
+          if (pendingHomeAfterPinRef.current) {
+            showToastMessage('Sai mật khẩu!')
+          }
           return
         }
         setActiveSellerId('admin')
         setAdminPinModalOpen(false)
         showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
+        if (pendingHomeAfterPinRef.current) {
+          pendingHomeAfterPinRef.current = false
+          setActiveView('dashboard')
+          setSellerMenuOpen(false)
+          navigate('/doanh-thu', { replace: true })
+        }
       } finally {
         setAdminPinChecking(false)
       }
     },
-    [adminPinChecking, setActiveSellerId, showRoleSwitchToast]
+    [adminPinChecking, setActiveSellerId, showRoleSwitchToast, navigate, showToastMessage]
   )
 
   const submitAdminPinChange = useCallback(
@@ -5373,6 +5403,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     window.open(getDoanhThuAbsUrl(), '_blank', 'noopener,noreferrer')
   }, [])
 
+  const handleHomeIconClick = useCallback(() => {
+    // Home luôn yêu cầu xác thực PIN Admin trước khi vào Doanh thu.
+    pendingHomeAfterPinRef.current = true
+    setAdminPinModalOpen(true)
+    setSellerMenuOpen(false)
+  }, [])
+
   const quickXemDanhSachDon = useCallback(() => {
     window.open(getAdminOrdersAbsUrl(), '_blank', 'noopener,noreferrer')
   }, [])
@@ -5748,19 +5785,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         : 'app-header-icon-rail app-header-icon-rail--blue'
     const showPrinter = variant === 'blue'
 
-    const homeBtn = (
+    const renderHomeBtn = (extraClass = '') => (
       <button
         key="home"
         type="button"
-        className="app-header-icon-btn"
-        disabled={!canAccessDashboard}
+        className={`app-header-icon-btn${extraClass ? ` ${extraClass}` : ''}`}
         aria-label="Doanh thu — mở tab mới"
         title={
           canAccessDashboard
             ? 'Doanh thu — mở tab mới (F11)'
             : 'Doanh thu — chỉ Admin / Chủ cửa hàng'
         }
-        onClick={() => canAccessDashboard && openDoanhThuInNewTab()}
+        onClick={handleHomeIconClick}
       >
         <svg
           className="app-header-icon-svg"
@@ -5784,7 +5820,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <button
         key="shortcuts"
         type="button"
-        className="app-header-icon-btn"
+        className="app-header-icon-btn max-md:!hidden"
         aria-label="Phím tắt"
         title="Bảng phím tắt"
         onClick={() => setShortcutsHelpOpen(true)}
@@ -5812,7 +5848,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         <button
           key="change-admin-pin"
           type="button"
-          className="app-header-icon-btn"
+          className="app-header-icon-btn max-md:!hidden"
           aria-label="Đổi mật khẩu Admin"
           title="Đổi mật khẩu Admin"
           onClick={() => setAdminPinChangeOpen(true)}
@@ -5843,10 +5879,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       (n) => n.kind === 'price_change' || n.kind === 'cost_change'
     )
     const bellBtn = (
-      <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
+      <div key="notifications" className="app-header-notify-wrap max-md:!hidden" ref={lowStockAlertWrapRef}>
         <button
           type="button"
-          className="app-header-icon-btn"
+          className="app-header-icon-btn max-md:!hidden"
           aria-label={
             totalNotifyCount > 0
               ? `Thông báo — ${totalNotifyCount} mục chưa đọc`
@@ -5990,7 +6026,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <button
         key="cart"
         type="button"
-        className={`app-header-icon-btn${activeView === 'sell' ? ' app-header-icon-btn--on' : ''}`}
+        className={`app-header-icon-btn max-md:!hidden${activeView === 'sell' ? ' app-header-icon-btn--on' : ''}`}
         aria-label="Bán hàng"
         title="Bán hàng"
         onClick={() => {
@@ -6018,10 +6054,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     )
 
     const printerBlock = showPrinter ? (
-      <div key="printer" className="pos-header-printer-wrap">
+      <div key="printer" className="pos-header-printer-wrap max-md:!hidden">
         <button
           type="button"
-          className="app-header-icon-btn app-header-icon-btn--printer"
+          className="app-header-icon-btn app-header-icon-btn--printer max-md:!hidden"
           aria-label="Hóa đơn điện tử"
           title="Hóa đơn điện tử"
           onClick={openEInvoiceModal}
@@ -6086,7 +6122,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         {activeSellerId === 'admin' ? (
           <button
             type="button"
-            className="pos-sidebar-change-pin-btn"
+            className="pos-sidebar-change-pin-btn max-md:!hidden"
             onClick={() => setAdminPinChangeOpen(true)}
             title="Đổi mật khẩu Admin"
           >
@@ -6107,13 +6143,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         <div className={railClass} ref={sellerMenuRef}>
           <div className="pos-header-blue-icons">
             {printerBlock}
-            {homeBtn}
             {shortcutsBtn}
             {changeAdminPinBtn}
             {bellBtn}
             {cartBtn}
           </div>
-          <div className="pos-header-blue-meta">
+          <div className="pos-header-blue-meta max-md:!hidden">
             {sellerMeta}
             {clockBlock}
           </div>
@@ -6123,7 +6158,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     return (
       <div className={railClass} ref={sellerMenuRef}>
-        {homeBtn}
+        {renderHomeBtn()}
         {shortcutsBtn}
         {changeAdminPinBtn}
         {bellBtn}
@@ -6141,6 +6176,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   return (
     <div className={`app app--dark${isPosMode ? ' app--pos' : ''}`}>
+      {toastMessage && (
+        <div className="fixed top-10 left-1/2 -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded shadow-lg z-[99999] transition-all">
+          {toastMessage}
+        </div>
+      )}
       {posCameraToast ? (
         <div
           className={`pos-camera-toast${posCameraToast.kind === 'error' ? ' pos-camera-toast--error' : ''}`}
@@ -6213,9 +6253,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         ) : null}
         {isPosMode && (
           <div className="pos-header-workbar">
-            <div className="pos-header-workbar-inner">
-              <div className="pos-header-workbar-left">
-              <div className="pos-header-search-wrap" ref={headerSuggestWrapRef}>
+            <div className="pos-header-workbar-inner max-md:flex max-md:flex-col max-md:gap-2 md:flex md:flex-row">
+              <div className="pos-header-workbar-left max-md:order-1 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-2">
+              <div className="pos-header-search-wrap max-md:order-1 max-md:basis-full search-full-mobile" ref={headerSuggestWrapRef}>
                 <div className="pos-header-search-row">
                   <span className="pos-header-search-icon" aria-hidden>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -6232,7 +6272,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     id="pos-search-input"
                     className={`pos-header-search-input${
                       headerSearchInvalid ? ' pos-header-search-input--invalid' : ''
-                    }`}
+                    } max-md:w-full max-md:flex-1`}
                     placeholder="Thêm sản phẩm vào đơn (F3)"
                     value={headerSearch}
                     role="combobox"
@@ -6413,9 +6453,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   </div>
                 )}
               </div>
-              <div className="pos-header-barcode-scanner-group" role="group" aria-label="Mã vạch và menu quét">
+              <div className="pos-header-barcode-scanner-group max-md:order-2" role="group" aria-label="Mã vạch và menu quét">
               <span
-                className="pos-header-barcode-debug"
+                className="pos-header-barcode-debug max-md:!hidden"
                 title="Mã vạch phần mềm vừa nhận (đối chiếu với máy quét). Xem thêm Console (F12)."
               >
                 Nhận: <code>{lastBarcodeReceived || '—'}</code>
@@ -6423,7 +6463,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               <div className="pos-header-scanner" ref={scannerMenuRef}>
                 <button
                   type="button"
-                  className="pos-header-scanner-main"
+                  className="pos-header-scanner-main max-md:!hidden"
                   aria-expanded={scannerMenuOpen}
                   aria-haspopup="true"
                   aria-controls="pos-scanner-menu"
@@ -6442,7 +6482,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                       d="M2 6h2v2H2V6zm4 0h2v2H6V6zm4 0h2v2h-2V6zm4 0h2v2h-2V6zm4 0h2v2h-2V6zm0 4h2v2h-2v-2zm-16 4h2v2H2v-2zm4 0h2v2H6v-2zm8 0h2v2h-2v-2zm4 0h2v2h-2v-2zM2 18h2v2H2v-2zm4 0h2v2H6v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z"
                     />
                   </svg>
-                  <span className="pos-header-scanner-f10">
+                  <span className="pos-header-scanner-f10 max-md:!hidden">
                     ({canAccessDashboard ? 'Alt+F11' : 'F11'})
                   </span>
                   <span className="pos-header-scanner-chev" aria-hidden>
@@ -6484,8 +6524,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 )}
               </div>
               </div>
-              <div className="pos-header-order-tabs-strip">
-                <div className="pos-header-order-tabs" role="tablist" aria-label="Đơn hàng">
+              <div className="pos-header-order-tabs-strip max-md:hidden md:block">
+                <div className="pos-header-order-tabs flex items-center" role="tablist" aria-label="Đơn hàng">
                 {sellOrders.map((o, i) => (
                   <div
                     key={o.id}
@@ -6521,10 +6561,37 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 >
                   +
                 </button>
+                <button
+                  type="button"
+                  className="app-header-icon-btn ml-auto"
+                  aria-label="Doanh thu — mở tab mới"
+                  title={
+                    canAccessDashboard
+                      ? 'Doanh thu — mở tab mới (F11)'
+                      : 'Doanh thu — chỉ Admin / Chủ cửa hàng'
+                  }
+                  onClick={handleHomeIconClick}
+                >
+                  <svg
+                    className="app-header-icon-svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <polyline points="9 22 9 12 15 12 15 22" />
+                  </svg>
+                </button>
                 </div>
               </div>
               </div>
-              <div className="pos-header-workbar-right">
+              <div className="pos-header-workbar-right max-md:!hidden md:flex md:flex-wrap">
                 {renderHeaderIconRail('blue')}
               </div>
             </div>
@@ -6745,9 +6812,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       {activeView === 'sell' && products.length > 0 && (
         <main className="pos-main pos-main--dock">
-          <div className="pos-main-body">
-          <div className="pos-left" key={activeSellOrderId ?? 'pos-no-active-order'}>
-            <div className="pos-table-wrap">
+          <div className="pos-main-body max-md:flex max-md:flex-col max-md:bg-white md:flex md:flex-row">
+          <div className="pos-left max-md:w-full" key={activeSellOrderId ?? 'pos-no-active-order'}>
+            <div className="pos-table-wrap cart-list-mobile">
               <div style={{ flex: 1, minHeight: 0, height: 'calc(100vh - 360px)', overflowY: 'auto' }}>
               <table className="pos-table pos-table--cart">
                 <colgroup>
@@ -7094,8 +7161,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           </div>
           </div>
 
-          <div className="pos-right-rail" key={`pos-rail-${activeSellOrderId ?? 'none'}`}>
-          <aside className="pos-sidebar pos-sidebar--minimal">
+          <div
+            className="pos-right-rail max-md:w-full max-md:flex max-md:flex-col max-md:space-y-3 max-md:bg-white max-md:relative max-md:z-20 md:w-[350px] md:border-l"
+            key={`pos-rail-${activeSellOrderId ?? 'none'}`}
+          >
+          <aside className="pos-sidebar pos-sidebar--minimal max-md:w-full">
             <div className="pos-sidebar-top">
               <div className="pos-sidebar-customer-toolbar">
                 <div className="pos-sidebar-customer-field">
@@ -7277,7 +7347,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 </div>
               </div>
             </div>
-            <div className="pos-sidebar-footer-actions">
+            <div className="pos-sidebar-footer-actions sticky-checkout-mobile !fixed !bottom-0 !left-0 !w-full !z-[9999] !bg-white !p-3 !border-t">
               <button
                 type="button"
                 className="pos-btn-checkout"
@@ -7343,11 +7413,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     <button
                       type="button"
                       className="pos-bottom-dock-chevron"
-                      aria-expanded={posDockExpanded}
-                      aria-label={posDockExpanded ? 'Thu gọn panel' : 'Mở rộng panel'}
-                      onClick={() => setPosDockExpanded((v) => !v)}
+                      aria-pressed={isActionModalOpen}
+                      aria-label={isActionModalOpen ? 'Đóng thao tác nhanh' : 'Mở thao tác nhanh'}
+                      onClick={() => setIsActionModalOpen(true)}
                     >
-                      <span aria-hidden>{posDockExpanded ? '▾' : '▴'}</span>
+                      <span
+                        aria-hidden
+                        className={`transition-transform duration-300 ${isActionModalOpen ? 'rotate-180' : ''}`}
+                      >
+                        ▾
+                      </span>
                     </button>
                   </div>
 
@@ -7360,7 +7435,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                     >
                       {posDockTab === 'actions' && (
                         <div className="pos-quick-actions-stack pos-quick-actions-stack--footer-only">
-                          <div className="pos-quick-featured-row pos-quick-featured-row--footer-fill">
+                          <div className="pos-quick-featured-row pos-quick-featured-row--footer-fill hide-original-actions-mobile">
                             <button
                               type="button"
                               className="pos-quick-action-btn pos-quick-action-btn--featured pos-quick-action-btn--featured-inline"
@@ -7538,7 +7613,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       <AdminRolePinModal
         open={adminPinModalOpen}
-        onClose={() => setAdminPinModalOpen(false)}
+        onClose={() => {
+          if (pendingHomeAfterPinRef.current) {
+            showToastMessage('Đã hủy xác thực Admin. Không chuyển trang.')
+          }
+          pendingHomeAfterPinRef.current = false
+          setAdminPinModalOpen(false)
+        }}
         isSubmitting={adminPinChecking}
         onSubmitPin={verifyAdminPinAndSwitchRole}
       />
@@ -7920,6 +8001,29 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       {activeView === 'sell' && products.length === 0 && initialCatalogLoadPending && !error && (
         <div className="welcome welcome--loading">
           <p>Đang tải dữ liệu hàng từ máy chủ…</p>
+        </div>
+      )}
+      {isActionModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 999999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '16px', width: '90%', maxWidth: '350px', position: 'relative', boxShadow: '0 10px 30px rgba(0,0,0,0.3)' }}>
+            {/* Nút tắt X */}
+            <button onClick={() => setIsActionModalOpen(false)} style={{ position: 'absolute', top: '15px', right: '15px', background: 'none', border: 'none', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer', color: '#666' }}>✕</button>
+            
+            <h3 style={{ textAlign: 'center', margin: '0 0 20px 0', borderBottom: '1px solid #eee', paddingBottom: '15px', fontSize: '18px', fontWeight: 'bold', color: '#333' }}>Thao tác nhanh</h3>
+            
+            {/* KHU VỰC NÚT BẤM */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {/* NÚT 1 */}
+                <button onClick={() => { quickXemDanhSachDon(); setIsActionModalOpen(false); }} style={{ width: '100%', padding: '14px', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', fontSize: '16px', fontWeight: '600', color: '#0f172a' }}>
+                  📋 Danh sách đơn hàng
+                </button>
+                
+                {/* NÚT 2 */}
+                <button onClick={() => { openReturnPickModal(); setIsActionModalOpen(false); }} style={{ width: '100%', padding: '14px', backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', fontSize: '16px', fontWeight: '600', color: '#0f172a' }}>
+                  ↩️ Đổi trả hàng
+                </button>
+            </div>
+          </div>
         </div>
       )}
       {activeView === 'sell' && products.length === 0 && !initialCatalogLoadPending && (

@@ -7129,7 +7129,7 @@ export default function AdminHub({
             )
           )}
         </div>
-        <a className="admin-hub-sell" href={sellHref} target="_blank" rel="noopener noreferrer">
+        <a className="admin-hub-sell" href={sellHref}>
           <svg
             className="admin-hub-sell-svg"
             width="18"
