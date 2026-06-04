@@ -1010,6 +1010,75 @@
   }
 }
 
+/* =======================================
+   PHÓNG TO GIỎ HÀNG TRÊN PC (Desktop)
+======================================= */
+@media (min-width: 768px) {
+    /* Phóng to Header (Tiêu đề bảng) */
+    thead th, 
+    .table-header {
+        font-size: 15px !important;
+        font-weight: bold !important;
+    }
+
+    /* Phóng to Tên sản phẩm */
+    .pos-name-text {
+        font-size: 18px !important;
+    }
+
+    /* Phóng to Mã hàng và Tên ĐVT */
+    .pos-cart-code-text,
+    .pos-dvt-current-label {
+        font-size: 15px !important;
+    }
+
+    /* Phóng to Ô nhập Số lượng và Giá bán */
+    .pos-qty-input,
+    .pos-cart-price-input {
+        font-size: 18px !important;
+        font-weight: bold !important;
+    }
+
+    /* Phóng to cột Thành tiền (Nếu bọc bằng thẻ strong) */
+    td strong {
+        font-size: 18px !important;
+    }
+
+    /* =======================================
+       DÀN NGANG GÓC PHẢI HEADER (PC)
+    ======================================= */
+    /* Ép toàn bộ khung bên phải thành 1 hàng ngang tuyệt đối, cấm rớt dòng */
+    .pos-header-workbar-right {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important; /* QUAN TRỌNG: Cấm rớt xuống dòng */
+        align-items: center !important;
+        justify-content: flex-end !important;
+        width: auto !important;
+    }
+
+    /* Dàn ngang cả cụm chữ Admin và Thời gian */
+    .pos-header-blue-meta {
+        display: flex !important;
+        flex-direction: row !important; /* Cho Tên và Giờ nằm ngang nhau */
+        align-items: center !important;
+        gap: 15px !important;
+        margin-top: 0 !important;
+        margin-left: 20px !important; /* Cách cụm Icon một khoảng cho đẹp */
+        width: auto !important;
+        text-align: right !important;
+    }
+}
+
+/* =======================================
+   ẨN DÒNG TỔNG TIỀN MOBILE TRÊN PC
+======================================= */
+@media (min-width: 768px) {
+    .mobile-total-row {
+        display: none !important;
+    }
+}
+
 /* Toast kết quả quét mã vạch — góc phải dưới, phù hợp dark mode */
 .pos-scan-toast {
   position: fixed;

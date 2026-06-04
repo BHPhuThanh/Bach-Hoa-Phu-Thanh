@@ -6119,16 +6119,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             ))}
           </ul>
         )}
-        {activeSellerId === 'admin' ? (
-          <button
-            type="button"
-            className="pos-sidebar-change-pin-btn max-md:!hidden"
-            onClick={() => setAdminPinChangeOpen(true)}
-            title="Đổi mật khẩu Admin"
-          >
-            🔒 Đổi mật khẩu
-          </button>
-        ) : null}
       </div>
     )
 
@@ -6142,6 +6132,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return (
         <div className={railClass} ref={sellerMenuRef}>
           <div className="pos-header-blue-icons">
+            {renderHomeBtn()}
             {printerBlock}
             {shortcutsBtn}
             {changeAdminPinBtn}
@@ -6561,37 +6552,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 >
                   +
                 </button>
-                <button
-                  type="button"
-                  className="app-header-icon-btn ml-auto"
-                  aria-label="Doanh thu — mở tab mới"
-                  title={
-                    canAccessDashboard
-                      ? 'Doanh thu — mở tab mới (F11)'
-                      : 'Doanh thu — chỉ Admin / Chủ cửa hàng'
-                  }
-                  onClick={handleHomeIconClick}
-                >
-                  <svg
-                    className="app-header-icon-svg"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                    <polyline points="9 22 9 12 15 12 15 22" />
-                  </svg>
-                </button>
                 </div>
               </div>
               </div>
-              <div className="pos-header-workbar-right max-md:!hidden md:flex md:flex-wrap">
+              <div className="pos-header-workbar-right max-md:!hidden md:flex">
                 {renderHeaderIconRail('blue')}
               </div>
             </div>
@@ -7351,7 +7315,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             {/* Khối Footer dính đáy liền mạch, bo góc trên, bóng đổ xịn */}
             <div className="pos-sidebar-footer-actions sticky-checkout-mobile !fixed !bottom-0 !left-0 !w-full !z-[99999] !bg-white !rounded-t-2xl !shadow-[0_-8px_25px_-5px_rgba(0,0,0,0.15)] !p-4 !pt-3 max-md:flex max-md:flex-col max-md:gap-2">
               {/* Dòng hiển thị tổng tiền - Cưỡng chế bằng Inline Style */}
-              <div className="md:hidden w-full pb-2 mb-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #f3f4f6', backgroundColor: 'transparent' }}>
+              <div className="md:hidden mobile-total-row w-full pb-2 mb-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #f3f4f6', backgroundColor: 'transparent' }}>
                   
                   {/* Chữ Xanh dương */}
                   <span style={{ color: '#0088ff', fontWeight: 'bold', fontSize: '1.2rem' }}>
