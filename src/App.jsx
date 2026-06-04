@@ -6618,6 +6618,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               <h2 id="pos-shortcuts-title" className="pos-shortcuts-modal-title">
                 Phím tắt POS
               </h2>
+              {/* [AI CHÚ Ý: DÁN NGUYÊN XI CÁI NÚT <button> THANH TOÁN GỐC VÀO ĐÂY] */}
               <button
                 type="button"
                 className="pos-shortcuts-modal-close"
@@ -7295,7 +7296,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 />
               </label>
               <div className="pos-sidebar-pay-grow">
-                <div className="pos-side-block pos-side-due">
+                <div className="pos-side-block pos-side-due max-md:hidden">
                   <span className="pos-side-label pos-side-label--due">Tổng tiền cần khách trả</span>
                   <span className="pos-side-value pos-side-due-num">{formatVnDots(payTotal)} đ</span>
                 </div>
@@ -7347,7 +7348,22 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 </div>
               </div>
             </div>
-            <div className="pos-sidebar-footer-actions sticky-checkout-mobile !fixed !bottom-0 !left-0 !w-full !z-[9999] !bg-white !p-3 !border-t">
+            {/* Khối Footer dính đáy liền mạch, bo góc trên, bóng đổ xịn */}
+            <div className="pos-sidebar-footer-actions sticky-checkout-mobile !fixed !bottom-0 !left-0 !w-full !z-[99999] !bg-white !rounded-t-2xl !shadow-[0_-8px_25px_-5px_rgba(0,0,0,0.15)] !p-4 !pt-3 max-md:flex max-md:flex-col max-md:gap-2">
+              {/* Dòng hiển thị tổng tiền - Cưỡng chế bằng Inline Style */}
+              <div className="md:hidden w-full pb-2 mb-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '1px solid #f3f4f6', backgroundColor: 'transparent' }}>
+                  
+                  {/* Chữ Xanh dương */}
+                  <span style={{ color: '#0088ff', fontWeight: 'bold', fontSize: '1.2rem' }}>
+                      Khách cần trả:
+                  </span>
+                  
+                  {/* Số tiền Đen tuyền, cực to */}
+                  <span style={{ color: '#000000', fontWeight: '900', fontSize: '1.8rem', letterSpacing: '-1px', lineHeight: '1' }}>
+                      {formatVnDots(payTotal)} đ
+                  </span>
+              
+              </div>
               <button
                 type="button"
                 className="pos-btn-checkout"

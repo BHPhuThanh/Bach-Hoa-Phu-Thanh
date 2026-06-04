@@ -5931,6 +5931,9 @@
   body, #root, .pos-main-body, .pos-right-rail {
     background-color: #ffffff !important;
   }
+  .pos-side-due {
+      display: none !important;
+  }
   /* Ẩn các icon thừa trên Header & Sidebar */
   .pos-header-printer-wrap,
   .app-header-notify-wrap,
