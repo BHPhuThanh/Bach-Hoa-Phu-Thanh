@@ -1077,6 +1077,11 @@
     .mobile-total-row {
         display: none !important;
     }
+
+    /* Ẩn nút Home vị trí cũ trên màn hình PC */
+    .home-btn-mobile {
+        display: none !important;
+    }
 }
 
 /* Toast kết quả quét mã vạch — góc phải dưới, phù hợp dark mode */
