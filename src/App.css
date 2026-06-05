@@ -6010,7 +6010,6 @@
   }
   /* Ẩn các icon thừa trên Header & Sidebar */
   .pos-header-printer-wrap,
-  .app-header-notify-wrap,
   .pos-sidebar-change-pin-btn,
   .pos-header-barcode-scanner-group,
   .pos-header-scanner-main,
@@ -6022,10 +6021,7 @@
   .hide-original-actions-mobile {
       display: none !important;
   }
-  /* Tiêu diệt thanh công cụ phụ (Admin & 3 Icon) */
-  .pos-header-workbar-right,
-  .app-header-icon-rail--blue,
-  .pos-header-blue-icons,
+  /* Chỉ ẩn cụm meta Admin trên mobile */
   .pos-header-blue-meta {
       display: none !important;
   }

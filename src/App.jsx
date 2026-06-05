@@ -135,8 +135,6 @@ import {
   cleanOldNotificationsInSupabase,
   collectLowStockProductsFromCatalog,
   fetchNotificationsFromSupabase,
-  groupNotificationsByDay,
-  isLowStockDigestMessage,
   markAllNotificationsReadInSupabase,
   NOTIFICATIONS_BUMP_EVENT,
   parseLowStockDigestMessage,
@@ -2676,13 +2674,31 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [supabaseNotifications, setSupabaseNotifications] = useState([])
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false)
 
+  const normalizeSupabaseNotifications = useCallback((rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return []
+    let newestLowStock = null
+    const otherNotifications = []
+    for (const row of rows) {
+      if (!row) continue
+      if (String(row.kind || '').trim() === 'low_stock') {
+        if (!newestLowStock || Number(row.createdAtMs || 0) > Number(newestLowStock.createdAtMs || 0)) {
+          newestLowStock = row
+        }
+        continue
+      }
+      otherNotifications.push(row)
+    }
+    const merged = newestLowStock ? [newestLowStock, ...otherNotifications] : otherNotifications
+    merged.sort((a, b) => Number(b?.createdAtMs || 0) - Number(a?.createdAtMs || 0))
+    return merged
+  }, [])
+
   const mergeCreatedLowStockNotifications = useCallback((lowStockRows) => {
     if (!lowStockRows?.length) return
     setSupabaseNotifications((p) => {
-      const withoutLowStock = p.filter((x) => x.kind !== 'low_stock')
-      return [...lowStockRows, ...withoutLowStock]
+      return normalizeSupabaseNotifications([...(lowStockRows || []), ...(p || [])])
     })
-  }, [])
+  }, [normalizeSupabaseNotifications])
 
   const refreshSupabaseNotifications = useCallback(async () => {
     if (!isSupabaseConfigured()) {
@@ -2690,8 +2706,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return
     }
     const rows = await fetchNotificationsFromSupabase(activeSellerId)
-    setSupabaseNotifications(rows)
-  }, [activeSellerId])
+    setSupabaseNotifications(normalizeSupabaseNotifications(rows))
+  }, [activeSellerId, normalizeSupabaseNotifications])
 
   useEffect(() => {
     void (async () => {
@@ -2744,19 +2760,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [refreshSupabaseNotifications])
 
   const supabaseUnreadCount = useMemo(() => {
-    let count = 0
-    let digestUnread = false
-    for (const n of supabaseNotifications) {
-      if (n.is_read) continue
-      if (n.kind === 'low_stock') {
-        if (isLowStockDigestMessage(n.message)) {
-          digestUnread = true
-        }
-        continue
-      }
-      count += 1
-    }
-    return count + (digestUnread ? 1 : 0)
+    return supabaseNotifications.reduce((count, n) => count + (n?.is_read ? 0 : 1), 0)
   }, [supabaseNotifications])
 
   const markAllNotificationsRead = useCallback(async () => {
@@ -5866,7 +5870,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       <button
         key="shortcuts"
         type="button"
-        className="app-header-icon-btn max-md:!hidden"
+        className="app-header-icon-btn max-md:hidden"
         aria-label="Phím tắt"
         title="Bảng phím tắt"
         onClick={() => setShortcutsHelpOpen(true)}
@@ -5894,7 +5898,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         <button
           key="change-admin-pin"
           type="button"
-          className="app-header-icon-btn max-md:!hidden"
+          className="app-header-icon-btn max-md:hidden"
           aria-label="Đổi mật khẩu Admin"
           title="Đổi mật khẩu Admin"
           onClick={() => setAdminPinChangeOpen(true)}
@@ -5919,154 +5923,114 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const costNotifyCount = appCostChangeNotifications.length
     const totalNotifyCount = supabaseUnreadCount + costNotifyCount
-    const supabaseLowStock = supabaseNotifications.filter((n) => n.kind === 'low_stock')
-    const supabaseLowStockGroups = groupNotificationsByDay(supabaseLowStock)
-    const supabasePriceChange = supabaseNotifications.filter(
-      (n) => n.kind === 'price_change' || n.kind === 'cost_change'
-    )
-    const bellBtn = (
-      <div key="notifications" className="app-header-notify-wrap max-md:!hidden" ref={lowStockAlertWrapRef}>
-        <button
-          type="button"
-          className="app-header-icon-btn max-md:!hidden"
-          aria-label={
-            totalNotifyCount > 0
-              ? `Thông báo — ${totalNotifyCount} mục chưa đọc`
-              : 'Thông báo'
-          }
-          aria-expanded={lowStockAlertOpen}
-          title={
-            totalNotifyCount > 0
-              ? `${totalNotifyCount} thông báo chưa đọc`
-              : 'Thông báo'
-          }
-          onClick={() => setLowStockAlertOpen((open) => !open)}
-        >
-          <svg
-            className="app-header-icon-svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
+    const mergedNotifications = [...supabaseNotifications, ...appCostChangeNotifications]
+      .map((n) => ({
+        ...n,
+        source: n?.id && String(n.id).startsWith('cc-') ? 'local' : 'supabase',
+      }))
+      .sort((a, b) => Number(b?.createdAtMs || 0) - Number(a?.createdAtMs || 0))
+    const bellBtn =
+      activeView !== 'sell' ? (
+        <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
+          <button
+            type="button"
+            className="app-header-icon-btn"
+            aria-label={
+              totalNotifyCount > 0
+                ? `Thông báo — ${totalNotifyCount} mục chưa đọc`
+                : 'Thông báo'
+            }
+            aria-expanded={lowStockAlertOpen}
+            title={
+              totalNotifyCount > 0
+                ? `${totalNotifyCount} thông báo chưa đọc`
+                : 'Thông báo'
+            }
+            onClick={() => setLowStockAlertOpen((open) => !open)}
           >
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-          </svg>
-          {totalNotifyCount > 0 ? (
-            <span className="app-header-notify-badge" aria-hidden>
-              {totalNotifyCount > 99 ? '99+' : totalNotifyCount}
-            </span>
-          ) : null}
-        </button>
-        {lowStockAlertOpen && typeof document !== 'undefined'
-          ? createPortal(
-              <div
-                ref={lowStockPopoverRef}
-                className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
-                role="dialog"
-                aria-label="Thông báo"
-              >
-                <div className="app-header-low-stock-popover-head">
-              <span className="app-header-low-stock-popover-title">Thông báo</span>
-              {totalNotifyCount > 0 ? (
-                <button
-                  type="button"
-                  className="app-header-notify-mark-all"
-                  disabled={markingAllNotifications}
-                  title="Đánh dấu tất cả đã đọc"
-                  onClick={() => void markAllNotificationsRead()}
+            <svg
+              className="app-header-icon-svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {totalNotifyCount > 0 ? (
+              <span className="app-header-notify-badge" aria-hidden>
+                {totalNotifyCount > 99 ? '99+' : totalNotifyCount}
+              </span>
+            ) : null}
+          </button>
+          {lowStockAlertOpen && typeof document !== 'undefined'
+            ? createPortal(
+                <div
+                  ref={lowStockPopoverRef}
+                  className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
+                  role="dialog"
+                  aria-label="Thông báo"
                 >
-                  <span className="app-header-notify-mark-all-icon" aria-hidden>
-                    ✓✓
-                  </span>
-                  Đọc tất cả
-                </button>
-              ) : null}
-            </div>
-            <div className="app-header-low-stock-scroll">
-              {supabaseNotifications.length === 0 && costNotifyCount === 0 ? (
-                <p className="app-header-low-stock-empty">Chưa có thông báo</p>
-              ) : (
-                <>
-                  {supabaseLowStock.length > 0 ? (
-                    <>
-                      <div className="app-header-notify-section-h">Hàng sắp hết</div>
-                      {supabaseLowStockGroups.map((grp) => (
-                        <div key={grp.dayKey} className="app-header-notify-day-group">
-                          <div className="app-header-notify-day-h">{grp.label}</div>
-                          <ul className="app-header-cost-notif-list">
-                            {grp.items.map((n) => (
-                              <li
-                                key={n.id}
-                                className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
+                  <div className="app-header-low-stock-popover-head">
+                <span className="app-header-low-stock-popover-title">Thông báo</span>
+                {totalNotifyCount > 0 ? (
+                  <button
+                    type="button"
+                    className="app-header-notify-mark-all"
+                    disabled={markingAllNotifications}
+                    title="Đánh dấu tất cả đã đọc"
+                    onClick={() => void markAllNotificationsRead()}
+                  >
+                    <span className="app-header-notify-mark-all-icon" aria-hidden>
+                      ✓✓
+                    </span>
+                    Đọc tất cả
+                  </button>
+                ) : null}
+              </div>
+              <div className="app-header-low-stock-scroll">
+                {mergedNotifications.length === 0 ? (
+                  <p className="app-header-low-stock-empty">Chưa có thông báo</p>
+                ) : (
+                  <>
+                    {mergedNotifications.length > 0 ? (
+                      <>
+                        <div className="app-header-notify-section-h">Thông báo hệ thống</div>
+                        <ul className="app-header-cost-notif-list">
+                          {mergedNotifications.map((n) => (
+                            <li
+                              key={n.id}
+                              className={`app-header-cost-notif-item${
+                                n.source === 'supabase' && n.is_read ? ' app-header-supabase-notif-item--read' : ''
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className="app-header-supabase-notif-btn"
+                                onClick={() => handleNotificationClick(n, n.source)}
                               >
-                                <button
-                                  type="button"
-                                  className="app-header-supabase-notif-btn"
-                                  onClick={() => handleNotificationClick(n, 'supabase')}
-                                >
-                                  <span className="app-header-notify-message-pre">{n.message}</span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </>
-                  ) : null}
-                  {supabasePriceChange.length > 0 ? (
-                    <>
-                      <div className="app-header-notify-section-h">Giá vốn / giá thay đổi</div>
-                      <ul className="app-header-cost-notif-list">
-                        {supabasePriceChange.map((n) => (
-                          <li
-                            key={n.id}
-                            className={`app-header-cost-notif-item${n.is_read ? ' app-header-supabase-notif-item--read' : ''}`}
-                          >
-                            <button
-                              type="button"
-                              className="app-header-supabase-notif-btn"
-                              onClick={() => handleNotificationClick(n, 'supabase')}
-                            >
-                              {n.message}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : null}
-                  {costNotifyCount > 0 ? (
-                    <>
-                      <div className="app-header-notify-section-h">Giá vốn thay đổi (cục bộ)</div>
-                      <ul className="app-header-cost-notif-list">
-                        {appCostChangeNotifications.map((n) => (
-                          <li key={n.id} className="app-header-cost-notif-item">
-                            <button
-                              type="button"
-                              className="app-header-cost-notif-btn"
-                              onClick={() => handleNotificationClick(n, 'local')}
-                            >
-                              {n.message}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : null}
-                </>
-              )}
-                </div>
-              </div>,
-              document.body
-            )
-          : null}
-      </div>
-    )
+                                <span className="app-header-notify-message-pre">{n.message}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+                  </>
+                )}
+                  </div>
+                </div>,
+                document.body
+              )
+            : null}
+        </div>
+      ) : null
 
     const cartBtn = (
       <button
@@ -6100,10 +6064,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     )
 
     const printerBlock = showPrinter ? (
-      <div key="printer" className="pos-header-printer-wrap max-md:!hidden">
+      <div key="printer" className="pos-header-printer-wrap max-md:hidden">
         <button
           type="button"
-          className="app-header-icon-btn app-header-icon-btn--printer max-md:!hidden"
+          className="app-header-icon-btn app-header-icon-btn--printer max-md:hidden"
           aria-label="Hóa đơn điện tử"
           title="Hóa đơn điện tử"
           onClick={openEInvoiceModal}
@@ -6178,7 +6142,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return (
         <div className={railClass} ref={sellerMenuRef}>
           <div className="pos-header-blue-icons">
-            {renderHomeBtn('', true)}
+            {renderHomeBtn('max-md:hidden', true)}
             {printerBlock}
             {shortcutsBtn}
             {changeAdminPinBtn}
@@ -6195,7 +6159,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     return (
       <div className={railClass} ref={sellerMenuRef}>
-        {renderHomeBtn()}
+        {renderHomeBtn('max-md:hidden')}
         {shortcutsBtn}
         {changeAdminPinBtn}
         {bellBtn}
@@ -6611,7 +6575,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                 </div>
               </div>
               </div>
-              <div className="pos-header-workbar-right max-md:!hidden md:flex">
+              <div className="pos-header-workbar-right md:flex">
                 {renderHeaderIconRail('blue')}
               </div>
             </div>
