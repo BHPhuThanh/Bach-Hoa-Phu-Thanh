@@ -4166,7 +4166,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
         if (pendingHomeNewTabAfterPinRef.current) {
           pendingHomeNewTabAfterPinRef.current = false
-          window.open('/', '_blank')
+          window.open(getDoanhThuAbsUrl(), '_blank', 'noopener,noreferrer')
         } else if (pendingHomeAfterPinRef.current) {
           pendingHomeAfterPinRef.current = false
           setActiveView('dashboard')
@@ -5450,15 +5450,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [])
 
   const handleHomeIconClickPcNewTab = useCallback(() => {
-    if (activeSellerId === 'admin') {
-      window.open('/', '_blank')
-      return
-    }
+    // Bắt buộc xác thực PIN trước khi mở tab Doanh thu trên PC.
     pendingHomeNewTabAfterPinRef.current = true
     pendingHomeAfterPinRef.current = false
     setAdminPinModalOpen(true)
     setSellerMenuOpen(false)
-  }, [activeSellerId])
+  }, [])
 
   const quickXemDanhSachDon = useCallback(() => {
     window.open(getAdminOrdersAbsUrl(), '_blank', 'noopener,noreferrer')
