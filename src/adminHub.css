@@ -9937,6 +9937,12 @@ li.ah-inbound-suggest-empty {
   z-index: 100110;
 }
 
+.ah-admin-pin-lockdown {
+  z-index: 2147483000 !important;
+  background: rgba(0, 0, 0, 0.82) !important;
+  backdrop-filter: blur(2px);
+}
+
 .ah-supplier-virt-card-actions {
   display: flex;
   align-items: center;

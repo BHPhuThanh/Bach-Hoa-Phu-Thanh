@@ -51,7 +51,7 @@ import {
   stripAdminHubDeepLinkParamsFromWindow,
   stripAhOpenProductHashFromLocation,
 } from './adminHubDeepLink.js'
-import { pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
+import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
 
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
 import { getAllOrders, saveOrder } from './ordersDb.js'
@@ -2792,18 +2792,25 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const openProductEditFromNotification = useCallback((n) => {
     const rawId = String(n?.variantId || n?.code || n?.product_code || '').trim()
     if (!rawId) return
-    setActiveView('dashboard')
     setPendingHangHoaGoodsOpen({ rawId })
     try {
       sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId }))
     } catch {
       /* ignore */
     }
+    if (activeSellerId !== 'admin') {
+      pendingHomeAfterPinRef.current = true
+      pendingHomeNewTabAfterPinRef.current = false
+      setAdminPinModalOpen(true)
+      setSellerMenuOpen(false)
+      return
+    }
+    setActiveView('dashboard')
     const codeOrId = String(n?.code || n?.product_code || rawId).trim()
     if (codeOrId) {
       navigate(`/hang-hoa/${encodeURIComponent(codeOrId)}`, { replace: true })
     }
-  }, [navigate])
+  }, [activeSellerId, navigate])
 
   /** Click từng item thông báo — rẽ nhánh theo kind, luôn đánh dấu đã đọc. */
   const handleNotificationClick = useCallback(
@@ -2855,12 +2862,32 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       ts: Date.now(),
       pairs: items.map((it) => ({ product: it.product, variant: it.variant })),
     })
+    if (activeSellerId !== 'admin') {
+      pendingHomeAfterPinRef.current = true
+      pendingHomeNewTabAfterPinRef.current = false
+      setAdminPinModalOpen(true)
+      setSellerMenuOpen(false)
+      return
+    }
     setActiveView('dashboard')
-  }, [lowStockDetailModal])
+  }, [activeSellerId, lowStockDetailModal])
 
   const clearPendingInboundLowStockPrefill = useCallback(() => {
     setPendingInboundLowStockPrefill(null)
   }, [])
+
+  const handleCancelAdminPinModal = useCallback(() => {
+    if (pendingHomeAfterPinRef.current || pendingHomeNewTabAfterPinRef.current) {
+      showToastMessage('Đã hủy xác thực Admin. Quay về màn Bán hàng.')
+    }
+    pendingHomeAfterPinRef.current = false
+    pendingHomeNewTabAfterPinRef.current = false
+    setAdminPinModalOpen(false)
+    setAdminHubDeepLink(null)
+    setPendingHangHoaGoodsOpen(null)
+    setActiveView('sell')
+    navigate('/', { replace: true })
+  }, [navigate, showToastMessage])
 
   const catalogBarcodeCachesRef = useRef(catalogBarcodeCaches)
   catalogBarcodeCachesRef.current = catalogBarcodeCaches
@@ -2892,8 +2919,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [location.pathname, location.search, navigate])
 
   useLayoutEffect(() => {
+    const openAdminPinForRestrictedDashboard = () => {
+      pendingHomeAfterPinRef.current = true
+      pendingHomeNewTabAfterPinRef.current = false
+      setAdminPinModalOpen(true)
+      setSellerMenuOpen(false)
+    }
+    const allowStaffOrdersOnly = (deepLink = null) => {
+      const tabByPath = hubMainTabFromPathname(location.pathname)
+      if (tabByPath === 'orders') return true
+      if (deepLink?.hubOpen === 'orders' || deepLink?.hubOpen === 'returns') return true
+      if (deepLink?.posOrderId || deepLink?.posReturnLedgerId) return true
+      return false
+    }
     let hang = parseHangHoaGoodsOpenFromLocation(location.pathname, location.search)
-    if (!hang?.rawId) {
+    if (!hang?.rawId && activeSellerId === 'admin') {
       try {
         const raw = sessionStorage.getItem(HANG_HOA_PENDING_SS_KEY)
         if (raw) {
@@ -2905,41 +2945,66 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
     }
     if (hang?.rawId) {
-      setActiveView('dashboard')
       setPendingHangHoaGoodsOpen(hang)
       try {
         sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId: hang.rawId }))
       } catch {
         /* ignore */
       }
+      if (activeSellerId !== 'admin') {
+        openAdminPinForRestrictedDashboard()
+        navigate('/', { replace: true })
+        return
+      }
+      setActiveView('dashboard')
       return
     }
     const legacyVid = parseAhOpenProductVariantIdFromLocation()
     if (legacyVid) {
-      setActiveView('dashboard')
       setPendingHangHoaGoodsOpen({ rawId: legacyVid })
       try {
         sessionStorage.setItem(HANG_HOA_PENDING_SS_KEY, JSON.stringify({ rawId: legacyVid }))
       } catch {
         /* ignore */
       }
+      if (activeSellerId !== 'admin') {
+        openAdminPinForRestrictedDashboard()
+        navigate('/', { replace: true })
+        return
+      }
+      setActiveView('dashboard')
       return
     }
     if (pathnameHasHangHoaDeepLink(location.pathname)) {
+      if (activeSellerId !== 'admin') {
+        openAdminPinForRestrictedDashboard()
+        navigate('/', { replace: true })
+        return
+      }
       setActiveView('dashboard')
       return
     }
     const d = parseAdminHubDeepLinkFromWindow()
     if (d) {
-      setActiveView('dashboard')
       setAdminHubDeepLink(d)
+      if (activeSellerId !== 'admin' && !allowStaffOrdersOnly(d)) {
+        openAdminPinForRestrictedDashboard()
+        navigate('/', { replace: true })
+        return
+      }
+      setActiveView('dashboard')
       stripAdminHubDeepLinkParamsFromWindow()
       return
     }
     if (pathnameOpensHubStandaloneDashboard(location.pathname)) {
+      if (activeSellerId !== 'admin' && !allowStaffOrdersOnly()) {
+        openAdminPinForRestrictedDashboard()
+        navigate('/', { replace: true })
+        return
+      }
       setActiveView('dashboard')
     }
-  }, [location.pathname, location.search])
+  }, [activeSellerId, location.pathname, location.search, navigate])
 
   /** Sau ghi Supabase: đọc lại DB (revalidate) để UI/POS khớp server — tránh cache client. */
   const applyServerCatalogAfterPersist = useCallback(async () => {
@@ -6751,32 +6816,36 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       )}
 
       {activeView === 'dashboard' && (
-        <AdminHub
-          printReceiptHtml={printReceiptHtml}
-          refreshKey={salesRefresh}
-          products={products}
-          catalogFileName={fileName}
-          onTriggerCatalogImport={() => catalogImportInputRef.current?.click()}
-          onRemoveCatalogVariants={handleRemoveCatalogVariants}
-          onUpdateCatalogVariant={handleUpdateCatalogVariant}
-          onBulkPatchCatalogVariants={handleBulkPatchCatalogVariants}
-          onReplaceCatalogGroup={handleReplaceCatalogGroup}
-          onAppendCatalogVariants={handleAppendCatalogVariants}
-          registerInboundCatalogUpsertReconcile={registerInboundCatalogUpsertReconcile}
-          hubDeepLink={adminHubDeepLink}
-          onHubDeepLinkConsumed={clearAdminHubDeepLink}
-          hangHoaGoodsOpenRequest={pendingHangHoaGoodsOpen}
-          onHangHoaGoodsOpenConsumed={clearPendingHangHoaGoodsOpen}
-          standaloneInboundCreate={standaloneInboundCreate}
-          catalogSupabaseDirty={catalogSupabaseDirty}
-          catalogSupabaseFlushBusy={catalogFlushBusy}
-          onFlushCatalogToSupabase={flushCatalogToSupabase}
-          runInboundCompletionJob={runInboundCompletionJob}
-          onConfirmInboundComplete={handleConfirmInboundComplete}
-          inboundLowStockPrefillRequest={pendingInboundLowStockPrefill}
-          onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
-          onRevalidateCatalog={applyServerCatalogAfterPersist}
-        />
+        activeSellerId !== 'admin' && adminPinModalOpen ? (
+          <div className="min-h-screen w-full bg-black" aria-hidden />
+        ) : (
+          <AdminHub
+            printReceiptHtml={printReceiptHtml}
+            refreshKey={salesRefresh}
+            products={products}
+            catalogFileName={fileName}
+            onTriggerCatalogImport={() => catalogImportInputRef.current?.click()}
+            onRemoveCatalogVariants={handleRemoveCatalogVariants}
+            onUpdateCatalogVariant={handleUpdateCatalogVariant}
+            onBulkPatchCatalogVariants={handleBulkPatchCatalogVariants}
+            onReplaceCatalogGroup={handleReplaceCatalogGroup}
+            onAppendCatalogVariants={handleAppendCatalogVariants}
+            registerInboundCatalogUpsertReconcile={registerInboundCatalogUpsertReconcile}
+            hubDeepLink={adminHubDeepLink}
+            onHubDeepLinkConsumed={clearAdminHubDeepLink}
+            hangHoaGoodsOpenRequest={pendingHangHoaGoodsOpen}
+            onHangHoaGoodsOpenConsumed={clearPendingHangHoaGoodsOpen}
+            standaloneInboundCreate={standaloneInboundCreate}
+            catalogSupabaseDirty={catalogSupabaseDirty}
+            catalogSupabaseFlushBusy={catalogFlushBusy}
+            onFlushCatalogToSupabase={flushCatalogToSupabase}
+            runInboundCompletionJob={runInboundCompletionJob}
+            onConfirmInboundComplete={handleConfirmInboundComplete}
+            inboundLowStockPrefillRequest={pendingInboundLowStockPrefill}
+            onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
+            onRevalidateCatalog={applyServerCatalogAfterPersist}
+          />
+        )
       )}
 
       {lowStockDetailModal &&
@@ -7610,14 +7679,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       <AdminRolePinModal
         open={adminPinModalOpen}
-        onClose={() => {
-          if (pendingHomeAfterPinRef.current) {
-            showToastMessage('Đã hủy xác thực Admin. Không chuyển trang.')
-          }
-          pendingHomeAfterPinRef.current = false
-          pendingHomeNewTabAfterPinRef.current = false
-          setAdminPinModalOpen(false)
-        }}
+        onClose={handleCancelAdminPinModal}
         isSubmitting={adminPinChecking}
         onSubmitPin={verifyAdminPinAndSwitchRole}
       />

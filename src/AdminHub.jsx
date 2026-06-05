@@ -1171,6 +1171,7 @@ export default function AdminHub({
   const [returnLedgerRemoteLoading, setReturnLedgerRemoteLoading] = useState(false)
 
   const revenueReadOnly = Boolean(doanhThuMode?.readOnlyRevenue)
+  const canViewFinancialSensitive = !revenueReadOnly && readStoredSellerId() !== 'staff'
   const isHubMobileLayout = useViewportMaxWidth(768)
   const navigate = useNavigate()
   const location = useLocation()
@@ -8017,19 +8018,19 @@ export default function AdminHub({
                         <th className="ah-orders-th-customer">Khách hàng</th>
                         <th>Trạng thái</th>
                         <th className="ah-num">Tổng tiền</th>
-                        <th className="ah-num">Lợi nhuận</th>
+                        {canViewFinancialSensitive ? <th className="ah-num">Lợi nhuận</th> : null}
                       </tr>
                     </thead>
                     <tbody>
                       {loading ? (
                         <tr className="ah-responsive-table-empty">
-                          <td colSpan={6} className="admin-hub-muted">
+                          <td colSpan={canViewFinancialSensitive ? 6 : 5} className="admin-hub-muted">
                             Đang tải…
                           </td>
                         </tr>
                       ) : ordList.length === 0 ? (
                         <tr className="ah-responsive-table-empty">
-                          <td colSpan={6} className="admin-hub-muted">
+                          <td colSpan={canViewFinancialSensitive ? 6 : 5} className="admin-hub-muted">
                             {orders.length === 0
                               ? 'Chưa có đơn bán.'
                               : ordFiltered.length === 0
@@ -8074,9 +8075,11 @@ export default function AdminHub({
                             <td className="ah-num" data-label="Tổng tiền">
                               {rowTotal.toLocaleString('vi-VN')} đ
                             </td>
-                            <td className="ah-num" data-label="Lợi nhuận">
-                              {rowProfit.toLocaleString('vi-VN')} đ
-                            </td>
+                            {canViewFinancialSensitive ? (
+                              <td className="ah-num" data-label="Lợi nhuận">
+                                {rowProfit.toLocaleString('vi-VN')} đ
+                              </td>
+                            ) : null}
                           </tr>
                           )
                         })
@@ -9142,8 +9145,12 @@ export default function AdminHub({
                       {posDetailNorm.customerName ? ` · ${posDetailNorm.customerName}` : ''}
                       {' · '}
                       <strong>{Number(posDetailNorm.total).toLocaleString('vi-VN')} đ</strong>
-                      {' · LN '}
-                      <strong>{Number(posDetailNorm.totalProfit).toLocaleString('vi-VN')} đ</strong>
+                      {canViewFinancialSensitive ? (
+                        <>
+                          {' · LN '}
+                          <strong>{Number(posDetailNorm.totalProfit).toLocaleString('vi-VN')} đ</strong>
+                        </>
+                      ) : null}
                     </p>
                     <div className="flex items-center gap-4">
                       <span
@@ -9247,7 +9254,7 @@ export default function AdminHub({
                         <th>ĐVT</th>
                         <th className="ah-num">Số lượng</th>
                         <th className="ah-num">Đơn giá bán</th>
-                        <th className="ah-num">Giá vốn</th>
+                        {canViewFinancialSensitive ? <th className="ah-num">Giá vốn</th> : null}
                         <th className="ah-num">Thành tiền</th>
                         {!posDetailIsEditing ? (
                           <th className="ah-num">Đã hoàn</th>
@@ -9259,7 +9266,16 @@ export default function AdminHub({
                     <tbody>
                       {(posDetailDraft ?? posDetailNorm).items.length === 0 ? (
                         <tr className="ah-responsive-table-empty">
-                          <td colSpan={posDetailIsEditing ? 9 : 9} className="admin-hub-muted">
+                          <td
+                            colSpan={posDetailIsEditing
+                              ? canViewFinancialSensitive
+                                ? 9
+                                : 8
+                              : canViewFinancialSensitive
+                                ? 9
+                                : 8}
+                            className="admin-hub-muted"
+                          >
                             Chưa có dòng hàng.
                           </td>
                         </tr>
@@ -9339,9 +9355,11 @@ export default function AdminHub({
                                 )}
                                 </span>
                               </td>
-                              <td className="ah-num" data-label="Giá vốn">
-                                {Number(it.cost).toLocaleString('vi-VN')} đ
-                              </td>
+                              {canViewFinancialSensitive ? (
+                                <td className="ah-num" data-label="Giá vốn">
+                                  {Number(it.cost).toLocaleString('vi-VN')} đ
+                                </td>
+                              ) : null}
                               <td className="ah-num ah-pos-order-line-sum" data-label="Thành tiền">
                                 {lineTotal.toLocaleString('vi-VN')} đ
                               </td>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 /**
  * Xác nhận PIN khi chuyển từ Nhân viên → Admin trên POS.
@@ -12,6 +13,15 @@ export default function AdminRolePinModal({ open, onClose, onSubmitPin, isSubmit
     setPin('')
   }, [open])
 
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prevOverflow
+    }
+  }, [open])
+
   if (!open) return null
 
   const submit = () => {
@@ -19,9 +29,9 @@ export default function AdminRolePinModal({ open, onClose, onSubmitPin, isSubmit
     onSubmitPin?.(pin)
   }
 
-  return (
+  return createPortal(
     <div
-      className="ah-inbound-sup-backdrop ah-admin-pin-backdrop"
+      className="ah-inbound-sup-backdrop ah-admin-pin-backdrop ah-admin-pin-lockdown"
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose?.()
@@ -94,6 +104,7 @@ export default function AdminRolePinModal({ open, onClose, onSubmitPin, isSubmit
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
