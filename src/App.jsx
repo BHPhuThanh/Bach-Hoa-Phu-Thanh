@@ -2537,6 +2537,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [toastMessage, setToastMessage] = useState('')
   const toastMessageClearRef = useRef(null)
   const pendingHomeAfterPinRef = useRef(false)
+  const pendingHomeNewTabAfterPinRef = useRef(false)
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
@@ -2955,8 +2956,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [])
 
   useEffect(() => {
-    if (activeView !== 'dashboard') return
+    if (activeView !== 'dashboard' && activeView !== 'sell') return
     void applyServerCatalogAfterPersist()
+  }, [activeView, applyServerCatalogAfterPersist])
+
+  useEffect(() => {
+    const handleFocus = () => {
+      if (activeView !== 'dashboard' && activeView !== 'sell') return
+      void applyServerCatalogAfterPersist()
+    }
+    window.addEventListener('focus', handleFocus)
+    handleFocus()
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+    }
   }, [activeView, applyServerCatalogAfterPersist])
 
   /** AdminHub đăng ký — sau `upsert` + `select('*')` đồng bộ lại id dòng phiếu nhập với biến thể catalog (sb-…). */
@@ -4102,6 +4115,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       if (accId === 'admin' && activeSellerId === 'staff') {
         pendingHomeAfterPinRef.current = false
+        pendingHomeNewTabAfterPinRef.current = false
         setAdminPinModalOpen(true)
         setSellerMenuOpen(false)
         return
@@ -4146,7 +4160,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         setActiveSellerId('admin')
         setAdminPinModalOpen(false)
         showRoleSwitchToast('Đã chuyển sang quyền Admin', 'success')
-        if (pendingHomeAfterPinRef.current) {
+        if (pendingHomeNewTabAfterPinRef.current) {
+          pendingHomeNewTabAfterPinRef.current = false
+          window.open('/', '_blank')
+        } else if (pendingHomeAfterPinRef.current) {
           pendingHomeAfterPinRef.current = false
           setActiveView('dashboard')
           setSellerMenuOpen(false)
@@ -5423,9 +5440,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const handleHomeIconClick = useCallback(() => {
     // Home luôn yêu cầu xác thực PIN Admin trước khi vào Doanh thu.
     pendingHomeAfterPinRef.current = true
+    pendingHomeNewTabAfterPinRef.current = false
     setAdminPinModalOpen(true)
     setSellerMenuOpen(false)
   }, [])
+
+  const handleHomeIconClickPcNewTab = useCallback(() => {
+    if (activeSellerId === 'admin') {
+      window.open('/', '_blank')
+      return
+    }
+    pendingHomeNewTabAfterPinRef.current = true
+    pendingHomeAfterPinRef.current = false
+    setAdminPinModalOpen(true)
+    setSellerMenuOpen(false)
+  }, [activeSellerId])
 
   const quickXemDanhSachDon = useCallback(() => {
     window.open(getAdminOrdersAbsUrl(), '_blank', 'noopener,noreferrer')
@@ -5802,7 +5831,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         : 'app-header-icon-rail app-header-icon-rail--blue'
     const showPrinter = variant === 'blue'
 
-    const renderHomeBtn = (extraClass = '') => (
+    const renderHomeBtn = (extraClass = '', openInNewTab = false) => (
       <button
         key="home"
         type="button"
@@ -5813,7 +5842,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             ? 'Doanh thu — mở tab mới (F11)'
             : 'Doanh thu — chỉ Admin / Chủ cửa hàng'
         }
-        onClick={handleHomeIconClick}
+        onClick={openInNewTab ? handleHomeIconClickPcNewTab : handleHomeIconClick}
       >
         <svg
           className="app-header-icon-svg"
@@ -6149,7 +6178,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return (
         <div className={railClass} ref={sellerMenuRef}>
           <div className="pos-header-blue-icons">
-            {renderHomeBtn()}
+            {renderHomeBtn('', true)}
             {printerBlock}
             {shortcutsBtn}
             {changeAdminPinBtn}
@@ -7625,6 +7654,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             showToastMessage('Đã hủy xác thực Admin. Không chuyển trang.')
           }
           pendingHomeAfterPinRef.current = false
+          pendingHomeNewTabAfterPinRef.current = false
           setAdminPinModalOpen(false)
         }}
         isSubmitting={adminPinChecking}
