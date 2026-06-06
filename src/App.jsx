@@ -2659,6 +2659,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const activeSellOrderIdRef = useRef(activeSellOrderId)
   activeSellOrderIdRef.current = activeSellOrderId
   const posSessionPersistTimerRef = useRef(null)
+  const freezePosDraftHydrateRef = useRef(false)
 
   const codeSalesMapRef = useRef({})
   codeSalesMapRef.current = codeSalesMap
@@ -3024,22 +3025,42 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return fresh
   }, [])
 
+  const runCatalogAutoSyncWithPosGuard = useCallback(
+    async (reason = 'auto-sync') => {
+      const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
+      if (hasLiveSellCart) {
+        freezePosDraftHydrateRef.current = true
+        console.log(`[POS sync] ${reason}: có đơn đang tít, khóa hydrate giỏ nháp.`)
+      }
+      try {
+        await applyServerCatalogAfterPersist()
+      } finally {
+        if (hasLiveSellCart) {
+          queueMicrotask(() => {
+            freezePosDraftHydrateRef.current = false
+          })
+        }
+      }
+    },
+    [applyServerCatalogAfterPersist]
+  )
+
   useEffect(() => {
     if (activeView !== 'dashboard' && activeView !== 'sell') return
-    void applyServerCatalogAfterPersist()
-  }, [activeView, applyServerCatalogAfterPersist])
+    void runCatalogAutoSyncWithPosGuard('tab-switch')
+  }, [activeView, runCatalogAutoSyncWithPosGuard])
 
   useEffect(() => {
     const handleFocus = () => {
       if (activeView !== 'dashboard' && activeView !== 'sell') return
-      void applyServerCatalogAfterPersist()
+      void runCatalogAutoSyncWithPosGuard('window-focus')
     }
     window.addEventListener('focus', handleFocus)
     handleFocus()
     return () => {
       window.removeEventListener('focus', handleFocus)
     }
-  }, [activeView, applyServerCatalogAfterPersist])
+  }, [activeView, runCatalogAutoSyncWithPosGuard])
 
   /** AdminHub đăng ký — sau `upsert` + `select('*')` đồng bộ lại id dòng phiếu nhập với biến thể catalog (sb-…). */
   const inboundCatalogUpsertReconcileRef = useRef(null)
@@ -3768,6 +3789,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (e.storageArea !== localStorage) return
       if (e.key !== CATALOG_SNAPSHOT_STORAGE_KEY && e.key !== CATALOG_SYNC_BUMP_KEY) return
       void (async () => {
+        const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
+        if (hasLiveSellCart) {
+          freezePosDraftHydrateRef.current = true
+          console.log('[POS sync] storage-bump: có đơn đang tít, khóa hydrate giỏ nháp.')
+        }
         const snap = await fetchProducts()
         if (snap?.products?.length) {
           setProducts(prepareCatalogForPosSearch(snap.products))
@@ -3779,6 +3805,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           setCsvRowCount(0)
         }
         setSalesRefresh((x) => x + 1)
+        if (hasLiveSellCart) {
+          queueMicrotask(() => {
+            freezePosDraftHydrateRef.current = false
+          })
+        }
       })()
     }
     window.addEventListener('storage', onStorage)
@@ -3930,6 +3961,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const fresh = createEmptySellOrder()
     setSellOrders([fresh])
     setActiveSellOrderId(fresh.id)
+    clearPosSessionDraft()
     e.target.value = ''
 
     if (!file) return
@@ -4093,6 +4125,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const parsed = loadPosSessionDraft()
     if (!parsed || parsed.fingerprint !== fp) {
       clearPosSessionDraft()
+      posDraftHydratingRef.current = false
+      return
+    }
+
+    const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
+    if (freezePosDraftHydrateRef.current || hasLiveSellCart) {
+      console.log('[POS sync] Có đơn đang tít, bỏ qua hydrate từ draft để tránh ghi đè giỏ hàng.')
       posDraftHydratingRef.current = false
       return
     }
@@ -4420,25 +4459,38 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const closeSellTab = useCallback(
     (id) => {
-      setSellOrders((prev) => {
-        if (prev.length <= 1) return prev
-        const o = prev.find((x) => x.id === id)
-        if (o && o.cart.length > 0 && !window.confirm('Đơn này còn hàng. Đóng và bỏ giỏ?')) {
-          return prev
+      const prev = sellOrdersRef.current
+      if (!Array.isArray(prev) || prev.length <= 1) return
+      const closingOrder = prev.find((x) => x.id === id)
+      if (closingOrder && closingOrder.cart.length > 0 && !window.confirm('Đơn này còn hàng. Đóng và bỏ giỏ?')) {
+        return
+      }
+      const currentIndex = prev.findIndex((x) => x.id === id)
+      if (currentIndex < 0) return
+      const remainingOrders = prev.filter((x) => x.id !== id)
+      if (!remainingOrders.length) return
+
+      let nextActiveId = activeSellOrderIdRef.current
+      if (nextActiveId === id) {
+        const nextActiveOrder = remainingOrders[currentIndex - 1] || remainingOrders[0]
+        if (nextActiveOrder) {
+          hardDismissHeaderSearch()
+          nextActiveId = nextActiveOrder.id
+          setActiveSellOrderId(nextActiveId)
         }
-        const currentIndex = prev.findIndex((x) => x.id === id)
-        const remainingOrders = prev.filter((x) => x.id !== id)
-        if (activeSellOrderId === id) {
-          const nextActiveOrder = remainingOrders[currentIndex - 1] || remainingOrders[0]
-          if (nextActiveOrder) {
-            hardDismissHeaderSearch()
-            setActiveSellOrderId(nextActiveOrder.id)
-          }
-        }
-        return remainingOrders
+      }
+
+      sellOrdersRef.current = remainingOrders
+      activeSellOrderIdRef.current = nextActiveId
+      setSellOrders(remainingOrders)
+      syncPosSessionDraftNow({
+        products: productsRef.current,
+        fileName: fileNameRef.current,
+        sellOrders: remainingOrders,
+        activeSellOrderId: nextActiveId,
       })
     },
-    [activeSellOrderId, hardDismissHeaderSearch]
+    [hardDismissHeaderSearch]
   )
 
   const bestSellerProducts = useMemo(
