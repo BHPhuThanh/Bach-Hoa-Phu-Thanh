@@ -270,6 +270,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     if (!nameTrim) continue
 
     const brandTrim = String(r.brand ?? '').trim()
+    const createGroupKey = `batch-row:${String(r.rowId ?? '').trim() || newGoodsCreateBatchRowId()}`
 
     if (rowHasExtraUnits(r)) {
       const linesSorted = batchRowToUnitLines(r)
@@ -308,6 +309,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
         v.brand = brandTrim
         v.name = nameTrim
         v.nameRaw = nameTrim
+        v.createGroupKey = createGroupKey
         if (v.conversion != null) {
           const conv = parsePositiveConversion(v.conversion) ?? 1
           v.conversion = conv
@@ -363,6 +365,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       stockNormMax: null,
       createdAtMs: Date.now(),
       raw: [],
+      createGroupKey,
     }
 
     out.push(variant)

@@ -1423,6 +1423,7 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
   /** Nhóm ĐVT: map mã gốc nhập tay -> mã gốc thực tế sau auto-assign (HHxxxx). */
   const createdRootCodeByGroupKey = new Map()
   for (const v of flatVariants) {
+    const createGroupKey = String(v?.createGroupKey ?? '').trim().toLowerCase()
     const requestedCode = String(v.code ?? '').trim()
     const requestedLink = String(v.linkedMasterCode ?? v.ma_hh_lien_quan ?? '').trim()
     let code = requestedCode
@@ -1458,13 +1459,15 @@ export async function insertProductDisplayVariantsSequential(flatVariants, optio
     if (barcode && barcodeSet.has(barcode)) barcode = ''
     if (barcode) barcodeSet.add(barcode)
 
-    const groupKey = (requestedLink || requestedCode).toLowerCase()
-    if (!requestedLink && groupKey) {
-      createdRootCodeByGroupKey.set(groupKey, code)
+    if (!requestedLink) {
+      if (createGroupKey) createdRootCodeByGroupKey.set(createGroupKey, code)
+      if (requestedCode) createdRootCodeByGroupKey.set(requestedCode.toLowerCase(), code)
     }
     const resolvedLinkedMasterCode =
       requestedLink && requestedLink.length > 0
-        ? createdRootCodeByGroupKey.get(requestedLink.toLowerCase()) || requestedLink
+        ? (createGroupKey && createdRootCodeByGroupKey.get(createGroupKey)) ||
+          createdRootCodeByGroupKey.get(requestedLink.toLowerCase()) ||
+          requestedLink
         : ''
 
     const row = {
