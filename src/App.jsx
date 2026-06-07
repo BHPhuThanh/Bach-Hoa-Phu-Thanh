@@ -2660,6 +2660,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   activeSellOrderIdRef.current = activeSellOrderId
   const posSessionPersistTimerRef = useRef(null)
   const freezePosDraftHydrateRef = useRef(false)
+  const suspendPosDraftPersistRef = useRef(false)
 
   const codeSalesMapRef = useRef({})
   codeSalesMapRef.current = codeSalesMap
@@ -4164,6 +4165,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   useEffect(() => {
     if (!products.length) return
     if (posDraftHydratingRef.current) return
+    if (suspendPosDraftPersistRef.current) return
 
     const fp = buildCatalogFingerprint(products, fileName)
     if (posSessionPersistTimerRef.current != null) {
@@ -4171,6 +4173,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
     posSessionPersistTimerRef.current = window.setTimeout(() => {
       posSessionPersistTimerRef.current = null
+      if (suspendPosDraftPersistRef.current) return
       if (posDraftHydratingRef.current) return
       const orders = sellOrdersRef.current
       const activeId = activeSellOrderIdRef.current
@@ -4455,6 +4458,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       sellOrders: nextOrders,
       activeSellOrderId: nextActiveId,
     })
+    suspendPosDraftPersistRef.current = false
   }, [hardDismissHeaderSearch])
 
   const closeSellTab = useCallback(
@@ -5405,6 +5409,38 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (!savedOrder || savedOrder.error) {
         throw new Error('Không có phản hồi từ máy chủ!')
       }
+      if (posSessionPersistTimerRef.current != null) {
+        window.clearTimeout(posSessionPersistTimerRef.current)
+        posSessionPersistTimerRef.current = null
+      }
+      suspendPosDraftPersistRef.current = true
+      freezePosDraftHydrateRef.current = false
+      const snapshotOrdersNoPaidDraft = sellOrdersRef.current.map((o) =>
+        o.id === paidOrderId
+          ? {
+              ...o,
+              cart: [],
+              orderDiscountStr: '',
+              cashGivenStr: '',
+              customerQuery: '',
+              customerName: '',
+              customerPhone: '',
+              orderNote: '',
+            }
+          : o
+      )
+      sellOrdersRef.current = snapshotOrdersNoPaidDraft
+      const draftActiveOrder = snapshotOrdersNoPaidDraft.find(
+        (o) => o.id === activeSellOrderIdRef.current
+      )
+      cartRef.current = draftActiveOrder?.cart ? [...draftActiveOrder.cart] : []
+      clearPosSessionDraft()
+      syncPosSessionDraftNow({
+        products: productsRef.current,
+        fileName: fileNameRef.current,
+        sellOrders: snapshotOrdersNoPaidDraft,
+        activeSellOrderId: activeSellOrderIdRef.current,
+      })
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
@@ -5462,6 +5498,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       })()
     } catch (e) {
       console.error('[handleThanhToan] saveOrder', e)
+      suspendPosDraftPersistRef.current = false
       showPosPersistErrorToast(
         `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
       )
