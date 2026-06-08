@@ -54,6 +54,8 @@ import {
 import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
 
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
+const POS_DRAFT_LAST_CLEARED_KEY = 'pos_draft_last_cleared'
+const POS_DRAFT_CLEAR_BUMP_KEY = 'pos_draft_clear_bump'
 import { getAllOrders, saveOrder } from './ordersDb.js'
 import { bumpOrdersSync } from './ordersSyncEvents.js'
 import {
@@ -2461,6 +2463,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [activeView, setActiveView] = useState(() =>
     standaloneInboundCreate ? 'dashboard' : APP_DEEP_LINK_BOOT.initialActiveView
   )
+  const activeViewRef = useRef(activeView)
+  activeViewRef.current = activeView
   const [adminHubDeepLink, setAdminHubDeepLink] = useState(null)
   /** `/hang-hoa/...` hoặc hash legacy — mở tab Hàng hóa + dòng SP (một lần). */
   const [pendingHangHoaGoodsOpen, setPendingHangHoaGoodsOpen] = useState(() =>
@@ -2661,6 +2665,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const posSessionPersistTimerRef = useRef(null)
   const freezePosDraftHydrateRef = useRef(false)
   const suspendPosDraftPersistRef = useRef(false)
+  const skipNextDraftHydrateRef = useRef(false)
 
   const codeSalesMapRef = useRef({})
   codeSalesMapRef.current = codeSalesMap
@@ -2878,6 +2883,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setPendingInboundLowStockPrefill(null)
   }, [])
 
+  const readPosDraftLastClearedAt = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(POS_DRAFT_LAST_CLEARED_KEY)
+      const ms = Number(raw)
+      return Number.isFinite(ms) && ms > 0 ? ms : 0
+    } catch {
+      return 0
+    }
+  }, [])
+
+  const markPosDraftClearedGlobal = useCallback((reason = 'unknown') => {
+    const ts = Date.now()
+    try {
+      localStorage.setItem(POS_DRAFT_LAST_CLEARED_KEY, String(ts))
+      localStorage.setItem(POS_DRAFT_CLEAR_BUMP_KEY, `${ts}:${reason}`)
+    } catch {
+      /* ignore */
+    }
+    return ts
+  }, [])
+
   const handleCancelAdminPinModal = useCallback(() => {
     if (pendingHomeAfterPinRef.current || pendingHomeNewTabAfterPinRef.current) {
       showToastMessage('Đã hủy xác thực Admin. Quay về màn Bán hàng.')
@@ -3017,6 +3043,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return null
     }
     const prepared = prepareCatalogForPosSearch(fresh.products)
+    skipNextDraftHydrateRef.current = true
     setProducts(prepared)
     productsRef.current = prepared
     setFileName(fresh.fileName)
@@ -3797,10 +3824,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         const snap = await fetchProducts()
         if (snap?.products?.length) {
+          skipNextDraftHydrateRef.current = true
           setProducts(prepareCatalogForPosSearch(snap.products))
           setFileName(snap.fileName)
           setCsvRowCount(snap.csvRowCount)
         } else {
+          skipNextDraftHydrateRef.current = true
           setProducts([])
           setFileName('')
           setCsvRowCount(0)
@@ -3815,6 +3844,28 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  useEffect(() => {
+    const onDraftClearedStorage = (e) => {
+      if (e.storageArea !== localStorage) return
+      if (e.key !== POS_DRAFT_LAST_CLEARED_KEY && e.key !== POS_DRAFT_CLEAR_BUMP_KEY) return
+      clearPosSessionDraft()
+      const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
+      if (activeViewRef.current === 'sell' && hasLiveSellCart) return
+      suspendPosDraftPersistRef.current = true
+      const fresh = createEmptySellOrder()
+      sellOrdersRef.current = [fresh]
+      activeSellOrderIdRef.current = fresh.id
+      cartRef.current = []
+      setSellOrders([fresh])
+      setActiveSellOrderId(fresh.id)
+      queueMicrotask(() => {
+        suspendPosDraftPersistRef.current = false
+      })
+    }
+    window.addEventListener('storage', onDraftClearedStorage)
+    return () => window.removeEventListener('storage', onDraftClearedStorage)
   }, [])
 
   const focusHeaderSearchSelect = useCallback(() => {
@@ -4119,12 +4170,27 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       lastCatalogFingerprintRef.current = ''
       return
     }
+    if (skipNextDraftHydrateRef.current) {
+      skipNextDraftHydrateRef.current = false
+      return
+    }
     const fp = buildCatalogFingerprint(products, fileName)
     if (lastCatalogFingerprintRef.current === fp) return
     lastCatalogFingerprintRef.current = fp
 
     const parsed = loadPosSessionDraft()
     if (!parsed || parsed.fingerprint !== fp) {
+      clearPosSessionDraft()
+      posDraftHydratingRef.current = false
+      return
+    }
+    const lastClearedAt = readPosDraftLastClearedAt()
+    const draftSavedAt = Date.parse(String(parsed.savedAt ?? ''))
+    if (
+      lastClearedAt > 0 &&
+      (!Number.isFinite(draftSavedAt) || draftSavedAt <= lastClearedAt)
+    ) {
+      console.log('[POS sync] Nháp cũ hơn dấu mốc xóa, hủy hydrate và dọn nháp.')
       clearPosSessionDraft()
       posDraftHydratingRef.current = false
       return
@@ -4160,7 +4226,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     queueMicrotask(() => {
       posDraftHydratingRef.current = false
     })
-  }, [products, fileName])
+  }, [products, fileName, readPosDraftLastClearedAt])
 
   useEffect(() => {
     if (!products.length) return
@@ -5441,6 +5507,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         sellOrders: snapshotOrdersNoPaidDraft,
         activeSellOrderId: activeSellOrderIdRef.current,
       })
+      markPosDraftClearedGlobal('checkout_success')
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
@@ -5521,6 +5588,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     mergeCreatedLowStockNotifications,
     showPosPersistErrorToast,
     finalizePaidSellOrder,
+    markPosDraftClearedGlobal,
   ])
 
   handleThanhToanRef.current = handleThanhToan
