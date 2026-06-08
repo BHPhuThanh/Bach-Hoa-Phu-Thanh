@@ -3280,12 +3280,39 @@ export default function AdminHub({
       return
     }
     const prevById = new Map(ctx.variants.map((v) => [v.id, v]))
-    const replacements = buildCatalogVariantsFromUnitModal({
+    let replacements = buildCatalogVariantsFromUnitModal({
       templateVariant: template,
       linesSorted: sortedLines,
       nameTrim,
       prevByVariantId: prevById,
     })
+    const newVariantsForInsert = replacements.filter((v) => !prevById.has(v.id))
+    if (isSupabaseConfigured() && newVariantsForInsert.length > 0) {
+      const ins = await insertProductDisplayVariantsSequential(newVariantsForInsert, {
+        existingCatalogProducts: catalogListForGoodsEdit,
+      })
+      if (!ins.ok) {
+        window.alert(describeCatalogPersistError(ins.error) || 'Không tạo được đơn vị tính mới trên Supabase.')
+        return
+      }
+      const prepared = Array.isArray(ins.preparedVariants) ? [...ins.preparedVariants] : []
+      replacements = replacements.map((v) => {
+        if (prevById.has(v.id)) return v
+        if (String(v.code ?? '').trim()) return v
+        const unitNeedle = normalizeCatalogUnitLabel(v.unitLabel).toLowerCase()
+        const convNeedle = Number(v.conversion) || 1
+        const hitIdx = prepared.findIndex(
+          (p) =>
+            normalizeCatalogUnitLabel(p.unitLabel).toLowerCase() === unitNeedle &&
+            (Number(p.conversion) || 1) === convNeedle
+        )
+        if (hitIdx < 0) return v
+        const hit = prepared.splice(hitIdx, 1)[0]
+        const assignedCode = String(hit?.code ?? '').trim()
+        if (!assignedCode) return v
+        return { ...v, code: assignedCode, persistMaHang: assignedCode }
+      })
+    }
     const newProducts = replacements.map((v) => {
       const prev = prevById.get(v.id)
       const ma_hang = String(v.persistMaHang ?? prev?.code ?? v.code ?? '').trim()
@@ -3326,8 +3353,8 @@ export default function AdminHub({
       gia_von: p.gia_von,
       dvt: p.don_vi_tinh,
     }))
-    if (payloadToUpsert.length === 0 || !payloadToUpsert[0]?.ma_hang) {
-      window.alert('Payload rỗng! Dừng lại!')
+    if (payloadToUpsert.length === 0 || payloadToUpsert.some((x) => !String(x.ma_hang ?? '').trim())) {
+      window.alert('Thiếu mã hàng trong payload ĐVT. Vui lòng kiểm tra lại các dòng đơn vị tính mới.')
       return
     }
     if (isSupabaseConfigured()) {
@@ -3479,6 +3506,41 @@ export default function AdminHub({
       const last = s[s.length - 1]
       const lastC = parsePositiveConversion(last?.conversion) ?? 1
       const nextC = Math.max(2, Math.round(lastC * 2))
+      const rootCode = String(s[0]?.code ?? '').trim()
+      const usedCodeLc = new Set(s.map((r) => String(r.code ?? '').trim().toLowerCase()).filter(Boolean))
+      const existingCodeLc = new Set(
+        flattenDisplayCatalogToVariants(catalogListForGoodsEdit)
+          .map((v) => String(v?.code ?? '').trim().toLowerCase())
+          .filter(Boolean)
+      )
+      let nextCode = ''
+      if (rootCode) {
+        let idx = 2
+        while (idx < 10000) {
+          const cand = `${rootCode}-${idx}`
+          const candLc = cand.toLowerCase()
+          if (!usedCodeLc.has(candLc) && !existingCodeLc.has(candLc)) {
+            nextCode = cand
+            break
+          }
+          idx += 1
+        }
+      }
+      if (!nextCode) {
+        const seed = allocateAutoHhSkuIfEmpty(catalogListForGoodsEdit, '')
+        let cand = String(seed ?? '').trim() || `HH${Date.now()}`
+        let guard = 0
+        while (
+          guard < 20000 &&
+          (usedCodeLc.has(cand.toLowerCase()) || existingCodeLc.has(cand.toLowerCase()))
+        ) {
+          const mCode = cand.match(/^HH(\d+)$/i)
+          const n = mCode ? Number(mCode[1]) + 1 : Date.now() + guard + 1
+          cand = `HH${String(n)}`
+          guard += 1
+        }
+        nextCode = cand
+      }
       let lines = [
         ...m.lines,
         {
@@ -3486,7 +3548,7 @@ export default function AdminHub({
           variantId: '',
           unitLabel: '',
           conversion: String(nextC),
-          code: '',
+          code: nextCode,
           barcode: '',
           cost: '',
           price: '',
@@ -3500,7 +3562,7 @@ export default function AdminHub({
       lines = propagateBaseUnitMoney(lines, bc, bp)
       return { ...m, lines }
     })
-  }, [])
+  }, [catalogListForGoodsEdit])
 
   const removeUnitModalRowKey = useCallback((key) => {
     setUnitModal((m) => {
