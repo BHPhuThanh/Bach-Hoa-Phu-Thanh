@@ -2,7 +2,7 @@ import { getSupabaseClient } from './supabaseClient.js'
 
 /**
  * Cập nhật ĐVT / giá trên `products` — ép text, chỉ báo UI sau khi DB phản hồi.
- * @param {Array<{ ma_hang: string, gia_ban?: unknown, gia_von?: unknown, quy_doi?: unknown, dvt?: unknown, ma_hh_lien_quan?: unknown, linkedMasterCode?: unknown }>} items
+ * @param {Array<{ ma_hang: string, ten_hang?: unknown, ton_kho?: unknown, gia_ban?: unknown, gia_von?: unknown, quy_doi?: unknown, dvt?: unknown, ma_hh_lien_quan?: unknown, linkedMasterCode?: unknown }>} items
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 export async function updateProductDvtFieldsSequential(items) {
@@ -28,6 +28,10 @@ export async function updateProductDvtFieldsSequential(items) {
       gia_ban: String(item.gia_ban ?? ''),
       gia_von: String(item.gia_von ?? ''),
     }
+    const tenHang = String(item.ten_hang ?? '').trim()
+    if (tenHang) {
+      payload.ten_hang = tenHang
+    }
     const linkedCode = String(item.ma_hh_lien_quan ?? item.linkedMasterCode ?? '').trim()
     if (linkedCode) {
       payload.ma_hh_lien_quan = linkedCode
@@ -38,11 +42,16 @@ export async function updateProductDvtFieldsSequential(items) {
     if (item.dvt !== undefined && item.dvt !== null && String(item.dvt).trim() !== '') {
       payload.dvt = String(item.dvt)
     }
+    if (item.ton_kho !== undefined && item.ton_kho !== null && String(item.ton_kho) !== '') {
+      const tk = Number(item.ton_kho)
+      if (Number.isFinite(tk)) {
+        payload.ton_kho = parseFloat(Math.max(0, tk).toFixed(3))
+      }
+    }
 
-    const { data, error } = await sb
+    const { error } = await sb
       .from('products')
-      .update(payload)
-      .eq('ma_hang', ma_hang)
+      .upsert({ ma_hang, ...payload }, { onConflict: 'ma_hang' })
       .select('ma_hang, ma_hh_lien_quan, dvt, quy_doi, gia_ban, gia_von')
 
     if (error) {
@@ -51,11 +60,6 @@ export async function updateProductDvtFieldsSequential(items) {
         ok: false,
         error: `Lỗi Supabase khi lưu ĐVT «${ma_hang}»: ${error.message}`,
       }
-    }
-    if (!Array.isArray(data) || data.length === 0) {
-      const msg = `Supabase không cập nhật dòng nào cho ma_hang="${ma_hang}" — mã không tồn tại trên DB.`
-      console.error('LỖI UPDATE ĐVT: 0 rows', { ma_hang, payload })
-      return { ok: false, error: msg }
     }
   }
 

@@ -1953,6 +1953,7 @@ export default function AdminHub({
   const [inboundQuickEditSelectedVid, setInboundQuickEditSelectedVid] = useState(null)
   const [inboundQuickEditDraft, setInboundQuickEditDraft] = useState(null)
   const [inboundQuickEditSaving, setInboundQuickEditSaving] = useState(false)
+  const [inboundQuickEditResyncing, setInboundQuickEditResyncing] = useState(false)
   const [soloGoodsSaving, setSoloGoodsSaving] = useState(false)
   const [unitModalSaving, setUnitModalSaving] = useState(false)
   /** Mã hàng gốc khi mở form sửa — không đổi theo draft (đổi mã hàng). */
@@ -1960,6 +1961,7 @@ export default function AdminHub({
   const [inboundQuickEditShelfTab, setInboundQuickEditShelfTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
   const inboundQuickEditPreserveRef = useRef(null)
   const inboundQuickEditDraftSeedVariantIdRef = useRef('')
+  const inboundQuickEditResyncPendingRef = useRef(null)
   /** Local State First: thay đổi ĐVT giữ cục bộ, chỉ ghi API khi bấm Lưu form chi tiết. */
   const [pendingUnitDraft, setPendingUnitDraft] = useState(null)
   const catalogListForGoodsEdit = useMemo(() => {
@@ -2077,6 +2079,8 @@ export default function AdminHub({
 
   const closeInboundProductQuickEdit = useCallback(() => {
     if (inboundQuickEditSaving) return
+    inboundQuickEditResyncPendingRef.current = null
+    setInboundQuickEditResyncing(false)
     setInboundQuickEditExpandId(null)
     setInboundQuickEditSelectedVid(null)
     setInboundQuickEditDraft(null)
@@ -2203,6 +2207,28 @@ export default function AdminHub({
     }
     setInboundQuickEditDraft(seeded)
   }, [inboundQuickEditExpandId, inboundQuickEditSelectedVid, inboundQuickEditVariant, buildGoodsDetailDraft])
+
+  useEffect(() => {
+    const pending = inboundQuickEditResyncPendingRef.current
+    if (!pending?.baseCode) return
+    const flat = flattenDisplayCatalogToVariants(catalogListForGoodsEdit)
+    const hit = flat.find((v) => String(v?.code ?? '').trim() === pending.baseCode)
+    if (!hit) return
+    inboundQuickEditResyncPendingRef.current = null
+    const preserve = pending.preserve || {}
+    const seeded = buildGoodsDetailDraft(hit)
+    const hitId = String(hit.id)
+    inboundQuickEditDraftSeedVariantIdRef.current = hitId
+    setInboundQuickEditExpandId(hitId)
+    setInboundQuickEditSelectedVid(hitId)
+    setInboundQuickEditDraft({
+      ...seeded,
+      name: preserve.name ?? seeded?.name ?? '',
+      brand: preserve.brand ?? seeded?.brand ?? '',
+      weightRaw: preserve.weightRaw ?? seeded?.weightRaw ?? '',
+    })
+    setInboundQuickEditResyncing(false)
+  }, [catalogListForGoodsEdit, buildGoodsDetailDraft])
 
   useEffect(() => {
     if (!inboundQuickEditExpandId) return
@@ -3280,44 +3306,33 @@ export default function AdminHub({
       return
     }
     const prevById = new Map(ctx.variants.map((v) => [v.id, v]))
-    let replacements = buildCatalogVariantsFromUnitModal({
+    const baseStockRaw = template?.stockQty ?? template?.ton_kho ?? 0
+    const baseStockNum = Number(baseStockRaw)
+    const tonKhoGoc = Number.isFinite(baseStockNum) ? Math.max(0, baseStockNum) : 0
+    const replacements = buildCatalogVariantsFromUnitModal({
       templateVariant: template,
       linesSorted: sortedLines,
       nameTrim,
       prevByVariantId: prevById,
     })
-    const newVariantsForInsert = replacements.filter((v) => !prevById.has(v.id))
-    if (isSupabaseConfigured() && newVariantsForInsert.length > 0) {
-      const ins = await insertProductDisplayVariantsSequential(newVariantsForInsert, {
-        existingCatalogProducts: catalogListForGoodsEdit,
-      })
-      if (!ins.ok) {
-        window.alert(describeCatalogPersistError(ins.error) || 'Không tạo được đơn vị tính mới trên Supabase.')
-        return
-      }
-      const prepared = Array.isArray(ins.preparedVariants) ? [...ins.preparedVariants] : []
-      replacements = replacements.map((v) => {
-        if (prevById.has(v.id)) return v
-        if (String(v.code ?? '').trim()) return v
-        const unitNeedle = normalizeCatalogUnitLabel(v.unitLabel).toLowerCase()
-        const convNeedle = Number(v.conversion) || 1
-        const hitIdx = prepared.findIndex(
-          (p) =>
-            normalizeCatalogUnitLabel(p.unitLabel).toLowerCase() === unitNeedle &&
-            (Number(p.conversion) || 1) === convNeedle
-        )
-        if (hitIdx < 0) return v
-        const hit = prepared.splice(hitIdx, 1)[0]
-        const assignedCode = String(hit?.code ?? '').trim()
-        if (!assignedCode) return v
-        return { ...v, code: assignedCode, persistMaHang: assignedCode }
-      })
-    }
     const newProducts = replacements.map((v) => {
       const prev = prevById.get(v.id)
+      const isNewRow = !prevById.has(v.id)
       const ma_hang = String(v.persistMaHang ?? prev?.code ?? v.code ?? '').trim()
       const sqRaw = v.stockQty
       const sqNum = Number(sqRaw)
+      const quy_doi =
+        v.conversion != null &&
+        String(v.conversion).trim() !== '' &&
+        Number.isFinite(Number(v.conversion))
+          ? String(v.conversion)
+          : String(v.raw?.quy_doi ?? v.quy_doi ?? prev?.conversion ?? '1')
+      const quyDoiNum = Math.max(1, Number(quy_doi) || 1)
+      const ton_kho = isNewRow
+        ? parseFloat((tonKhoGoc / quyDoiNum).toFixed(3))
+        : sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum)
+          ? parseFloat(Math.max(0, sqNum).toFixed(3))
+          : 0
       const linkedMasterCode = String(
         v.linkedMasterCode ?? prev?.linkedMasterCode ?? v.ma_hh_lien_quan ?? ''
       ).trim()
@@ -3332,14 +3347,8 @@ export default function AdminHub({
         thuong_hieu: String(v.brand ?? '').trim(),
         gia_ban: String(v.price ?? ''),
         gia_von: String(v.cost ?? ''),
-        ton_kho:
-          sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
-        quy_doi:
-          v.conversion != null &&
-          String(v.conversion).trim() !== '' &&
-          Number.isFinite(Number(v.conversion))
-            ? String(v.conversion)
-            : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
+        ton_kho,
+        quy_doi,
       }
     })
     const payloadToUpsert = newProducts.map((p) => ({
@@ -3347,11 +3356,13 @@ export default function AdminHub({
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\u00A0/g, ' ')
         .trim(),
+      ten_hang: nameTrim,
       ma_hh_lien_quan: String(p.linkedMasterCode ?? p.ma_hh_lien_quan ?? '').trim(),
       quy_doi: p.quy_doi,
       gia_ban: p.gia_ban,
       gia_von: p.gia_von,
       dvt: p.don_vi_tinh,
+      ton_kho: p.ton_kho,
     }))
     if (payloadToUpsert.length === 0 || payloadToUpsert.some((x) => !String(x.ma_hang ?? '').trim())) {
       window.alert('Thiếu mã hàng trong payload ĐVT. Vui lòng kiểm tra lại các dòng đơn vị tính mới.')
@@ -3407,14 +3418,19 @@ export default function AdminHub({
     setPendingUnitDraft(null)
 
     if (mainId && src === 'inbound') {
-      inboundQuickEditPreserveRef.current = {
-        name: inboundQuickEditDraft?.name,
-        brand: inboundQuickEditDraft?.brand,
-        weightRaw: inboundQuickEditDraft?.weightRaw,
+      const baseCode = String(replacements[0]?.code ?? '').trim()
+      if (baseCode) {
+        inboundQuickEditResyncPendingRef.current = {
+          baseCode,
+          preserve: {
+            name: inboundQuickEditDraft?.name,
+            brand: inboundQuickEditDraft?.brand,
+            weightRaw: inboundQuickEditDraft?.weightRaw,
+          },
+        }
+        setInboundQuickEditResyncing(true)
+        setInboundQuickEditDraft(null)
       }
-      setInboundQuickEditExpandId(mainId)
-      setInboundQuickEditSelectedVid(mainId)
-      inboundQuickEditDraftSeedVariantIdRef.current = ''
     }
     if (mainId && src === 'solo') {
       if (oldAnchor !== mainId) {
@@ -3428,6 +3444,9 @@ export default function AdminHub({
     triggerGoodsSaveSuccessToast()
     } finally {
       setUnitModalSaving(false)
+      if (!inboundQuickEditResyncPendingRef.current) {
+        setInboundQuickEditResyncing(false)
+      }
     }
   }, [
     unitModal,
@@ -3506,41 +3525,31 @@ export default function AdminHub({
       const last = s[s.length - 1]
       const lastC = parsePositiveConversion(last?.conversion) ?? 1
       const nextC = Math.max(2, Math.round(lastC * 2))
-      const rootCode = String(s[0]?.code ?? '').trim()
-      const usedCodeLc = new Set(s.map((r) => String(r.code ?? '').trim().toLowerCase()).filter(Boolean))
+      const usedCodeLc = new Set(
+        s.map((r) => String(r.code ?? '').trim().toLowerCase()).filter(Boolean)
+      )
       const existingCodeLc = new Set(
         flattenDisplayCatalogToVariants(catalogListForGoodsEdit)
           .map((v) => String(v?.code ?? '').trim().toLowerCase())
           .filter(Boolean)
       )
-      let nextCode = ''
-      if (rootCode) {
-        let idx = 2
-        while (idx < 10000) {
-          const cand = `${rootCode}-${idx}`
-          const candLc = cand.toLowerCase()
-          if (!usedCodeLc.has(candLc) && !existingCodeLc.has(candLc)) {
-            nextCode = cand
-            break
-          }
-          idx += 1
-        }
-      }
-      if (!nextCode) {
-        const seed = allocateAutoHhSkuIfEmpty(catalogListForGoodsEdit, '')
-        let cand = String(seed ?? '').trim() || `HH${Date.now()}`
+      const generateNextCode = () => {
+        let candidate = String(allocateAutoHhSkuIfEmpty(catalogListForGoodsEdit, '') || '').trim()
+        if (!candidate) candidate = suggestNextProductCodeFromCatalog(catalogListForGoodsEdit)
+        if (!candidate) candidate = `HH${Date.now()}`
         let guard = 0
         while (
           guard < 20000 &&
-          (usedCodeLc.has(cand.toLowerCase()) || existingCodeLc.has(cand.toLowerCase()))
+          (usedCodeLc.has(candidate.toLowerCase()) || existingCodeLc.has(candidate.toLowerCase()))
         ) {
-          const mCode = cand.match(/^HH(\d+)$/i)
-          const n = mCode ? Number(mCode[1]) + 1 : Date.now() + guard + 1
-          cand = `HH${String(n)}`
+          const mCode = candidate.match(/^HH(\d+)$/i)
+          const nextN = mCode ? Number(mCode[1]) + 1 : Date.now() + guard + 1
+          candidate = `HH${String(nextN)}`
           guard += 1
         }
-        nextCode = cand
+        return candidate
       }
+      const nextCode = generateNextCode()
       let lines = [
         ...m.lines,
         {
@@ -10635,11 +10644,11 @@ export default function AdminHub({
                 <p className="admin-hub-muted" style={{ padding: '1rem' }}>
                   Đang lưu cập nhật sản phẩm…
                 </p>
-              ) : (
+              ) : inboundQuickEditResyncing ? (
                 <p className="admin-hub-muted" style={{ padding: '1rem' }}>
                   Đang tải dữ liệu sản phẩm…
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
         </div>

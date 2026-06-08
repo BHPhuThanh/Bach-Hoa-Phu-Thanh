@@ -247,6 +247,35 @@ function rowHasExtraUnits(row) {
   return (row.donViTinh || []).some((u) => String(u.unitLabel ?? '').trim())
 }
 
+/** Tồn kho ô batch — hỗ trợ thập phân (vd. 0.5), không dùng parseMoneyDigitsVi (chỉ lấy số nguyên). */
+function parseBatchStockQty(raw) {
+  const s = String(raw ?? '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .replace(/\s/g, '')
+    .replace(',', '.')
+  if (!s) return 0
+  const n = Number(s)
+  return Number.isFinite(n) ? Math.max(0, n) : 0
+}
+
+/**
+ * Gán tồn kho cho nhóm ĐVT batch: lưu `ton_kho` gốc (đơn vị cơ bản) trên mọi dòng.
+ * UI hiển thị = parseFloat((baseTonKho / quyDoi).toFixed(3)) — chỉ chia một lần ở formatDisplayTonKhoVi.
+ */
+function assignBatchGroupStockQty(groupVariants, baseTonKhoRaw) {
+  const baseTonKho = Number(baseTonKhoRaw || 0)
+  const tonKhoGoc = Number.isFinite(baseTonKho) ? Math.max(0, baseTonKho) : 0
+  const tonKhoStored = parseFloat(tonKhoGoc.toFixed(3))
+  for (const v of groupVariants) {
+    const quyDoi = Number(v.conversion ?? v.conversionValue ?? 1) || 1
+    v.conversion = quyDoi
+    v.conversionValue = quyDoi
+    v.stockQty = tonKhoStored
+  }
+  return groupVariants
+}
+
 /**
  * @param {Array<object>} batchRows
  * @param {Array<object>} catalogList
@@ -273,6 +302,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
     const createGroupKey = `batch-row:${String(r.rowId ?? '').trim() || newGoodsCreateBatchRowId()}`
 
     if (rowHasExtraUnits(r)) {
+      const baseTonKho = Number(parseBatchStockQty(r.stock) || 0)
       const linesSorted = batchRowToUnitLines(r)
       let rootCode = String(linesSorted[0]?.code ?? '').trim()
       if (!rootCode || codeSetExisting.has(rootCode.toLowerCase())) {
@@ -282,18 +312,19 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       }
 
       const templateVariant = {
-        stockQty: Math.max(0, parseMoneyDigitsVi(r.stock)),
+        stockQty: baseTonKho,
         wholesalePrice: parseMoneyDigitsVi(r.wholesale),
         brand: brandTrim,
         supplier: '',
         weightRaw: '',
       }
 
-      const groupVariants = buildCatalogVariantsFromUnitModal({
+      let groupVariants = buildCatalogVariantsFromUnitModal({
         templateVariant,
         linesSorted,
         nameTrim,
       })
+      assignBatchGroupStockQty(groupVariants, baseTonKho)
 
       for (const v of groupVariants) {
         let barcode = String(normalizeBarcodeValue(v.barcode ?? '')).trim()
@@ -310,11 +341,6 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
         v.name = nameTrim
         v.nameRaw = nameTrim
         v.createGroupKey = createGroupKey
-        if (v.conversion != null) {
-          const conv = parsePositiveConversion(v.conversion) ?? 1
-          v.conversion = conv
-          v.conversionValue = conv
-        }
       }
 
       const unique = ensureUniqueVariantCodes(groupVariants, codeSetExisting)
@@ -352,7 +378,7 @@ export function buildCatalogVariantsFromGoodsCreateBatchRows(batchRows, catalogL
       price: parseMoneyDigitsVi(r.price),
       wholesalePrice: parseMoneyDigitsVi(r.wholesale),
       cost: parseMoneyDigitsVi(r.cost),
-      stockQty: Math.max(0, parseMoneyDigitsVi(r.stock)),
+      stockQty: parseFloat(Number(parseBatchStockQty(r.stock) || 0).toFixed(3)),
       supplier: '',
       brand: brandTrim,
       linkedMasterCode: '',
