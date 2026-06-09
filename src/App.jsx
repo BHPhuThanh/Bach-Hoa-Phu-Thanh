@@ -3513,6 +3513,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               gia_von: Number(v.cost) || 0,
               ton_kho:
                 sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
+              ton_nho_nhat: Number(v.stockNormMin || 0),
               dvt: normalizeCatalogUnitLabel(v.unitLabel),
               quy_doi:
                 v.conversion != null &&
