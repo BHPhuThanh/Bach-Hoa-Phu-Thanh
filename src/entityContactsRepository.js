@@ -235,6 +235,13 @@ function fallbackSupplierRowId() {
  * @param {Array} local
  * @returns {Array<{ id: string, name: string, phone: string, address: string, cccd: string, mail: string }>}
  */
+/** NCC chỉ tồn tại local (chưa có UUID Supabase) — không gộp lại sau khi đã xóa trên server. */
+export function isLocalOnlySupplierId(id) {
+  const s = String(id ?? '').trim()
+  if (!s) return true
+  return s.startsWith('sup-') || s.startsWith('ncc-local-')
+}
+
 export function mergeSupplierListsDedupe(remote, local) {
   const seen = new Set()
   const out = []

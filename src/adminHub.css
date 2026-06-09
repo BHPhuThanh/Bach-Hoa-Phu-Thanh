@@ -2872,6 +2872,11 @@
   letter-spacing: 0.02em;
 }
 
+.ah-goods-card-barcode-row .ah-goods-card-input--barcode {
+  flex: 1;
+  min-width: 0;
+}
+
 .ah-goods-card-tools {
   display: flex;
   flex-direction: row;

@@ -42,6 +42,7 @@ export function AdminHubGoodsExpandedBelow(props) {
     onEditComboProduct,
     goodsBrandAutocompleteOptions = [],
     onRequestAddSupplier,
+    onRequestBarcodeScan,
     onCloseGoodsDetail,
   } = props
   const glMerged = goodsStockLedgerMerged || { mode: 'legacy', rows: [] }
@@ -364,34 +365,55 @@ export function AdminHubGoodsExpandedBelow(props) {
                                               >
                                                 Mã vạch
                                               </label>
-                                              <input
-                                                id={`gd-barcode-${v.id}`}
-                                                className="ah-goods-card-input ah-goods-card-input--barcode"
-                                                value={d.barcode}
-                                                onChange={(e) =>
-                                                  setGoodsDetailDraft((x) =>
-                                                    x ? { ...x, barcode: e.target.value } : x
-                                                  )
-                                                }
-                                                onFocus={(e) => {
-                                                  requestAnimationFrame(() => {
-                                                    try {
-                                                      e.target.select()
-                                                    } catch {
-                                                      /* ignore */
-                                                    }
-                                                  })
-                                                }}
-                                                onKeyDown={(e) => {
-                                                  if (e.key === 'Enter') {
-                                                    e.preventDefault()
-                                                    e.stopPropagation()
+                                              <div className="ah-goods-create-barcode-row ah-goods-card-barcode-row">
+                                                <input
+                                                  id={`gd-barcode-${v.id}`}
+                                                  className="ah-goods-card-input ah-goods-card-input--barcode ah-goods-create-input--barcode"
+                                                  value={d.barcode}
+                                                  onChange={(e) =>
+                                                    setGoodsDetailDraft((x) =>
+                                                      x ? { ...x, barcode: e.target.value } : x
+                                                    )
                                                   }
-                                                }}
-                                                autoComplete="off"
-                                                spellCheck={false}
-                                                aria-label="Mã vạch"
-                                              />
+                                                  onFocus={(e) => {
+                                                    requestAnimationFrame(() => {
+                                                      try {
+                                                        e.target.select()
+                                                      } catch {
+                                                        /* ignore */
+                                                      }
+                                                    })
+                                                  }}
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                      e.preventDefault()
+                                                      e.stopPropagation()
+                                                    }
+                                                  }}
+                                                  autoComplete="off"
+                                                  spellCheck={false}
+                                                  aria-label="Mã vạch"
+                                                />
+                                                {typeof onRequestBarcodeScan === 'function' ? (
+                                                  <button
+                                                    type="button"
+                                                    className="barcode-scan-trigger ah-goods-create-barcode-scan"
+                                                    aria-label="Quét mã vạch bằng camera"
+                                                    title="Quét mã vạch"
+                                                    onClick={() => onRequestBarcodeScan()}
+                                                  >
+                                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                                      <path
+                                                        d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                                                        stroke="currentColor"
+                                                        strokeWidth="1.75"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                      />
+                                                    </svg>
+                                                  </button>
+                                                ) : null}
+                                              </div>
                                             </div>
                                             <div className="ah-goods-card-field">
                                               <label

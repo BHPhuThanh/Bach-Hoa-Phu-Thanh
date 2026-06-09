@@ -70,6 +70,7 @@ import {
   fetchCustomersFromSupabase,
   fetchEmployeesFromSupabase,
   fetchSuppliersFromSupabase,
+  isLocalOnlySupplierId,
   formatPostgrestErrorForUser,
   insertCustomerSupabase,
   insertEmployeeSupabase,
@@ -3891,7 +3892,8 @@ export default function AdminHub({
     try {
       const remote = await fetchSuppliersFromSupabase()
       const local = loadSuppliersFromStorage()
-      const merged = mergeSupplierListsDedupe(remote, local)
+      const localOnly = local.filter((s) => isLocalOnlySupplierId(s?.id))
+      const merged = mergeSupplierListsDedupe(remote, localOnly)
       persistSuppliers(merged)
     } catch (e) {
       console.warn('[AdminHub] Refetch suppliers', e)
@@ -3913,6 +3915,11 @@ export default function AdminHub({
       cancelled = true
     }
   }, [activeTab, refetchSuppliersForUi])
+
+  useEffect(() => {
+    if (!goodsNewModalOpen) return
+    void refetchSuppliersForUi()
+  }, [goodsNewModalOpen, refetchSuppliersForUi])
 
   /** Khi true, hiện tab "Phiếu nhập mới" trên nav (cho đến khi đóng / lưu). */
   const [inboundDraftSession, setInboundDraftSession] = useState(() => Boolean(standaloneInboundCreate))
@@ -4266,6 +4273,29 @@ export default function AdminHub({
     setBarcodeScanOpen(true)
   }, [])
 
+  const openGoodsEditBarcodeScan = useCallback(() => {
+    setBarcodeScanMode('goods-edit')
+    setBarcodeScanOpen(true)
+  }, [])
+
+  const applyGoodsEditScannedBarcode = useCallback(
+    (raw) => {
+      const code = String(normalizeBarcodeValue(raw) ?? '').trim()
+      if (!code) return
+      if (inboundQuickEditExpandId) {
+        setInboundQuickEditDraft((d) => (d ? { ...d, barcode: code } : d))
+      } else if (isSoloProductTabId(activeTab)) {
+        setSoloGoodsDraftByVariantId((prev) => {
+          const vid = soloActiveVariantId
+          if (!vid || !prev[vid]) return prev
+          return { ...prev, [vid]: { ...prev[vid], barcode: code } }
+        })
+      }
+      setBarcodeScanOpen(false)
+    },
+    [inboundQuickEditExpandId, activeTab, soloActiveVariantId]
+  )
+
   /** Modal «Tạo mới»: đồng bộ staging + một dòng lưới (SL=1); gọi App append — chỉ trong tab nháp nhập hàng. */
   const appendCatalogVariantsFromInboundProductModal = useCallback(
     async (rows) => {
@@ -4455,7 +4485,8 @@ export default function AdminHub({
           try {
             const remote = await fetchSuppliersFromSupabase()
             const local = loadSuppliersFromStorage()
-            persistSuppliers(mergeSupplierListsDedupe(remote, local))
+            const localOnly = local.filter((s) => isLocalOnlySupplierId(s?.id))
+            persistSuppliers(mergeSupplierListsDedupe(remote, localOnly))
           } catch (e) {
             console.warn('[AdminHub] Tải lại NCC sau lưu', e)
             persistSuppliers(mergeSupplierListsDedupe([], [...suppliers, row]))
@@ -5987,6 +6018,7 @@ export default function AdminHub({
         }}
         goodsBrandAutocompleteOptions={supplierNameOptions}
         onRequestAddSupplier={revenueReadOnly ? undefined : openGoodsBrandSupplierModal}
+        onRequestBarcodeScan={openGoodsEditBarcodeScan}
         onCloseGoodsDetail={closeInboundProductQuickEdit}
       />
     )
@@ -6003,6 +6035,7 @@ export default function AdminHub({
     goodsInvLedgerDateTo,
     goodsInvLedgerDocSearch,
     handleInventoryLedgerDocActivate,
+    openGoodsEditBarcodeScan,
     saveInboundQuickEditDetail,
     buildGoodsDetailDraft,
     copyGoodsDetail,
@@ -7398,7 +7431,7 @@ export default function AdminHub({
                       value={goodsBrandKey}
                       onValueChange={(v) => {
                         setHangHoaDeepLinkListScope('all')
-                        setGoodsBrandKey(String(v ?? '').trim())
+                        setGoodsBrandKey(String(v ?? ''))
                       }}
                       options={brandOptions}
                       placeholder="Tất cả thương hiệu…"
@@ -7588,7 +7621,7 @@ export default function AdminHub({
                         value={goodsBrandKey}
                         onValueChange={(v) => {
                           setHangHoaDeepLinkListScope('all')
-                          setGoodsBrandKey(String(v ?? '').trim())
+                          setGoodsBrandKey(String(v ?? ''))
                         }}
                         options={brandOptions}
                         placeholder="Tất cả thương hiệu…"
@@ -8393,7 +8426,8 @@ export default function AdminHub({
         {activeTab === TAB_SUPPLIER && (
           <SupplierManager
             revenueReadOnly={revenueReadOnly}
-            onSupplierCreated={() => refetchSuppliersForUi()}
+            onSupplierCreated={() => void refetchSuppliersForUi()}
+            onSuppliersChanged={() => void refetchSuppliersForUi()}
           />
         )}
 
@@ -8575,14 +8609,44 @@ export default function AdminHub({
                       <label className="ah-goods-card-lbl" htmlFor="solo-gd-barcode">
                         Mã vạch
                       </label>
-                      <input
-                        id="solo-gd-barcode"
-                        className="ah-goods-card-input ah-goods-card-input--barcode"
-                        value={soloGoodsDraft.barcode}
-                        onChange={(e) =>
-                          patchSoloGoodsDraft((x) => (x ? { ...x, barcode: e.target.value } : x))
-                        }
-                      />
+                      {isHubMobileLayout ? (
+                        <div className="ah-goods-create-barcode-row ah-goods-card-barcode-row">
+                          <input
+                            id="solo-gd-barcode"
+                            className="ah-goods-card-input ah-goods-card-input--barcode ah-goods-create-input--barcode"
+                            value={soloGoodsDraft.barcode}
+                            onChange={(e) =>
+                              patchSoloGoodsDraft((x) => (x ? { ...x, barcode: e.target.value } : x))
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="barcode-scan-trigger ah-goods-create-barcode-scan"
+                            aria-label="Quét mã vạch bằng camera"
+                            title="Quét mã vạch"
+                            onClick={openGoodsEditBarcodeScan}
+                          >
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+                              <path
+                                d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                                stroke="currentColor"
+                                strokeWidth="1.75"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <input
+                          id="solo-gd-barcode"
+                          className="ah-goods-card-input ah-goods-card-input--barcode"
+                          value={soloGoodsDraft.barcode}
+                          onChange={(e) =>
+                            patchSoloGoodsDraft((x) => (x ? { ...x, barcode: e.target.value } : x))
+                          }
+                        />
+                      )}
                     </div>
                     <div className="ah-goods-card-field ah-solo-product-span-2">
                       <label className="ah-goods-card-lbl" htmlFor="solo-gd-name">
@@ -10657,9 +10721,16 @@ export default function AdminHub({
       <BarcodeScanModal
         open={barcodeScanOpen}
         onClose={() => setBarcodeScanOpen(false)}
-        title={barcodeScanMode === 'inbound' ? 'Quét mã — thêm dòng nhập' : 'Quét mã — lọc hàng hóa'}
+        title={
+          barcodeScanMode === 'inbound'
+            ? 'Quét mã — thêm dòng nhập'
+            : barcodeScanMode === 'goods-edit'
+              ? 'Quét mã — sản phẩm đang sửa'
+              : 'Quét mã — lọc hàng hóa'
+        }
         onScan={(t) => {
           if (barcodeScanMode === 'inbound') applyInboundScannedCode(t)
+          else if (barcodeScanMode === 'goods-edit') applyGoodsEditScannedBarcode(t)
           else applyGoodsScannedCode(t)
         }}
       />

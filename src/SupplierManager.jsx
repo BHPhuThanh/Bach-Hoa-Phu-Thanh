@@ -29,7 +29,11 @@ function localFallbackSupplierId() {
 /**
  * Tab «Nhà cung cấp» — tách khỏi Nhập hàng. Fetch một lần khi mount (tab được chọn lần đầu).
  */
-export default function SupplierManager({ revenueReadOnly = false, onSupplierCreated }) {
+export default function SupplierManager({
+  revenueReadOnly = false,
+  onSupplierCreated,
+  onSuppliersChanged,
+}) {
   const isMobileLayout = useViewportMaxWidth(768)
   const [suppliers, setSuppliers] = useState([])
   const [fetchPhase, setFetchPhase] = useState('idle')
@@ -116,8 +120,9 @@ export default function SupplierManager({ revenueReadOnly = false, onSupplierCre
         }
       }
       setSuppliers((prev) => prev.filter((r) => String(r.id) !== id))
+      onSuppliersChanged?.()
     },
-    [revenueReadOnly]
+    [revenueReadOnly, onSuppliersChanged]
   )
 
   const handleSubmit = useCallback(
