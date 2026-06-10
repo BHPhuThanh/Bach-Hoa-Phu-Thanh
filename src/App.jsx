@@ -6248,6 +6248,42 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }, 100)
   }, [eInvoiceModalDraft])
 
+  const renderPosCloudIndicator = (extraClass = '') => (
+    <span
+      key="pos-cloud-ind"
+      className={`pos-cloud-ind${isOnline ? ' pos-cloud-ind--online' : ' pos-cloud-ind--offline'}${
+        offlinePendingCount > 0 ? ' pos-cloud-ind--pending' : ''
+      }${extraClass ? ` ${extraClass}` : ''}`}
+      role="status"
+      aria-live="polite"
+      title={
+        isOnline
+          ? offlinePendingCount > 0
+            ? `Đang đồng bộ ${offlinePendingCount} đơn offline...`
+            : 'Đã kết nối máy chủ'
+          : offlinePendingCount > 0
+            ? `Mất kết nối — ${offlinePendingCount} đơn chờ đồng bộ`
+            : 'Mất kết nối máy chủ'
+      }
+    >
+      <svg
+        className="pos-cloud-ind-svg"
+        viewBox="0 0 24 24"
+        width="20"
+        height="20"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4 7.5 7.5 0 0 0 4.86 9.14 5.5 5.5 0 0 0 6 20h13a4.5 4.5 0 0 0 .35-9.96zM19 18H6a3.5 3.5 0 0 1-.36-6.98l.86-.09.4-.77A5.5 5.5 0 0 1 12 6a5.49 5.49 0 0 1 5.39 4.4l.3 1.48 1.51.11A2.5 2.5 0 0 1 19 18z" />
+      </svg>
+      {offlinePendingCount > 0 ? (
+        <span className="pos-cloud-ind-badge" aria-label={`${offlinePendingCount} đơn chờ`}>
+          {offlinePendingCount > 99 ? '99+' : offlinePendingCount}
+        </span>
+      ) : null}
+    </span>
+  )
+
   const renderHeaderIconRail = (variant) => {
     const railClass =
       variant === 'kv'
@@ -6562,6 +6598,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return (
         <div className={railClass} ref={sellerMenuRef}>
           <div className="pos-header-blue-icons">
+            {renderPosCloudIndicator('max-md:hidden')}
             {renderHomeBtn('max-md:hidden', true)}
             {printerBlock}
             {shortcutsBtn}
@@ -6879,6 +6916,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   </div>
                 )}
               </div>
+              {/* Icon đám mây Online/Offline — bản DUY NHẤT cho Mobile, góc phải ngang hàng ô tìm kiếm */}
+              {renderPosCloudIndicator('pos-cloud-ind--mobile')}
               <div className="pos-header-barcode-scanner-group max-md:order-2" role="group" aria-label="Mã vạch và menu quét">
               <span
                 className="pos-header-barcode-debug max-md:!hidden"
@@ -7001,38 +7040,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               </div>
               </div>
               <div className="pos-header-workbar-right md:flex">
-                <span
-                  className={`pos-cloud-ind${isOnline ? ' pos-cloud-ind--online' : ' pos-cloud-ind--offline'}${
-                    offlinePendingCount > 0 ? ' pos-cloud-ind--pending' : ''
-                  }`}
-                  role="status"
-                  aria-live="polite"
-                  title={
-                    isOnline
-                      ? offlinePendingCount > 0
-                        ? `Đang đồng bộ ${offlinePendingCount} đơn offline...`
-                        : 'Đã kết nối máy chủ'
-                      : offlinePendingCount > 0
-                        ? `Mất kết nối — ${offlinePendingCount} đơn chờ đồng bộ`
-                        : 'Mất kết nối máy chủ'
-                  }
-                >
-                  <svg
-                    className="pos-cloud-ind-svg"
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4 7.5 7.5 0 0 0 4.86 9.14 5.5 5.5 0 0 0 6 20h13a4.5 4.5 0 0 0 .35-9.96zM19 18H6a3.5 3.5 0 0 1-.36-6.98l.86-.09.4-.77A5.5 5.5 0 0 1 12 6a5.49 5.49 0 0 1 5.39 4.4l.3 1.48 1.51.11A2.5 2.5 0 0 1 19 18z" />
-                  </svg>
-                  {offlinePendingCount > 0 ? (
-                    <span className="pos-cloud-ind-badge" aria-label={`${offlinePendingCount} đơn chờ`}>
-                      {offlinePendingCount > 99 ? '99+' : offlinePendingCount}
-                    </span>
-                  ) : null}
-                </span>
                 {renderHeaderIconRail('blue')}
               </div>
             </div>

@@ -494,6 +494,51 @@ export default function AdminHubStockCheckPanel({ vouchers }) {
                                       ))}
                                     </tbody>
                                   </table>
+                                  {/* CARD LAYOUT — chỉ hiện trên Mobile (<=768px) */}
+                                  <div className="ah-voucher-cards">
+                                    {row.lines.map((ln, i) => {
+                                      const d = Number(ln.deltaQty)
+                                      const deltaCls =
+                                        !Number.isFinite(d) || d === 0
+                                          ? 'ah-voucher-card__delta--zero'
+                                          : d > 0
+                                            ? 'ah-voucher-card__delta--pos'
+                                            : 'ah-voucher-card__delta--neg'
+                                      return (
+                                        <div
+                                          className="ah-voucher-card"
+                                          key={`card-${row.code}-${ln.variantId}-${i}`}
+                                        >
+                                          <div className="ah-voucher-card__title">{ln.productName || '—'}</div>
+                                          <div className="ah-voucher-card__sub">
+                                            {ln.productCode || '—'} · {ln.unitLabel || '—'}
+                                          </div>
+                                          <div className="ah-voucher-card__stats ah-voucher-card__stats--3">
+                                            <div className="ah-voucher-card__stat">
+                                              <span className="ah-voucher-card__stat-lbl">Hệ thống</span>
+                                              <span className="ah-voucher-card__stat-val">{qtyLabel(ln.branchQty)}</span>
+                                            </div>
+                                            <div className="ah-voucher-card__stat">
+                                              <span className="ah-voucher-card__stat-lbl">Thực tế</span>
+                                              <span className="ah-voucher-card__stat-val">{qtyLabel(ln.actualQty)}</span>
+                                            </div>
+                                            <div className="ah-voucher-card__stat ah-voucher-card__stat--right">
+                                              <span className="ah-voucher-card__stat-lbl">Lệch</span>
+                                              <span className={`ah-voucher-card__stat-val ${deltaCls}`}>
+                                                {qtyLabel(ln.deltaQty)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          {ln.reason && ln.reason !== '—' ? (
+                                            <div className="ah-voucher-card__note">Lý do: {ln.reason}</div>
+                                          ) : null}
+                                          {ln.note ? (
+                                            <div className="ah-voucher-card__note">Ghi chú: {ln.note}</div>
+                                          ) : null}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
                                 </div>
                               ) : (
                                 <p className="ah-stock-check-no-lines">Phiếu không có dòng sản phẩm.</p>

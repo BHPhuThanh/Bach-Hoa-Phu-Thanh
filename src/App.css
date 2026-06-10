@@ -1082,6 +1082,11 @@
     .home-btn-mobile {
         display: none !important;
     }
+
+    /* Icon đám mây mobile — ẩn trên PC (PC dùng icon trong dải xanh cạnh Home) */
+    .pos-cloud-ind--mobile {
+        display: none !important;
+    }
 }
 
 /* Toast kết quả quét mã vạch — góc phải dưới, phù hợp dark mode */
@@ -1173,6 +1178,11 @@
   line-height: 1.05rem;
   text-align: center;
   box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
+}
+
+/* Icon đám mây bản Mobile: mặc định ẩn (PC dùng bản trong dải xanh cạnh Home) */
+.pos-cloud-ind--mobile {
+  display: none;
 }
 
 /* Trang /doanh-thu: iframe là con đầu tiên nên không khớp `.app--dark > .admin-hub` — ép hub giãn full chiều cao */
@@ -6079,6 +6089,20 @@
   .pos-header-scanner-main,
   .pos-header-scanner-f10 {
       display: none !important;
+  }
+
+  /* Ẩn TOÀN BỘ dải công cụ PC (Home, máy in, POS, khóa, giỏ hàng, đám mây PC) trên Mobile,
+     tránh hiển thị đè & nhân đôi nút bấm. Mobile dùng nút Home riêng + 1 icon đám mây riêng. */
+  .pos-header-workbar-right {
+      display: none !important;
+  }
+
+  /* Icon đám mây Online/Offline: bản duy nhất cho Mobile, nằm góc phải ngang hàng ô tìm kiếm */
+  .pos-cloud-ind--mobile {
+      display: inline-flex !important;
+      margin-left: auto;
+      flex: 0 0 auto;
+      align-self: center;
   }
 
   /* Ẩn 2 nút gốc ở ngoài giao diện để chống nhân đôi */

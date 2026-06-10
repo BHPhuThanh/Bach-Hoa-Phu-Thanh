@@ -582,6 +582,66 @@ export default function CostAdjustCreatePage() {
             </table>
           </div>
 
+          {/* CARD LAYOUT — chỉ hiện trên Mobile (<=768px), PC vẫn dùng bảng phía trên. */}
+          <div className="cac-cards">
+            {pageRows.length === 0 ? (
+              <div className="cac-cards__empty">Chưa có dòng — dùng ô tìm kiếm hoặc Chọn nhanh.</div>
+            ) : (
+              pageRows.map((row, i) => {
+                const delta = parseSignedMoneyDraftVi(row.deltaDraft)
+                const deltaCls =
+                  delta === 0
+                    ? 'cac-card__delta--zero'
+                    : delta > 0
+                      ? 'cac-card__delta--pos'
+                      : 'cac-card__delta--neg'
+                return (
+                  <div className="cac-card-row" key={row.key}>
+                    <div className="cac-card-row__head">
+                      <div className="cac-card-row__title-wrap">
+                        <div className="cac-card-row__name">
+                          <span className="cac-card-row__idx">{(pageSafe - 1) * pageSize + i + 1}.</span>{' '}
+                          {row.productName}
+                        </div>
+                        <div className="cac-card-row__code">{row.productCode || '—'} · {row.unitLabel || '—'}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="cac-card-row__remove"
+                        aria-label="Xóa dòng"
+                        onClick={() => removeRow(row.key)}
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="cac-card-row__costs">
+                      <div className="cac-card-row__cost-cell">
+                        <span className="cac-card-row__cost-lbl">Giá vốn cũ</span>
+                        <span className="cac-card-row__cost-old">{formatMoneyDraftVi(row.currentCost)}</span>
+                      </div>
+                      <div className="cac-card-row__cost-cell cac-card-row__cost-cell--right">
+                        <span className="cac-card-row__cost-lbl">Chênh lệch</span>
+                        <span className={`cac-card-row__delta ${deltaCls}`}>{row.deltaDraft}</span>
+                      </div>
+                    </div>
+
+                    <label className="cac-card-row__new">
+                      <span className="cac-card-row__new-lbl">Giá vốn mới</span>
+                      <input
+                        className="cac-card-row__new-input"
+                        inputMode="numeric"
+                        aria-label="Giá vốn mới"
+                        value={row.afterDraft}
+                        onChange={(e) => updateAfter(row.key, e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )
+              })
+            )}
+          </div>
+
           <div className="cac-footer">
             <div className="cac-pager">
               <span>Hiển thị</span>

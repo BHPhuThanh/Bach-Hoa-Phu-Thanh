@@ -496,6 +496,47 @@ export default function AdminHubCostAdjustPanel({ vouchers }) {
                                       ))}
                                     </tbody>
                                   </table>
+                                  {/* CARD LAYOUT — chỉ hiện trên Mobile (<=768px) */}
+                                  <div className="ah-voucher-cards">
+                                    {row.lines.map((ln, i) => {
+                                      const d = Number(ln.newCost) - Number(ln.oldCost)
+                                      const diffCls =
+                                        !Number.isFinite(d) || d === 0
+                                          ? 'ah-voucher-card__delta--zero'
+                                          : d > 0
+                                            ? 'ah-voucher-card__delta--pos'
+                                            : 'ah-voucher-card__delta--neg'
+                                      return (
+                                        <div
+                                          className="ah-voucher-card"
+                                          key={`card-${row.code}-${ln.variantId}-${i}`}
+                                        >
+                                          <div className="ah-voucher-card__title">{ln.productName || '—'}</div>
+                                          <div className="ah-voucher-card__sub">
+                                            {ln.productCode || '—'} · {ln.unitLabel || '—'}
+                                          </div>
+                                          <div className="ah-voucher-card__stats">
+                                            <div className="ah-voucher-card__stat">
+                                              <span className="ah-voucher-card__stat-lbl">Giá vốn cũ</span>
+                                              <span className="ah-voucher-card__stat-val">{moneyVi(ln.oldCost)}</span>
+                                            </div>
+                                            <div className="ah-voucher-card__stat ah-voucher-card__stat--right">
+                                              <span className="ah-voucher-card__stat-lbl">Giá vốn mới</span>
+                                              <span className={`ah-voucher-card__stat-val ${diffCls}`}>
+                                                {moneyVi(ln.newCost)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                          <div className="ah-voucher-card__diff-row">
+                                            <span className="ah-voucher-card__stat-lbl">Chênh lệch</span>
+                                            <span className={`ah-voucher-card__diff ${diffCls}`}>
+                                              {diffVi(ln.oldCost, ln.newCost)}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
                                 </div>
                               ) : (
                                 <p className="ah-stock-check-no-lines">Phiếu chưa có dòng sản phẩm.</p>
