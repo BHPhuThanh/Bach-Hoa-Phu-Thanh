@@ -137,9 +137,12 @@ export async function updateProductThuongHieuByMaHang(maHang, brandUi) {
   const allow = new Set(['thuong_hieu'])
   const fin = finalizeProductRowForSupabase({ thuong_hieu: String(brandUi ?? '') }, allow)
   try {
+    const payload = { thuong_hieu: fin.thuong_hieu }
+    // eslint-disable-next-line no-console
+    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
-      .update({ thuong_hieu: fin.thuong_hieu })
+      .update(payload)
       .eq(PRODUCT_PK_COLUMN, code)
       .select('*')
     if (error) throw error
@@ -388,7 +391,7 @@ function displayVariantToProductsRow(v) {
     gia_ban: v?.price,
     gia_von: v?.cost,
     ton_kho: tonKho,
-    ton_nho_nhat: v?.stockNormMin,
+    ton_nho_nhat: Number(v?.ton_nho_nhat ?? 0),
     ton_lon_nhat: v?.stockNormMax,
     dvt: dvtRaw || 'Cái',
     ma_dvt_co_ban: '',
@@ -637,7 +640,7 @@ async function upsertProductChunkResilient(sb, part) {
     return { written: 0, skipped: part.length, lastError: err, returnedRows: [] }
   }
   // eslint-disable-next-line no-console
-  console.log('Payload gửi lên Supabase:', part)
+  console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', part)
   const { data: upsertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
@@ -954,13 +957,16 @@ export async function clearComboProductLinksOnSupabase(maHangList) {
       chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
     }
     for (const chunk of chunks) {
+      const payload = {
+        combo_bom: [],
+        is_combo: false,
+        loai_san_pham: '',
+      }
+      // eslint-disable-next-line no-console
+      console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload, 'ma_hang in', chunk)
       const { error } = await sb
         .from(PRODUCTS_TABLE)
-        .update({
-          combo_bom: [],
-          is_combo: false,
-          loai_san_pham: '',
-        })
+        .update(payload)
         .in(PRODUCT_PK_COLUMN, chunk)
       if (error) {
         const err = new Error(
@@ -1277,6 +1283,8 @@ export async function updateSingleProductFromDisplayVariant(variant, options = {
   }
   const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: false })
   try {
+    // eslint-disable-next-line no-console
+    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', fin)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
       .update(fin)
@@ -1651,6 +1659,12 @@ function normalizeDisplayVariantNumbers(v) {
     cost: parsePrice(v.cost),
     stockQty: parseStockQty(v.stockQty),
     stockNormMin: v.stockNormMin == null || v.stockNormMin === '' ? null : parseStockQty(v.stockNormMin),
+    ton_nho_nhat:
+      v.ton_nho_nhat == null || v.ton_nho_nhat === ''
+        ? v.stockNormMin == null || v.stockNormMin === ''
+          ? null
+          : parseStockQty(v.stockNormMin)
+        : parseStockQty(v.ton_nho_nhat),
     stockNormMax: v.stockNormMax == null || v.stockNormMax === '' ? null : parseStockQty(v.stockNormMax),
     conversion,
     conversionValue,
@@ -1878,7 +1892,7 @@ export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
     const part = uniq.slice(i, i + MA_HANG_LOOKUP_CHUNK)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
-      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi`)
+      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi, ton_nho_nhat`)
       .in(PRODUCT_PK_COLUMN, part)
     if (error) throw error
     for (const row of data || []) {
@@ -1946,6 +1960,7 @@ function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
       .trim(),
     stockNormMin,
     stockNormMax,
+    ton_nho_nhat: stockNormMin,
     createdAtMs: createdAtMsFromSupabaseProductRow(row, rowIndex),
     raw: row,
   }
@@ -1987,6 +2002,8 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
           wholesalePrice: live.wholesalePrice,
           cost: live.cost,
           stockQty: live.stockQty,
+          ton_nho_nhat: live.ton_nho_nhat ?? live.stockNormMin ?? v.ton_nho_nhat ?? v.stockNormMin,
+          stockNormMin: live.stockNormMin ?? live.ton_nho_nhat ?? v.stockNormMin ?? v.ton_nho_nhat,
           brand: live.brand ?? v.brand,
           barcode: live.barcode ?? v.barcode,
           name: live.name ?? v.name,

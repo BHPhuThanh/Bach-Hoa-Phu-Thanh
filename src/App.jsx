@@ -3513,7 +3513,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               gia_von: Number(v.cost) || 0,
               ton_kho:
                 sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum) ? sqNum : 0,
-              ton_nho_nhat: Number(v.stockNormMin || 0),
+              ton_nho_nhat: Number(v.ton_nho_nhat || 0),
               dvt: normalizeCatalogUnitLabel(v.unitLabel),
               quy_doi:
                 v.conversion != null &&
@@ -3523,9 +3523,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                   : String(v.raw?.quy_doi ?? v.quy_doi ?? ''),
             }
             const cleanMaHang = cleanMaHangKey(eqMaHang)
+            const payload = { ma_hang: rowNewCode, ...rowPayload }
+            // eslint-disable-next-line no-console
+            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload)
             const { data, error } = await sb
               .from('products')
-              .update({ ma_hang: rowNewCode, ...rowPayload })
+              .update(payload)
               .eq('ma_hang', cleanMaHang)
               .select('ma_hang')
             if (error) {
@@ -3547,9 +3550,12 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           }
 
           if (oldCode && newCode && oldCode !== newCode) {
+            const childPayload = { ma_hh_lien_quan: newCode }
+            // eslint-disable-next-line no-console
+            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', childPayload)
             const { error: childUpdateErr } = await sb
               .from('products')
-              .update({ ma_hh_lien_quan: newCode })
+              .update(childPayload)
               .eq('ma_hh_lien_quan', oldCode)
             if (childUpdateErr) console.error('Lỗi update ĐVT phụ:', childUpdateErr)
           }

@@ -434,10 +434,10 @@ function buildGoodsDetailDraft(v) {
     barcode: String(v.barcode ?? ''),
     stockQty:
       v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? String(v.stockQty) : '',
-    stockNormMin:
-      v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
-        ? String(v.stockNormMin)
-        : '',
+    ton_nho_nhat: (() => {
+      const n = v.ton_nho_nhat ?? v.raw?.ton_nho_nhat ?? v.stockNormMin
+      return n != null && n !== '' && Number.isFinite(Number(n)) ? String(n) : ''
+    })(),
     cost: formatMoneyDraftVi(Number(v.cost) || 0),
     price: formatMoneyDraftVi(Number(v.price) || 0),
     wholesalePrice: formatMoneyDraftVi(Number(v.wholesalePrice) || 0),
@@ -750,7 +750,34 @@ function normalizeInboundLine(x) {
     returnedQty,
     unitPrice: Math.max(0, Number(x.unitPrice) || 0),
     lineDiscount: Math.max(0, Number(x.lineDiscount) || 0),
+    ton_nho_nhat: Number(x.ton_nho_nhat || 0),
   }
+}
+
+function inboundLineTonNhoNhatFromCatalog(line, catalogList) {
+  const n = normalizeInboundLine(line)
+  if (n.ton_nho_nhat > 0 || String(line?.ton_nho_nhat ?? '') !== '') {
+    return Number(n.ton_nho_nhat || 0)
+  }
+  const vid = String(n.variantId || '').trim()
+  if (!vid || !catalogList?.length) return 0
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+  const v = flat.find((x) => String(x.id) === vid)
+  return Number(v?.ton_nho_nhat ?? v?.raw?.ton_nho_nhat ?? 0)
+}
+
+function applyTonNhoNhatFromInboundLinesToPatches(patches, lines) {
+  return (patches || []).map((p) => {
+    const vid = String(p?.variantId ?? '')
+    const line = (lines || []).find((l) => String(normalizeInboundLine(l).variantId) === vid)
+    return {
+      ...p,
+      patch: {
+        ...(p.patch || {}),
+        ton_nho_nhat: Number(line?.ton_nho_nhat ?? p.patch?.ton_nho_nhat ?? 0),
+      },
+    }
+  })
 }
 
 /** SL còn trong kho từ dòng phiếu (đã trừ phần đã hoàn trả). */
@@ -839,6 +866,7 @@ function createInboundFormLineFromProductVariant(product, variant) {
     gia_nhap: priceRounded,
     lineDiscount: 0,
     quy_doi,
+    ton_nho_nhat: Number(v?.ton_nho_nhat ?? v?.raw?.ton_nho_nhat ?? 0),
   }
 }
 
@@ -2559,7 +2587,7 @@ export default function AdminHub({
         wholesalePrice: parseMoneyDraftVi(draft.wholesalePrice ?? '0'),
         cost: parseMoneyDraftVi(draft.cost),
         stockQty: parseAdminStockNullable(draft.stockQty),
-        stockNormMin: parseAdminStockNullable(draft.stockNormMin),
+        ton_nho_nhat: Number(parseAdminStockNullable(draft.ton_nho_nhat) || 0),
         stockNormMax:
           variant.stockNormMax != null && Number.isFinite(Number(variant.stockNormMax))
             ? Number(variant.stockNormMax)
@@ -2689,10 +2717,10 @@ export default function AdminHub({
       : v.stockQty != null && Number.isFinite(Number(v.stockQty))
         ? Number(v.stockQty)
         : ''
-    const stockNormMin = d
-      ? parseAdminStockNullable(d.stockNormMin)
-      : v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
-        ? Number(v.stockNormMin)
+    const tonNhoNhat = d
+      ? parseAdminStockNullable(d.ton_nho_nhat)
+      : v.ton_nho_nhat != null && Number.isFinite(Number(v.ton_nho_nhat))
+        ? Number(v.ton_nho_nhat)
         : ''
     const cost = d ? parseMoneyDraftVi(d.cost) : Number(v.cost) || 0
     const price = d ? parseMoneyDraftVi(d.price) : Number(v.price) || 0
@@ -2704,7 +2732,7 @@ export default function AdminHub({
       `Mã hàng\t${code}`,
       `Mã vạch\t${barcode}`,
       `Tồn kho\t${stockQty === null || stockQty === '' ? '' : stockQty}`,
-      `Tồn nhỏ nhất\t${stockNormMin === null || stockNormMin === '' ? '' : stockNormMin}`,
+      `Tồn nhỏ nhất\t${tonNhoNhat === null || tonNhoNhat === '' ? '' : tonNhoNhat}`,
       `Giá vốn\t${cost}`,
       `Giá bán lẻ\t${price}`,
       `Giá sỉ\t${wholesale}`,
@@ -3066,7 +3094,7 @@ export default function AdminHub({
       wholesalePrice: parseMoneyDraftVi(soloGoodsDraft.wholesalePrice ?? '0'),
       cost: parseMoneyDraftVi(soloGoodsDraft.cost),
       stockQty: parseAdminStockNullable(soloGoodsDraft.stockQty),
-      stockNormMin: parseAdminStockNullable(soloGoodsDraft.stockNormMin),
+      ton_nho_nhat: Number(parseAdminStockNullable(soloGoodsDraft.ton_nho_nhat) || 0),
       stockNormMax:
         soloGoodsVariant.stockNormMax != null &&
         Number.isFinite(Number(soloGoodsVariant.stockNormMax))
@@ -3180,10 +3208,10 @@ export default function AdminHub({
       : v.stockQty != null && Number.isFinite(Number(v.stockQty))
         ? Number(v.stockQty)
         : ''
-    const stockNormMin = d
-      ? parseAdminStockNullable(d.stockNormMin)
-      : v.stockNormMin != null && Number.isFinite(Number(v.stockNormMin))
-        ? Number(v.stockNormMin)
+    const tonNhoNhat = d
+      ? parseAdminStockNullable(d.ton_nho_nhat)
+      : v.ton_nho_nhat != null && Number.isFinite(Number(v.ton_nho_nhat))
+        ? Number(v.ton_nho_nhat)
         : ''
     const cost = d ? parseMoneyDraftVi(d.cost) : Number(v.cost) || 0
     const price = d ? parseMoneyDraftVi(d.price) : Number(v.price) || 0
@@ -3195,7 +3223,7 @@ export default function AdminHub({
       `Mã hàng\t${code}`,
       `Mã vạch\t${barcode}`,
       `Tồn kho\t${stockQty === null || stockQty === '' ? '' : stockQty}`,
-      `Tồn nhỏ nhất\t${stockNormMin === null || stockNormMin === '' ? '' : stockNormMin}`,
+      `Tồn nhỏ nhất\t${tonNhoNhat === null || tonNhoNhat === '' ? '' : tonNhoNhat}`,
       `Giá vốn\t${cost}`,
       `Giá bán lẻ\t${price}`,
       `Giá sỉ\t${wholesale}`,
@@ -4844,7 +4872,13 @@ export default function AdminHub({
           const cur =
             v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
           const add = inboundLineReturnableQty(n)
-          patches.push({ variantId: n.variantId, patch: { stockQty: cur + add } })
+          patches.push({
+            variantId: n.variantId,
+            patch: {
+              stockQty: cur + add,
+              ton_nho_nhat: Number(v.ton_nho_nhat || 0),
+            },
+          })
         }
         if (patches.length) await onBulkPatchCatalogVariants(patches, {})
         return
@@ -4886,7 +4920,13 @@ export default function AdminHub({
           if (!v) continue
           const cur =
             v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? Number(v.stockQty) : 0
-          patches.push({ variantId, patch: { stockQty: Math.max(0, cur + delta) } })
+          patches.push({
+            variantId,
+            patch: {
+              stockQty: Math.max(0, cur + delta),
+              ton_nho_nhat: Number(v.ton_nho_nhat || 0),
+            },
+          })
         }
         if (patches.length === 0) return { ok: true }
         const ib =
@@ -5089,12 +5129,13 @@ export default function AdminHub({
             return
           }
         }
-        const { diffs, patches } = computeInboundFulfillmentPlan(
+        let { diffs, patches } = computeInboundFulfillmentPlan(
           catSnap,
           linesSnap,
           serverMap,
           priorLines || undefined
         )
+        patches = applyTonNhoNhatFromInboundLinesToPatches(patches, linesSnap)
         if (!patches?.length) {
           alert('Không có dòng nhập hợp lệ để cập nhật danh mục / tồn kho.')
           return
@@ -5493,9 +5534,15 @@ export default function AdminHub({
     if (row.status === 'cancelled') return
     setInboundDetailLineDrafts((prev) => ({
       ...prev,
-      [row.id]: row.lines.map((ln) => normalizeInboundLine(ln)),
+      [row.id]: row.lines.map((ln) => {
+        const n = normalizeInboundLine(ln)
+        return {
+          ...n,
+          ton_nho_nhat: inboundLineTonNhoNhatFromCatalog(n, catalogListForInbound),
+        }
+      }),
     }))
-  }, [])
+  }, [catalogListForInbound])
 
   const clearInboundDetailEdit = useCallback((orderId) => {
     const oid = String(orderId ?? '')
@@ -5587,12 +5634,13 @@ export default function AdminHub({
           return
         }
       }
-      const { diffs, patches } = computeInboundFulfillmentPlan(
+      let { diffs, patches } = computeInboundFulfillmentPlan(
         catSnap,
         normLines,
         serverMap,
         prevRow.lines
       )
+      patches = applyTonNhoNhatFromInboundLinesToPatches(patches, normLines)
       if (!patches?.length) {
         alert('Không có thay đổi nhập / tồn hợp lệ để cập nhật danh mục.')
         return
@@ -8695,9 +8743,9 @@ export default function AdminHub({
                         id="solo-gd-norm"
                         className="ah-goods-card-input ah-goods-card-input--num"
                         inputMode="decimal"
-                        value={soloGoodsDraft.stockNormMin}
+                        value={soloGoodsDraft.ton_nho_nhat}
                         onChange={(e) =>
-                          patchSoloGoodsDraft((x) => (x ? { ...x, stockNormMin: e.target.value } : x))
+                          patchSoloGoodsDraft((x) => (x ? { ...x, ton_nho_nhat: e.target.value } : x))
                         }
                       />
                     </div>
@@ -9124,6 +9172,7 @@ export default function AdminHub({
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--dvt" />
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--qty" />
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--price" />
+                        <col className="ah-inbound-detail-col ah-inbound-detail-col--norm-min" />
                         <col className="ah-inbound-detail-col ah-inbound-detail-col--total" />
                       </colgroup>
                       <thead>
@@ -9134,13 +9183,14 @@ export default function AdminHub({
                           <th>ĐVT</th>
                           <th className="ah-num">Số lượng</th>
                           <th className="ah-num">Đơn giá</th>
+                          <th className="ah-num">Tồn nhỏ nhất</th>
                           <th className="ah-num">Thành tiền</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(inboundDetailDraftLines ?? inboundDetailOrderRow.lines).length === 0 ? (
                           <tr className="ah-responsive-table-empty">
-                            <td colSpan={7} className="admin-hub-muted">
+                            <td colSpan={8} className="admin-hub-muted">
                               Chưa có dòng hàng.
                             </td>
                           </tr>
@@ -9150,6 +9200,7 @@ export default function AdminHub({
                             const inboundDvtOptions = buildInboundDvtSelectOptions(catalogListForInbound, ln)
                             const inboundDvtLocked = inboundDvtOptions.length <= 1
                             const lineTotal = inboundLineTotal(ln)
+                            const tonNhoNhatVal = inboundLineTonNhoNhatFromCatalog(ln, catalogListForInbound)
                             return (
                               <tr
                                 key={ln.lineId}
@@ -9232,6 +9283,38 @@ export default function AdminHub({
                                     `${ln.unitPrice.toLocaleString('vi-VN')} đ`
                                   )}
                                   </span>
+                                </td>
+                                <td className="ah-num ah-inbound-detail-line-norm-min" data-label="Tồn nhỏ nhất">
+                                  {inboundDetailIsEditing ? (
+                                    <input
+                                      className="ah-inbound-cell-input ah-inbound-cell-input--soft ah-inbound-cell-input--qty"
+                                      type="text"
+                                      inputMode="decimal"
+                                      aria-label={`Tồn nhỏ nhất ${ln.name}`}
+                                      value={
+                                        ln.ton_nho_nhat === 0
+                                          ? '0'
+                                          : ln.ton_nho_nhat != null
+                                            ? String(ln.ton_nho_nhat)
+                                            : tonNhoNhatVal === 0
+                                              ? ''
+                                              : String(tonNhoNhatVal)
+                                      }
+                                      onFocus={selectInboundInputOnFocus}
+                                      onChange={(e) => {
+                                        const raw = e.target.value.replace(/[^\d.,]/g, '').replace(/,/g, '.')
+                                        const n =
+                                          raw === ''
+                                            ? 0
+                                            : Math.max(0, parseFloat(raw) || 0)
+                                        updateInboundDetailDraftLine(inboundDetailTabOid, ln.lineId, {
+                                          ton_nho_nhat: n,
+                                        })
+                                      }}
+                                    />
+                                  ) : (
+                                    tonNhoNhatVal.toLocaleString('vi-VN')
+                                  )}
                                 </td>
                                 <td className="ah-num ah-inbound-detail-line-sum" data-label="Thành tiền">
                                   {lineTotal.toLocaleString('vi-VN')} đ

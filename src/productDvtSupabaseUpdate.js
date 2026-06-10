@@ -49,9 +49,12 @@ export async function updateProductDvtFieldsSequential(items) {
       }
     }
 
+    const upsertRow = { ma_hang, ...payload }
+    // eslint-disable-next-line no-console
+    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', upsertRow)
     const { error } = await sb
       .from('products')
-      .upsert({ ma_hang, ...payload }, { onConflict: 'ma_hang' })
+      .upsert(upsertRow, { onConflict: 'ma_hang' })
       .select('ma_hang, ma_hh_lien_quan, dvt, quy_doi, gia_ban, gia_von')
 
     if (error) {

@@ -343,6 +343,7 @@ export function computeInboundFulfillmentPlan(
           stockQty: fixed4Number(newBaseQty),
           // một giá vốn cơ bản cho họ — gia_von ĐVT = giá vốn cơ bản × quy_doi (không gán đè bằng đơn giá 0đ từng dòng nhập).
           cost: Math.round(newBaseCost * conv),
+          ton_nho_nhat: Number(member?.ton_nho_nhat ?? memberSrv?.ton_nho_nhat ?? 0),
         },
       })
     }

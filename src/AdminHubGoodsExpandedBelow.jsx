@@ -446,10 +446,10 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                 id={`gd-norm-${v.id}`}
                                                 className="ah-goods-card-input ah-goods-card-input--num"
                                                 inputMode="decimal"
-                                                value={d.stockNormMin}
+                                                value={d.ton_nho_nhat}
                                                 onChange={(e) =>
                                                   setGoodsDetailDraft((x) =>
-                                                    x ? { ...x, stockNormMin: e.target.value } : x
+                                                    x ? { ...x, ton_nho_nhat: e.target.value } : x
                                                   )
                                                 }
                                                 aria-label="Tồn nhỏ nhất"
