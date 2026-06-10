@@ -1111,6 +1111,70 @@
   color: #fecaca;
 }
 
+.pos-scan-toast--offline {
+  display: block !important;
+  bottom: 9rem;
+  border-color: rgba(56, 189, 248, 0.6);
+  background: linear-gradient(145deg, #0c4a6e, #082f49);
+  color: #e0f2fe;
+  font-weight: 600;
+}
+
+/* Icon đám mây trạng thái mạng trên header POS */
+.pos-cloud-ind {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9px;
+  margin-right: 0.35rem;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.pos-cloud-ind--online {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.pos-cloud-ind--offline {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.14);
+  animation: pos-cloud-blink 1.4s ease-in-out infinite;
+}
+
+.pos-cloud-ind--pending.pos-cloud-ind--online {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+@keyframes pos-cloud-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.pos-cloud-ind-svg {
+  display: block;
+}
+
+.pos-cloud-ind-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.05rem;
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.9);
+}
+
 /* Trang /doanh-thu: iframe là con đầu tiên nên không khớp `.app--dark > .admin-hub` — ép hub giãn full chiều cao */
 .app--doanh-thu-shell > .admin-hub,
 .app--doanh-thu-shell > main.dash-access-denied {

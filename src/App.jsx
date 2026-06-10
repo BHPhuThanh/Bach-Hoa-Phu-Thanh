@@ -56,7 +56,14 @@ import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './a
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
 const POS_DRAFT_LAST_CLEARED_KEY = 'pos_draft_last_cleared'
 const POS_DRAFT_CLEAR_BUMP_KEY = 'pos_draft_clear_bump'
-import { getAllOrders, saveOrder } from './ordersDb.js'
+import { getAllOrders, saveOrderWithTimeout } from './ordersDb.js'
+import {
+  enqueueOfflineOrder,
+  getPendingOfflineOrders,
+  countPendingOfflineOrders,
+  removeOfflineOrder,
+  updateOfflineOrder,
+} from './posOfflineQueue.js'
 import { bumpOrdersSync } from './ordersSyncEvents.js'
 import {
   aggregateCodeQtyFromOrders,
@@ -2455,6 +2462,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [posCameraToast, setPosCameraToast] = useState(null)
   /** Toast đỏ — lỗi đồng bộ ngầm (Lưu danh mục / nhập hàng). */
   const [posPersistErrToast, setPosPersistErrToast] = useState(null)
+  /** Toast xanh — lưu đơn offline thành công (mất kết nối). */
+  const [posOfflineToast, setPosOfflineToast] = useState(null)
+  /** Trạng thái mạng + số đơn offline đang chờ đồng bộ (cho icon đám mây). */
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0)
+  const offlineSyncingRef = useRef(false)
+  const posOfflineToastClearRef = useRef(null)
   const [headerSuggestOpen, setHeaderSuggestOpen] = useState(false)
   const [headerHighlightIndex, setHeaderHighlightIndex] = useState(0)
   /** Khi gợi ý gộp nhiều ĐƠN VỊ TÍNH: product.id → variantId đang chọn trong dropdown. */
@@ -3619,6 +3633,145 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       posScanToastClearRef.current = null
     }, 3800)
   }, [])
+
+  const showPosOfflineToast = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    if (posOfflineToastClearRef.current != null) {
+      window.clearTimeout(posOfflineToastClearRef.current)
+      posOfflineToastClearRef.current = null
+    }
+    setPosOfflineToast(t)
+    posOfflineToastClearRef.current = window.setTimeout(() => {
+      setPosOfflineToast(null)
+      posOfflineToastClearRef.current = null
+    }, 4000)
+  }, [])
+
+  // Đồng bộ nền (SILENT): đẩy đơn offline lên Supabase.
+  // LUẬT: CHỈ xóa đơn khỏi máy KHI saveOrder (bảng sales) trả về thành công 100%.
+  // Trừ tồn kho dùng lệnh UPDATE trực tiếp (nhẹ, không alert), là best-effort — KHÔNG chặn việc xóa đơn.
+  const runOfflineQueueSync = useCallback(async () => {
+    if (offlineSyncingRef.current) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    if (!isSupabaseConfigured()) return
+    const sb = getSupabaseClient()
+    if (!sb) return
+
+    offlineSyncingRef.current = true
+    let syncedAny = false
+    try {
+      const pending = await getPendingOfflineOrders()
+      for (const item of pending) {
+        // Bỏ qua đơn đã dead-letter để giải phóng hàng đợi cho các đơn sau.
+        if (item.status === 'error') continue
+
+        // ===== BƯỚC 1 (ĐỘC LẬP, BẮT BUỘC): đẩy hóa đơn lên bảng `sales`. =====
+        let saved = null
+        try {
+          saved = await saveOrderWithTimeout(item.order, 8000)
+        } catch (salesErr) {
+          if (salesErr?.isTimeout) {
+            // Timeout = mạng chậm -> dừng vòng, thử lại chu kỳ sau. KHÔNG xóa, KHÔNG dead-letter.
+            console.error('Offline sync failed for order:', item.id, salesErr)
+            break
+          }
+          // Lỗi cứng từ server (vd payload sai) -> tính retry để tránh kẹt hàng đợi. KHÔNG xóa.
+          console.error('Offline sync failed for order:', item.id, salesErr)
+          const nextRetry = (item.retryCount || 0) + 1
+          await updateOfflineOrder(
+            item.id,
+            nextRetry >= 3 ? { retryCount: nextRetry, status: 'error' } : { retryCount: nextRetry }
+          )
+          continue
+        }
+        if (!saved || saved.error) {
+          // saveOrder KHÔNG thành công 100% -> TUYỆT ĐỐI KHÔNG xóa đơn.
+          console.error('Offline sync failed for order:', item.id, saved?.error)
+          const nextRetry = (item.retryCount || 0) + 1
+          await updateOfflineOrder(
+            item.id,
+            nextRetry >= 3 ? { retryCount: nextRetry, status: 'error' } : { retryCount: nextRetry }
+          )
+          continue
+        }
+
+        // ===== BƯỚC 2 (BEST-EFFORT): trừ tồn kho TRỰC TIẾP qua UPDATE ... eq('ma_hang'). =====
+        // Lỗi tồn kho chỉ log ngầm, KHÔNG alert, KHÔNG chặn việc xóa đơn (sales đã an toàn).
+        try {
+          const payloadPatchTonKho = Array.isArray(item.tonKhoOnlyVariants)
+            ? item.tonKhoOnlyVariants
+            : []
+          console.log('📦 PAYLOAD TỒN KHO OFFLINE GỬI LÊN:', payloadPatchTonKho)
+          for (const row of payloadPatchTonKho) {
+            const ma = String(row?.ma_hang ?? row?.code ?? '').trim()
+            if (!ma) continue
+            let ton = Number(row?.stockQty)
+            if (!Number.isFinite(ton)) ton = 0
+            const { error } = await sb
+              .from('products')
+              .update({ ton_kho: ton })
+              .eq('ma_hang', ma)
+            if (error) throw new Error(`Lỗi trừ tồn kho ${ma}: ${error.message}`)
+          }
+        } catch (stockErr) {
+          console.error('Offline sync failed for order (ton_kho):', item.id, stockErr)
+        }
+
+        // ===== BƯỚC 3 (BEST-EFFORT): ghi inventory_log. =====
+        try {
+          if (item.inventoryLogRows?.length) {
+            await insertInventoryLogRows(item.inventoryLogRows)
+          }
+        } catch (logErr) {
+          console.error('Offline sync failed for order (inventory_log):', item.id, logErr)
+        }
+
+        // ===== XÓA: chỉ tới đây khi saveOrder đã thành công 100%. =====
+        await removeOfflineOrder(item.id)
+        syncedAny = true
+      }
+    } catch (e) {
+      console.error('Offline sync failed for order:', 'queue-loop', e)
+    } finally {
+      offlineSyncingRef.current = false
+      try {
+        setOfflinePendingCount(await countPendingOfflineOrders())
+      } catch {
+        /* noop */
+      }
+      if (syncedAny) {
+        setSalesRefresh((k) => k + 1)
+        bumpOrdersSync()
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOnline(true)
+      void runOfflineQueueSync()
+    }
+    const onOffline = () => setIsOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    void (async () => {
+      try {
+        setOfflinePendingCount(await countPendingOfflineOrders())
+      } catch {
+        /* noop */
+      }
+    })()
+    void runOfflineQueueSync()
+    const iv = window.setInterval(() => {
+      void runOfflineQueueSync()
+    }, 30000)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+      window.clearInterval(iv)
+    }
+  }, [runOfflineQueueSync])
 
   const showPosCameraToast = useCallback((message, kind = 'success') => {
     const t = String(message ?? '').trim()
@@ -5476,12 +5629,26 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const sellerIdSnap = activeSellerId
     const fileNameSnap = catalogFileNameRef.current
 
-    try {
-      // 1) Lưu đơn hàng trước tiên. Nếu lỗi thì giữ nguyên giỏ hàng, không finalize.
-      const savedOrder = await saveOrder(order)
-      if (!savedOrder || savedOrder.error) {
-        throw new Error('Không có phản hồi từ máy chủ!')
-      }
+    // Tồn kho tuyệt đối của các biến thể bị chạm (dùng cho persist online).
+    const flatNext = flattenDisplayCatalogToVariants(nextProducts)
+    const tonKhoOnlyVariants = flatNext.filter((v) => touchedVariantIds.has(String(v.id)))
+    // Payload tồn kho cho hàng đợi OFFLINE: tối giản + ĐẢM BẢO có ma_hang/code/stockQty,
+    // để saveProductsTonKhoPatchToSupabase (đọc `code` làm ma_hang) luôn tìm đúng dòng products.
+    const tonKhoPatchOffline = tonKhoOnlyVariants
+      .map((v) => {
+        const ma = String(v?.code ?? v?.ma_hang ?? '').trim()
+        if (!ma) return null
+        return {
+          id: v?.id != null ? String(v.id) : undefined,
+          ma_hang: ma,
+          code: ma,
+          stockQty: v?.stockQty,
+        }
+      })
+      .filter(Boolean)
+
+    // Khối hoàn tất đơn trên UI — DÙNG CHUNG cho cả online & offline để thu ngân không bao giờ bị treo.
+    const finalizePaidSaleUi = () => {
       if (posSessionPersistTimerRef.current != null) {
         window.clearTimeout(posSessionPersistTimerRef.current)
         posSessionPersistTimerRef.current = null
@@ -5518,67 +5685,91 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
-      // 2) Gọi lệnh in ngay khi giỏ hàng còn hiện, tách riêng lỗi in.
+      // Gọi lệnh in ngay khi giỏ hàng còn hiện, tách riêng lỗi in.
       if (eInvoiceSettings.autoPrint) {
         try {
-          await Promise.resolve(printReceiptHtml(html))
+          void Promise.resolve(printReceiptHtml(html))
         } catch (printError) {
           console.error('[handleThanhToan] printReceiptHtml', printError)
           showPosPersistErrorToast('Lưu đơn thành công, nhưng máy in bị kẹt!')
         }
       }
 
-      // 3) Trì hoãn reset giỏ 1.5s để tránh race khi trình duyệt chốt lệnh in.
+      // Trì hoãn reset giỏ 1.5s để tránh race khi trình duyệt chốt lệnh in.
       setTimeout(() => {
         setProducts(nextProducts)
         finalizePaidSellOrder(paidOrderId)
         checkoutBusyOrderIdRef.current = null
       }, 1500)
+    }
 
-      // 4) Persist tồn kho/cảnh báo chạy hậu kỳ sau khi lưu đơn thành công.
-      if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
-      void (async () => {
-        try {
-          const flat = flattenDisplayCatalogToVariants(nextProducts)
-          const tonKhoOnlyVariants = flat.filter((v) => touchedVariantIds.has(String(v.id)))
-          const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
-            tonKhoOnlyVariants,
-          })
-          if (r.ok) {
-            await applyServerCatalogAfterPersist()
-            if (isSupabaseConfigured()) {
-              const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
-              await insertInventoryLogRows(invRows)
-              runLowStockAlertsInBackground(
-                {
-                  catalog: nextProducts,
-                  touchedVariantIds,
-                  userId: sellerIdSnap,
-                },
-                mergeCreatedLowStockNotifications
-              )
-            }
-          } else if (!r.skipped) {
-            showPosPersistErrorToast(
-              describeCatalogPersistError(r.error) || 'Không cập nhật tồn kho lên máy chủ.'
-            )
-          }
-        } catch (e) {
-          console.error('[handleThanhToan] persist catalog', e)
-          showPosPersistErrorToast(
-            describeCatalogPersistError(e) || 'Không cập nhật tồn kho lên máy chủ.'
-          )
-        }
-      })()
+    // 1) Lưu đơn có GIỚI HẠN THỜI GIAN 3s. Timeout/lỗi mạng -> chuyển luồng OFFLINE, tuyệt đối không treo UI.
+    let saveOk = false
+    try {
+      const savedOrder = await saveOrderWithTimeout(order, 3000)
+      if (!savedOrder || savedOrder.error) {
+        throw new Error('Không có phản hồi từ máy chủ!')
+      }
+      saveOk = true
     } catch (e) {
-      console.error('[handleThanhToan] saveOrder', e)
-      suspendPosDraftPersistRef.current = false
-      showPosPersistErrorToast(
-        `Đơn ${invoiceNo} chưa lưu được lên máy chủ — kiểm tra mạng và thử đồng bộ lại.`
-      )
-      checkoutBusyOrderIdRef.current = null
+      console.error('[handleThanhToan] saveOrder -> chuyển OFFLINE', e)
+      // 2) OFFLINE: cất đơn vào hàng đợi (kèm tồn kho + inventory_log đã precompute) để đồng bộ nền sau.
+      try {
+        const inventoryLogRows = isSupabaseConfigured()
+          ? buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
+          : []
+        await enqueueOfflineOrder({
+          order,
+          tonKhoOnlyVariants: tonKhoPatchOffline,
+          inventoryLogRows,
+          fileName: fileNameSnap,
+        })
+        setOfflinePendingCount((c) => c + 1)
+      } catch (queueErr) {
+        console.error('[handleThanhToan] enqueueOfflineOrder', queueErr)
+      }
+      // 3) Không block thu ngân: hoàn tất UI ngay + toast offline + cho phép tít đơn mới.
+      finalizePaidSaleUi()
+      showPosOfflineToast('Lưu offline thành công (Mất kết nối mạng)')
       return
     }
+
+    if (!saveOk) return
+
+    // ONLINE OK: hoàn tất UI rồi persist tồn kho/cảnh báo ở hậu kỳ.
+    finalizePaidSaleUi()
+    if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
+    void (async () => {
+      try {
+        const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
+          tonKhoOnlyVariants,
+        })
+        if (r.ok) {
+          await applyServerCatalogAfterPersist()
+          if (isSupabaseConfigured()) {
+            const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
+            await insertInventoryLogRows(invRows)
+            runLowStockAlertsInBackground(
+              {
+                catalog: nextProducts,
+                touchedVariantIds,
+                userId: sellerIdSnap,
+              },
+              mergeCreatedLowStockNotifications
+            )
+          }
+        } else if (!r.skipped) {
+          showPosPersistErrorToast(
+            describeCatalogPersistError(r.error) || 'Không cập nhật tồn kho lên máy chủ.'
+          )
+        }
+      } catch (e) {
+        console.error('[handleThanhToan] persist catalog', e)
+        showPosPersistErrorToast(
+          describeCatalogPersistError(e) || 'Không cập nhật tồn kho lên máy chủ.'
+        )
+      }
+    })()
   }, [
     cartQtyDraftByLine,
     printReceiptHtml,
@@ -5594,6 +5785,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     activeSellerId,
     mergeCreatedLowStockNotifications,
     showPosPersistErrorToast,
+    showPosOfflineToast,
     finalizePaidSellOrder,
     markPosDraftClearedGlobal,
   ])
@@ -6427,6 +6619,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           {posPersistErrToast}
         </div>
       ) : null}
+      {posOfflineToast ? (
+        <div className="pos-scan-toast pos-scan-toast--offline" role="status" aria-live="polite">
+          {posOfflineToast}
+        </div>
+      ) : null}
       <iframe
         ref={receiptIframeRef}
         src="about:blank"
@@ -6802,6 +6999,38 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               </div>
               </div>
               <div className="pos-header-workbar-right md:flex">
+                <span
+                  className={`pos-cloud-ind${isOnline ? ' pos-cloud-ind--online' : ' pos-cloud-ind--offline'}${
+                    offlinePendingCount > 0 ? ' pos-cloud-ind--pending' : ''
+                  }`}
+                  role="status"
+                  aria-live="polite"
+                  title={
+                    isOnline
+                      ? offlinePendingCount > 0
+                        ? `Đang đồng bộ ${offlinePendingCount} đơn offline...`
+                        : 'Đã kết nối máy chủ'
+                      : offlinePendingCount > 0
+                        ? `Mất kết nối — ${offlinePendingCount} đơn chờ đồng bộ`
+                        : 'Mất kết nối máy chủ'
+                  }
+                >
+                  <svg
+                    className="pos-cloud-ind-svg"
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4 7.5 7.5 0 0 0 4.86 9.14 5.5 5.5 0 0 0 6 20h13a4.5 4.5 0 0 0 .35-9.96zM19 18H6a3.5 3.5 0 0 1-.36-6.98l.86-.09.4-.77A5.5 5.5 0 0 1 12 6a5.49 5.49 0 0 1 5.39 4.4l.3 1.48 1.51.11A2.5 2.5 0 0 1 19 18z" />
+                  </svg>
+                  {offlinePendingCount > 0 ? (
+                    <span className="pos-cloud-ind-badge" aria-label={`${offlinePendingCount} đơn chờ`}>
+                      {offlinePendingCount > 99 ? '99+' : offlinePendingCount}
+                    </span>
+                  ) : null}
+                </span>
                 {renderHeaderIconRail('blue')}
               </div>
             </div>

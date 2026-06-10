@@ -295,6 +295,14 @@ export function describeCatalogPersistError(err) {
   }
 }
 
+// Khi chạy đồng bộ nền (background sync) ta KHÔNG được phép bật alert/popup làm phiền thu ngân.
+let SILENT_CATALOG_PERSIST_NOTIFY = false
+
+/** Bật/tắt chế độ im lặng cho persist catalog (chỉ console.error, không alert). */
+export function setSilentCatalogPersistNotify(value) {
+  SILENT_CATALOG_PERSIST_NOTIFY = !!value
+}
+
 function notifySupabasePersistFailure(error, supabaseRowError) {
   const se =
     supabaseRowError ??
@@ -304,6 +312,7 @@ function notifySupabasePersistFailure(error, supabaseRowError) {
     if (m != null || d != null || h != null) console.error(m, d, h)
   }
   console.error('LỖI SUPABASE THẬT SỰ:', error)
+  if (SILENT_CATALOG_PERSIST_NOTIFY) return
   const msg = describeCatalogPersistError(error)
   try {
     if (typeof globalThis.alert === 'function') globalThis.alert(msg)

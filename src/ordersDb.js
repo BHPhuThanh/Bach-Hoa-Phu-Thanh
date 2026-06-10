@@ -47,6 +47,28 @@ export async function saveOrder(order) {
   })
 }
 
+export class OrderSaveTimeoutError extends Error {
+  constructor(ms) {
+    super(`Lưu đơn quá ${ms}ms (timeout).`)
+    this.name = 'OrderSaveTimeoutError'
+    this.isTimeout = true
+  }
+}
+
+/**
+ * Bọc saveOrder bằng Promise.race + timeout để KHÔNG bao giờ treo UI khi mạng/Supabase phản hồi chậm.
+ * Hết thời gian sẽ reject bằng OrderSaveTimeoutError (cờ isTimeout) — caller chuyển sang luồng OFFLINE.
+ */
+export function saveOrderWithTimeout(order, ms = 3000) {
+  let timer = null
+  const timeoutP = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new OrderSaveTimeoutError(ms)), ms)
+  })
+  return Promise.race([saveOrder(order), timeoutP]).finally(() => {
+    if (timer != null) clearTimeout(timer)
+  })
+}
+
 /** Mới nhất trước */
 export async function getAllOrders() {
   if (isSupabaseConfigured()) {
