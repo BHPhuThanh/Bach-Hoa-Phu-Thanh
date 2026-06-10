@@ -4330,9 +4330,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       lastCatalogFingerprintRef.current = ''
       return
     }
+    // HARD GUARD (cờ skip sau khi refresh catalog): CHỈ được chặn khôi phục khi giỏ ĐANG CÓ hàng
+    // (tránh ghi đè đơn đang tít). Khi giỏ trống 100% (vd vừa F5), gỡ cờ và VẪN khôi phục nháp.
     if (skipNextDraftHydrateRef.current) {
       skipNextDraftHydrateRef.current = false
-      return
+      if (sellOrdersHaveAnyCartLines(sellOrdersRef.current)) return
     }
     const fp = buildCatalogFingerprint(products, fileName)
     if (lastCatalogFingerprintRef.current === fp) return

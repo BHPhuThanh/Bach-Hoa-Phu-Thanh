@@ -84,20 +84,27 @@ function formatSignedQtyVi(n) {
   return t
 }
 
-function deltaLabelDisplay(branchTonKhoRaw, actualRaw, variant) {
+/** Delta dạng SỐ (Thực tế - Hệ thống). null nếu chưa nhập thực tế. */
+function computeDeltaNumber(branchTonKhoRaw, actualRaw, variant) {
   const actual = parseStockInput(actualRaw)
-  if (actual === null) return '—'
+  if (actual === null) return null
   const b =
     branchTonKhoRaw != null &&
     branchTonKhoRaw !== '' &&
     Number.isFinite(Number(branchTonKhoRaw))
       ? Number(branchTonKhoRaw)
       : null
-  if (b === null) return formatSignedQtyVi(actual)
+  if (b === null) return actual
   const branchDisp =
     variant && typeof variant === 'object' ? displayTonKhoNumber(b, variant) : null
-  if (branchDisp == null || !Number.isFinite(branchDisp)) return formatSignedQtyVi(actual)
-  return formatSignedQtyVi(actual - branchDisp)
+  if (branchDisp == null || !Number.isFinite(branchDisp)) return actual
+  return actual - branchDisp
+}
+
+function deltaLabelDisplay(branchTonKhoRaw, actualRaw, variant) {
+  const d = computeDeltaNumber(branchTonKhoRaw, actualRaw, variant)
+  if (d === null) return '—'
+  return formatSignedQtyVi(d)
 }
 
 function findCatalogVariantById(products, variantId) {
@@ -258,6 +265,21 @@ export default function StockCheckCreatePage() {
   const updateActual = useCallback((key, raw) => {
     setRows((list) =>
       list.map((row) => (row.key === key ? { ...row, actualDraft: raw } : row))
+    )
+  }, [])
+
+  /** Nút +/− trên Card mobile: bước 1 đơn vị, không cho âm. Định dạng VN (dấu phẩy thập phân). */
+  const stepActual = useCallback((key, dir) => {
+    setRows((list) =>
+      list.map((row) => {
+        if (row.key !== key) return row
+        const cur = parseStockInput(row.actualDraft)
+        let next = (cur === null ? 0 : cur) + dir
+        if (next < 0) next = 0
+        const rounded = Math.round(next * 1000) / 1000
+        const str = Number.isInteger(rounded) ? String(rounded) : String(rounded).replace('.', ',')
+        return { ...row, actualDraft: str }
+      })
     )
   }, [])
 
@@ -659,6 +681,106 @@ export default function StockCheckCreatePage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* CARD LAYOUT — chỉ hiện trên Mobile (<=768px), PC vẫn dùng bảng phía trên. */}
+          <div className="scc-cards">
+            {pageRows.length === 0 ? (
+              <div className="scc-cards__empty">Chưa có dòng — dùng ô tìm kiếm hoặc Chọn nhanh.</div>
+            ) : (
+              pageRows.map((row, i) => {
+                const vDisp = findCatalogVariantById(products, row.variantId)
+                const deltaNum = computeDeltaNumber(row.branchQty, row.actualDraft, vDisp ?? undefined)
+                const deltaCls =
+                  deltaNum === null || deltaNum === 0
+                    ? 'scc-card__delta--zero'
+                    : deltaNum > 0
+                      ? 'scc-card__delta--pos'
+                      : 'scc-card__delta--neg'
+                return (
+                  <div className="scc-card" key={row.key}>
+                    <div className="scc-card__head">
+                      <div className="scc-card__title-wrap">
+                        <div className="scc-card__name">
+                          <span className="scc-card__idx">{(pageSafe - 1) * pageSize + i + 1}.</span>{' '}
+                          {row.productName}
+                        </div>
+                        <div className="scc-card__sku">
+                          {row.productCode || '—'} · {row.unitLabel || '—'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="scc-card__remove"
+                        aria-label="Xóa dòng"
+                        onClick={() => removeRow(row.key)}
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="scc-card__info">
+                      <div className="scc-card__info-cell">
+                        <span className="scc-card__info-lbl">Hệ thống</span>
+                        <span className="scc-card__info-val">
+                          {formatDisplayTonKhoVi(row.branchQty, vDisp ?? {})}
+                        </span>
+                      </div>
+                      <div className="scc-card__info-cell scc-card__info-cell--right">
+                        <span className="scc-card__info-lbl">Chênh lệch</span>
+                        <span className={`scc-card__delta ${deltaCls}`}>
+                          {deltaLabelDisplay(row.branchQty, row.actualDraft, vDisp ?? undefined)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="scc-card__stepper" role="group" aria-label="Tồn thực tế">
+                      <button
+                        type="button"
+                        className="scc-step-btn scc-step-btn--minus"
+                        aria-label="Giảm số lượng"
+                        onClick={() => stepActual(row.key, -1)}
+                      >
+                        −
+                      </button>
+                      <input
+                        className="scc-step-input"
+                        inputMode="decimal"
+                        placeholder="Thực tế"
+                        aria-label="Nhập tồn thực tế"
+                        value={row.actualDraft}
+                        onChange={(e) => updateActual(row.key, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="scc-step-btn scc-step-btn--plus"
+                        aria-label="Tăng số lượng"
+                        onClick={() => stepActual(row.key, 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    <div className="scc-card__extra">
+                      <input
+                        className="scc-card__extra-in"
+                        placeholder="Lý do"
+                        aria-label="Lý do"
+                        value={row.reasonDraft}
+                        onChange={(e) => updateReason(row.key, e.target.value)}
+                      />
+                      <input
+                        className="scc-card__extra-in"
+                        placeholder="Ghi chú"
+                        aria-label="Ghi chú dòng"
+                        value={row.noteDraft}
+                        onChange={(e) => updateNoteRow(row.key, e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+            )}
           </div>
 
           <div className="cac-footer">
