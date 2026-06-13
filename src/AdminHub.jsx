@@ -4234,11 +4234,11 @@ export default function AdminHub({
   const applyInboundScannedCode = useCallback(
     (raw) => {
       const q = String(raw || '').trim()
-      if (!q) return
+      if (!q) return false
       blurActiveElement()
       setInboundFormProductQ(q)
       setInboundProductSuggestIdx(0)
-      if (!catalogListForInbound.length) return
+      if (!catalogListForInbound.length) return false
 
       const toastAdded = (product, variant) => {
         const label = String(variant?.name || product?.name || variant?.code || '').trim() || '—'
@@ -4253,7 +4253,7 @@ export default function AdminHub({
             if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
               addInboundFormLine(p, v)
               toastAdded(p, v)
-              return
+              return true
             }
           }
         }
@@ -4263,7 +4263,7 @@ export default function AdminHub({
           if (String(v.code ?? '').trim() === q) {
             addInboundFormLine(p, v)
             toastAdded(p, v)
-            return
+            return true
           }
         }
       }
@@ -4275,21 +4275,55 @@ export default function AdminHub({
         const { product, variant } = hits[0]
         addInboundFormLine(product, variant)
         toastAdded(product, variant)
-        return
+        return true
       }
       const disp = String(normalizeBarcodeValue(q) || q).trim() || q
       showHubCameraToast(`Mã ${disp} chưa có trong hệ thống`, 'err')
+      return false
     },
     [catalogListForInbound, addInboundFormLine, showHubCameraToast]
   )
 
   const applyGoodsScannedCode = useCallback((raw) => {
     const q = String(raw || '').trim()
-    if (!q) return
+    if (!q) return false
     blurActiveElement()
     setGoodsQ(q)
     setHangHoaDeepLinkListScope('all')
-  }, [])
+    // Chỉ phục vụ UI: xác định có khớp sản phẩm hay không để tự đóng camera (không đổi logic lọc).
+    let found = false
+    if (posQueryLooksLikeBarcodeKeyInput(q)) {
+      const needle = String(normalizeBarcodeValue(q))
+      for (const p of catalogList) {
+        for (const v of p.groupVariants || [p]) {
+          if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
+            found = true
+            break
+          }
+        }
+        if (found) break
+      }
+    }
+    if (!found) {
+      for (const p of catalogList) {
+        for (const v of p.groupVariants || [p]) {
+          if (String(v.code ?? '').trim() === q) {
+            found = true
+            break
+          }
+        }
+        if (found) break
+      }
+    }
+    if (!found) {
+      found =
+        suggestCatalogVariantPairsV9(catalogList, q, {
+          maxHits: 1,
+          surface: 'admin-goods-barcode-scan',
+        }).length > 0
+    }
+    return found
+  }, [catalogList])
 
   const openInboundBarcodeScan = useCallback(() => {
     setBarcodeScanMode('inbound')
@@ -10812,9 +10846,14 @@ export default function AdminHub({
               : 'Quét mã — lọc hàng hóa'
         }
         onScan={(t) => {
-          if (barcodeScanMode === 'inbound') applyInboundScannedCode(t)
-          else if (barcodeScanMode === 'goods-edit') applyGoodsEditScannedBarcode(t)
-          else applyGoodsScannedCode(t)
+          // Goods / Inbound: quét trúng -> tự đóng camera (POS không dùng modal này nên vẫn quét liên tục).
+          if (barcodeScanMode === 'inbound') {
+            if (applyInboundScannedCode(t)) setBarcodeScanOpen(false)
+          } else if (barcodeScanMode === 'goods-edit') {
+            applyGoodsEditScannedBarcode(t)
+          } else {
+            if (applyGoodsScannedCode(t)) setBarcodeScanOpen(false)
+          }
         }}
       />
 

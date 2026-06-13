@@ -1,5 +1,26 @@
 /* Tạo phiếu kiểm hàng — bảng nhiều cột, đồng bộ layout với Admin Hub / Điều chỉnh giá vốn */
 
+/* Nút quét mã QR/Barcode ở ô tìm kiếm (Kiểm hàng) */
+.scc-scan-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.scc-scan-btn svg {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) {
+  /* Trên điện thoại: chỉ hiện icon cho gọn ô tìm kiếm */
+  .scc-scan-btn {
+    padding: 0.45rem 0.6rem;
+  }
+  .scc-scan-btn-label {
+    display: none;
+  }
+}
+
 .scc-table-wrap {
   min-width: 960px;
 }

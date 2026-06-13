@@ -38,6 +38,7 @@ import {
 } from './displayStockQty.js'
 import CostAdjustQuickPickModal from './CostAdjustQuickPickModal.jsx'
 import CostAdjustCatalogSearchInput from './CostAdjustCatalogSearchInput.jsx'
+import BarcodeScanModal from './BarcodeScanModal.jsx'
 import './App.css'
 import './dashboard-dark.css'
 import './costAdjustCreatePage.css'
@@ -162,6 +163,7 @@ export default function StockCheckCreatePage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [modalOpen, setModalOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [modalSelected, setModalSelected] = useState(() => new Set())
   const [branch, setBranch] = useState('Chi nhánh mặc định')
   const [note, setNote] = useState('')
@@ -222,7 +224,8 @@ export default function StockCheckCreatePage() {
     (product, variant) => {
       const id = String(variant.id)
       if (existingIds.has(id)) return
-      setRows((r) => [...r, buildRowFromVariant(product, variant)])
+      // Sản phẩm vừa thêm hiển thị TRÊN CÙNG (đầu danh sách) để thấy ngay, khỏi cuộn.
+      setRows((r) => [buildRowFromVariant(product, variant), ...r])
       setSearchQ('')
       setSuggestOpen(false)
       setPage(1)
@@ -260,6 +263,53 @@ export default function StockCheckCreatePage() {
       }
     },
     [searchQ, products, suggestRows, addVariant]
+  )
+
+  /** Tìm biến thể khớp mã quét: ưu tiên mã vạch → mã hàng chính xác → gợi ý mờ đầu tiên. */
+  const resolveScanMatch = useCallback(
+    (q) => {
+      if (posQueryLooksLikeBarcodeKeyInput(q)) {
+        const needle = String(normalizeBarcodeValue(q))
+        for (const p of products) {
+          for (const v of p.groupVariants || [p]) {
+            if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
+              return { product: p, variant: v }
+            }
+          }
+        }
+      }
+      for (const p of products) {
+        for (const v of p.groupVariants || [p]) {
+          if (String(v.code ?? '').trim() === q) return { product: p, variant: v }
+        }
+      }
+      const prods = resolvePosSuggestCatalog({
+        products,
+        posScanList,
+        rawQuery: q,
+        productsByBarcodeKey: null,
+      })
+      for (const p of prods) {
+        const v = (p.groupVariants || [p])[0]
+        if (v) return { product: p, variant: v }
+      }
+      return null
+    },
+    [products, posScanList]
+  )
+
+  /** Quét camera ở tab Kiểm hàng: trúng → nạp vào phiếu (lên đầu) + tự tắt camera. */
+  const applyScannedCode = useCallback(
+    (raw) => {
+      const q = String(raw || '').trim()
+      if (!q || !products.length) return
+      const m = resolveScanMatch(q)
+      if (m) {
+        addVariant(m.product, m.variant)
+        setScanOpen(false)
+      }
+    },
+    [products, resolveScanMatch, addVariant]
   )
 
   const updateActual = useCallback((key, raw) => {
@@ -324,14 +374,15 @@ export default function StockCheckCreatePage() {
     const rows = Array.isArray(pickedRows) ? pickedRows : []
     setRows((cur) => {
       const have = new Set(cur.map((r) => r.variantId))
-      const next = [...cur]
+      const added = []
       for (const r of rows) {
         const vid = String(r?._variant?.id ?? '')
         if (!vid || have.has(vid)) continue
         have.add(vid)
-        next.push(buildRowFromVariant(r._product, r._variant))
+        added.push(buildRowFromVariant(r._product, r._variant))
       }
-      return next
+      // Các dòng vừa chọn nhanh cũng nằm TRÊN CÙNG danh sách.
+      return [...added, ...cur]
     })
     setModalOpen(false)
     setModalSelected(new Set())
@@ -551,6 +602,24 @@ export default function StockCheckCreatePage() {
               }}
               onKeyDown={onSearchKeyDown}
             />
+            <button
+              type="button"
+              className="cac-btn cac-btn--ghost scc-scan-btn"
+              aria-label="Quét mã QR / mã vạch"
+              title="Quét mã QR / mã vạch để thêm vào phiếu"
+              onClick={() => setScanOpen(true)}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M3 12h18"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="scc-scan-btn-label">Quét mã</span>
+            </button>
             <button
               type="button"
               className="cac-btn cac-btn--ghost"
@@ -829,6 +898,13 @@ export default function StockCheckCreatePage() {
           setModalOpen(false)
           setModalSelected(new Set())
         }}
+      />
+
+      <BarcodeScanModal
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        title="Quét mã — thêm vào phiếu kiểm"
+        onScan={applyScannedCode}
       />
     </div>
   )
