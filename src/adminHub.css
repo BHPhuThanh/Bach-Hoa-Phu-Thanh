@@ -554,6 +554,59 @@
   margin: 0;
 }
 
+.ah-revenue-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ah-revenue-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.35);
+  color: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.ah-revenue-refresh-btn:hover:not(:disabled) {
+  background: rgba(30, 41, 59, 0.55);
+  border-color: rgba(148, 163, 184, 0.55);
+}
+
+.ah-revenue-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ah-revenue-refresh-btn.is-spinning .ah-revenue-refresh-icon {
+  animation: ah-revenue-refresh-spin 0.85s linear infinite;
+}
+
+@keyframes ah-revenue-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ah-revenue-refresh-label {
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .ah-revenue-refresh-label {
+    display: none;
+  }
+}
+
 .ah-revenue-lead {
   margin: 0;
   max-width: 52rem;

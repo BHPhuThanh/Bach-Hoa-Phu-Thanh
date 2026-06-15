@@ -195,6 +195,8 @@ export default function AdminHubRevenuePanel({
   revenueReadOnly,
   orders,
   loading,
+  ordersRefreshing = false,
+  onRefresh,
   ovRange,
   setOvRange,
   ovFrom,
@@ -236,9 +238,38 @@ export default function AdminHubRevenuePanel({
   return (
     <div className="ah-revenue-page dash">
       <header className="ah-revenue-header">
-        <h2 className="admin-hub-panel-title ah-revenue-title" id="ah-revenue-title">
-          Doanh thu
-        </h2>
+        <div className="ah-revenue-title-row">
+          <h2 className="admin-hub-panel-title ah-revenue-title" id="ah-revenue-title">
+            Doanh thu
+          </h2>
+          <button
+            type="button"
+            className={`ah-revenue-refresh-btn${ordersRefreshing ? ' is-spinning' : ''}`}
+            aria-label="Làm mới dữ liệu hôm nay"
+            title="Làm mới dữ liệu trong khoảng đang chọn"
+            disabled={loading || ordersRefreshing}
+            onClick={() => onRefresh?.()}
+          >
+            <svg
+              className="ah-revenue-refresh-icon"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+            <span className="ah-revenue-refresh-label">
+              {ordersRefreshing ? 'Đang tải…' : 'Làm mới'}
+            </span>
+          </button>
+        </div>
         {revenueReadOnly && (
           <div className="ah-doanh-thu-readonly-banner" role="status">
             Bạn đang xem với quyền <strong>Nhân viên</strong> — báo cáo vẫn hiển thị (0 đ nếu chưa có đơn). Xuất
@@ -268,7 +299,7 @@ export default function AdminHubRevenuePanel({
             <span className="dash-toolbar-meta">
               Hiển thị: {rowsSafe.length} dòng
               {returnRowCount > 0 ? ` (${ovFiltered.length} đơn bán + ${returnRowCount} trả hàng)` : ''}
-              {orders.length > 0 ? ` · ${orders.length} đơn đã lưu` : ''}
+              {orders.length > 0 ? ` · ${orders.length} đơn trong khoảng đang chọn` : ''}
             </span>
           )}
         </div>

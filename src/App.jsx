@@ -76,7 +76,9 @@ import {
   runInboundSupabaseSync,
   runInboundInventoryLogAfterSync,
 } from './inboundBackgroundSync.js'
-import { parseCatalogBlobFile } from './catalogParseClient.js'
+import { useCatalog } from './CatalogProvider.jsx'
+import { useNotifications } from './NotificationsProvider.jsx'
+import NotificationBell from './NotificationBell.jsx'
 import {
   buildPosTextSearchScanList,
   filterCatalogByQuery,
@@ -108,10 +110,7 @@ import {
   trimCatalogUnitLabel,
 } from './productUnits.js'
 import {
-  CATALOG_SNAPSHOT_STORAGE_KEY,
-  CATALOG_SYNC_BUMP_KEY,
   applyProductDataToCatalog,
-  fetchProducts,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
   updateProductDisplayVariantsSequential,
@@ -135,17 +134,7 @@ import {
   staffNameForInventoryLog,
 } from './inventoryLogRepository.js'
 import {
-  APP_NOTIFICATIONS_BUMP_EVENT,
-  clearAppNotificationById,
-  loadAppNotifications,
-  markAllLocalNotificationsRead,
-} from './appNotificationsStorage.js'
-import {
-  cleanOldNotificationsInSupabase,
   collectLowStockProductsFromCatalog,
-  fetchNotificationsFromSupabase,
-  markAllNotificationsReadInSupabase,
-  NOTIFICATIONS_BUMP_EVENT,
   parseLowStockDigestMessage,
   resolveLowStockItemsFromCatalog,
   runLowStockAlertsInBackground,
@@ -2439,17 +2428,30 @@ const APP_DEEP_LINK_BOOT = getAppDeepLinkBootState()
 export default function App({ standaloneInboundCreate = false } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
-  const catalogBootRef = useRef(null)
-  if (catalogBootRef.current === null) {
-    catalogBootRef.current =
-      readCatalogSnapshotSync() ?? { products: [], fileName: '', csvRowCount: 0 }
-  }
-  const catalogBoot = catalogBootRef.current
-  const [fileName, setFileName] = useState(catalogBoot.fileName)
-  const [csvRowCount, setCsvRowCount] = useState(catalogBoot.csvRowCount)
-  const [products, setProducts] = useState(() =>
-    prepareCatalogForPosSearch(catalogBoot.products)
-  )
+  const {
+    products,
+    setProducts,
+    productsRef,
+    fileName,
+    setFileName,
+    csvRowCount,
+    setCsvRowCount,
+    initialCatalogLoadPending,
+    setInitialCatalogLoadPending,
+    catalogStoreHydrated,
+    catalogStoreHydratedRef,
+    initialCatalogLoadPendingRef,
+    catalogLoadError,
+  } = useCatalog()
+  const {
+    totalNotifyCount,
+    mergedNotifications,
+    markingAllNotifications,
+    markAllNotificationsRead,
+    markSupabaseNotificationRead,
+    mergeCreatedLowStockNotifications,
+    clearLocalNotificationById,
+  } = useNotifications()
   const [error, setError] = useState('')
   const [sellOrders, setSellOrders] = useState(() => [createEmptySellOrder()])
   const [activeSellOrderId, setActiveSellOrderId] = useState(() => sellOrders[0].id)
@@ -2477,6 +2479,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [activeView, setActiveView] = useState(() =>
     standaloneInboundCreate ? 'dashboard' : APP_DEEP_LINK_BOOT.initialActiveView
   )
+  /** Sau lần đầu mở Hub — giữ mounted (ẩn) để đổi tab không refetch API. */
+  const [adminHubMounted, setAdminHubMounted] = useState(
+    () => standaloneInboundCreate || APP_DEEP_LINK_BOOT.initialActiveView === 'dashboard'
+  )
+  useEffect(() => {
+    if (activeView === 'dashboard') setAdminHubMounted(true)
+  }, [activeView])
   const activeViewRef = useRef(activeView)
   activeViewRef.current = activeView
   const [adminHubDeepLink, setAdminHubDeepLink] = useState(null)
@@ -2538,10 +2547,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [eInvoiceModalOpen, setEInvoiceModalOpen] = useState(false)
   const [eInvoiceModalDraft, setEInvoiceModalDraft] = useState(() => loadEInvoiceSettings())
   const [nowTick, setNowTick] = useState(() => new Date())
-  /** Lần đầu: đang tải CSV mặc định từ `public` (ẩn màn “Chọn file” cho tới khi xong / lỗi). */
-  const [initialCatalogLoadPending, setInitialCatalogLoadPending] = useState(
-    !catalogBoot.products?.length
-  )
   const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useRoleStore()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
@@ -2554,7 +2559,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const toastMessageClearRef = useRef(null)
   const pendingHomeAfterPinRef = useRef(false)
   const pendingHomeNewTabAfterPinRef = useRef(false)
-  const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
   const [storedCustomers, setStoredCustomers] = useState(() => loadStoredCustomers())
@@ -2599,20 +2603,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [])
   const customerSearchRef = useRef(null)
   const sellerMenuRef = useRef(null)
-  const lowStockAlertWrapRef = useRef(null)
-  const lowStockPopoverRef = useRef(null)
   const headerSuggestWrapRef = useRef(null)
   const scannerMenuRef = useRef(null)
   const posScanToastClearRef = useRef(null)
   const posCameraToastClearRef = useRef(null)
   /** Tránh ghi đè LocalStorage trong lúc khôi phục nháp */
   const posDraftHydratingRef = useRef(false)
-  /** Sau khi đọc xong IndexedDB (lần đầu) mới cho phép auto-save — tránh xóa DB khi state tạm []. */
-  const [catalogStoreHydrated, setCatalogStoreHydrated] = useState(false)
-  const catalogStoreHydratedRef = useRef(false)
   /** Xếp hàng persist catalog — tránh tạo nhiều SP song song trùng mã HH. */
   const catalogPersistQueueRef = useRef(Promise.resolve())
-  const initialCatalogLoadPendingRef = useRef(initialCatalogLoadPending)
   const catalogFileNameRef = useRef(fileName)
   catalogFileNameRef.current = fileName
 
@@ -2625,12 +2623,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const pendingDeletedMaHangForSupabaseRef = useRef(new Set())
   const [catalogSupabaseDirty, setCatalogSupabaseDirty] = useState(false)
   const [catalogFlushBusy, setCatalogFlushBusy] = useState(false)
-  useEffect(() => {
-    catalogStoreHydratedRef.current = catalogStoreHydrated
-  }, [catalogStoreHydrated])
-  useEffect(() => {
-    initialCatalogLoadPendingRef.current = initialCatalogLoadPending
-  }, [initialCatalogLoadPending])
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
   const printReceiptCallbacks = useMemo(
@@ -2662,7 +2654,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const checkoutBusyOrderIdRef = useRef(null)
   const f1CheckoutGuardRef = useRef({})
   const sellOrdersRef = useRef([])
-  const productsRef = useRef([])
   const catalogImportInputRef = useRef(null)
   const globalScanBufferRef = useRef({ buf: '', times: [] })
   const addToCartForGlobalScanRef = useRef(() => {})
@@ -2672,7 +2663,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     afterSuccessfulAdd: () => {},
     markBarcodeNotFound: () => {},
   })
-  productsRef.current = products
   sellOrdersRef.current = sellOrders
   const activeSellOrderIdRef = useRef(activeSellOrderId)
   activeSellOrderIdRef.current = activeSellOrderId
@@ -2689,72 +2679,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const catalogBarcodeCaches = useMemo(() => buildCatalogBarcodeCaches(products), [products])
 
-  const [appCostChangeNotifications, setAppCostChangeNotifications] = useState(() =>
-    loadAppNotifications()
-  )
-  const [supabaseNotifications, setSupabaseNotifications] = useState([])
-  const [markingAllNotifications, setMarkingAllNotifications] = useState(false)
-
-  const normalizeSupabaseNotifications = useCallback((rows) => {
-    if (!Array.isArray(rows) || rows.length === 0) return []
-    let newestLowStock = null
-    const otherNotifications = []
-    for (const row of rows) {
-      if (!row) continue
-      if (String(row.kind || '').trim() === 'low_stock') {
-        if (!newestLowStock || Number(row.createdAtMs || 0) > Number(newestLowStock.createdAtMs || 0)) {
-          newestLowStock = row
-        }
-        continue
-      }
-      otherNotifications.push(row)
-    }
-    const merged = newestLowStock ? [newestLowStock, ...otherNotifications] : otherNotifications
-    merged.sort((a, b) => Number(b?.createdAtMs || 0) - Number(a?.createdAtMs || 0))
-    return merged
-  }, [])
-
-  const mergeCreatedLowStockNotifications = useCallback((lowStockRows) => {
-    if (!lowStockRows?.length) return
-    setSupabaseNotifications((p) => {
-      return normalizeSupabaseNotifications([...(lowStockRows || []), ...(p || [])])
-    })
-  }, [normalizeSupabaseNotifications])
-
-  const refreshSupabaseNotifications = useCallback(async () => {
-    if (!isSupabaseConfigured()) {
-      setSupabaseNotifications([])
-      return
-    }
-    const rows = await fetchNotificationsFromSupabase(activeSellerId)
-    setSupabaseNotifications(normalizeSupabaseNotifications(rows))
-  }, [activeSellerId, normalizeSupabaseNotifications])
-
-  useEffect(() => {
-    void (async () => {
-      await cleanOldNotificationsInSupabase(activeSellerId)
-      await refreshSupabaseNotifications()
-    })()
-  }, [refreshSupabaseNotifications, activeSellerId])
-
-  useEffect(() => {
-    if (!lowStockAlertOpen) return
-    void refreshSupabaseNotifications()
-  }, [lowStockAlertOpen, refreshSupabaseNotifications])
-
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      void refreshSupabaseNotifications()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', onVisible)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', onVisible)
-    }
-  }, [refreshSupabaseNotifications])
-
   const lowStockDigestSyncedRef = useRef(false)
 
   useEffect(() => {
@@ -2764,51 +2688,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       if (rows?.length) mergeCreatedLowStockNotifications(rows)
     })
   }, [products, activeSellerId, mergeCreatedLowStockNotifications])
-
-  useEffect(() => {
-    const syncLocal = () => setAppCostChangeNotifications(loadAppNotifications())
-    const syncRemote = () => {
-      void refreshSupabaseNotifications()
-    }
-    window.addEventListener(APP_NOTIFICATIONS_BUMP_EVENT, syncLocal)
-    window.addEventListener(NOTIFICATIONS_BUMP_EVENT, syncRemote)
-    window.addEventListener('storage', syncLocal)
-    return () => {
-      window.removeEventListener(APP_NOTIFICATIONS_BUMP_EVENT, syncLocal)
-      window.removeEventListener(NOTIFICATIONS_BUMP_EVENT, syncRemote)
-      window.removeEventListener('storage', syncLocal)
-    }
-  }, [refreshSupabaseNotifications])
-
-  const supabaseUnreadCount = useMemo(() => {
-    return supabaseNotifications.reduce((count, n) => count + (n?.is_read ? 0 : 1), 0)
-  }, [supabaseNotifications])
-
-  const markAllNotificationsRead = useCallback(async () => {
-    if (markingAllNotifications) return
-    setMarkingAllNotifications(true)
-    setSupabaseNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
-    setAppCostChangeNotifications([])
-    markAllLocalNotificationsRead()
-    try {
-      if (isSupabaseConfigured()) {
-        const r = await markAllNotificationsReadInSupabase(activeSellerId)
-        if (!r.ok) {
-          void refreshSupabaseNotifications()
-        }
-      }
-    } finally {
-      setMarkingAllNotifications(false)
-    }
-  }, [markingAllNotifications, activeSellerId, refreshSupabaseNotifications])
-
-  const markSupabaseNotificationRead = useCallback((n) => {
-    if (!n?.id) return
-    setSupabaseNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
-    if (isSupabaseConfigured()) {
-      void getSupabaseClient()?.from('notifications').update({ is_read: true }).eq('id', n.id)
-    }
-  }, [])
 
   const openProductEditFromNotification = useCallback((n) => {
     const rawId = String(n?.variantId || n?.code || n?.product_code || '').trim()
@@ -2837,13 +2716,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const handleNotificationClick = useCallback(
     (n, source = 'supabase') => {
       if (!n) return
-      setLowStockAlertOpen(false)
 
       if (source === 'local') {
         const rawId = String(n?.variantId || n?.code || '').trim()
         if (!rawId) return
-        clearAppNotificationById(n.id)
-        setAppCostChangeNotifications(loadAppNotifications())
+        clearLocalNotificationById(n.id)
         openProductEditFromNotification(n)
         return
       }
@@ -2872,7 +2749,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
       openProductEditFromNotification(n)
     },
-    [products, markSupabaseNotificationRead, openProductEditFromNotification]
+    [products, markSupabaseNotificationRead, openProductEditFromNotification, clearLocalNotificationById]
   )
 
   const startInboundFromLowStockModal = useCallback(() => {
@@ -3067,42 +2944,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return fresh
   }, [])
 
-  const runCatalogAutoSyncWithPosGuard = useCallback(
-    async (reason = 'auto-sync') => {
-      const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
-      if (hasLiveSellCart) {
-        freezePosDraftHydrateRef.current = true
-        console.log(`[POS sync] ${reason}: có đơn đang tít, khóa hydrate giỏ nháp.`)
-      }
-      try {
-        await applyServerCatalogAfterPersist()
-      } finally {
-        if (hasLiveSellCart) {
-          queueMicrotask(() => {
-            freezePosDraftHydrateRef.current = false
-          })
-        }
-      }
-    },
-    [applyServerCatalogAfterPersist]
-  )
-
-  useEffect(() => {
-    if (activeView !== 'dashboard' && activeView !== 'sell') return
-    void runCatalogAutoSyncWithPosGuard('tab-switch')
-  }, [activeView, runCatalogAutoSyncWithPosGuard])
-
-  useEffect(() => {
-    const handleFocus = () => {
-      if (activeView !== 'dashboard' && activeView !== 'sell') return
-      void runCatalogAutoSyncWithPosGuard('window-focus')
-    }
-    window.addEventListener('focus', handleFocus)
-    handleFocus()
-    return () => {
-      window.removeEventListener('focus', handleFocus)
-    }
-  }, [activeView, runCatalogAutoSyncWithPosGuard])
+  /**
+   * Catalog fetch + Realtime: {@link CatalogProvider} (bọc ngoài Router trong main.jsx).
+   * Singleton WebSocket — chuyển tab Hàng hóa / Bán hàng không unmount kết nối.
+   */
 
   /** AdminHub đăng ký — sau `upsert` + `select('*')` đồng bộ lại id dòng phiếu nhập với biến thể catalog (sb-…). */
   const inboundCatalogUpsertReconcileRef = useRef(null)
@@ -3929,82 +3774,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     [applyServerCatalogAfterPersist, showPosPersistErrorToast, activeSellerId, mergeCreatedLowStockNotifications]
   )
 
-  /** Khởi động: khi có Supabase — chỉ tải từ Supabase (bảng `products` rồi `catalog_snapshots`). Không tự fetch `public/bhphuthanh.csv`. Đồng bộ CSV một lần trên máy dev: `npm run push-catalog`. */
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const snap = await fetchProducts()
-        if (cancelled) return
-        if (snap?.products?.length) {
-          setInitialCatalogLoadPending(false)
-          setProducts((prev) => {
-            /* Có Supabase: luôn áp dữ liệu từ server khi boot (tránh state khởi tạo cũ / IDB che hàng mới sau F5). */
-            if (!isSupabaseConfigured() && prev.length > 0) return prev
-            queueMicrotask(() => {
-              setFileName(snap.fileName)
-              setCsvRowCount(snap.csvRowCount)
-              setSalesRefresh((x) => x + 1)
-              bumpOrdersSync()
-            })
-            return prepareCatalogForPosSearch(snap.products)
-          })
-        } else if (isSupabaseConfigured()) {
-          setInitialCatalogLoadPending(false)
-          setError((prev) =>
-            prev ||
-            'Danh mục trên Supabase đang trống. Đẩy dữ liệu từ file CSV trong repo một lần (máy dev): `npm run push-catalog` với SUPABASE_URL và khóa ghi — ví dụ đẩy `public/bhphuthanh.csv` lên Supabase.'
-          )
-        } else {
-          setInitialCatalogLoadPending(false)
-          setError((prev) =>
-            prev ||
-            'Chưa cấu hình Supabase (VITE_SUPABASE_URL và VITE_SUPABASE_ANON_KEY). Ứng dụng không còn tự tải file CSV mặc định; hãy cấu hình env và tải lại — hoặc dùng «Nhập CSV» để nạp thủ công (offline).'
-          )
-        }
-      } finally {
-        if (!cancelled) setCatalogStoreHydrated(true)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  /** Tab khác (cùng origin): bump localStorage → đọc lại catalog (Supabase hoặc IndexedDB). */
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.storageArea !== localStorage) return
-      if (e.key !== CATALOG_SNAPSHOT_STORAGE_KEY && e.key !== CATALOG_SYNC_BUMP_KEY) return
-      void (async () => {
-        const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
-        if (hasLiveSellCart) {
-          freezePosDraftHydrateRef.current = true
-          console.log('[POS sync] storage-bump: có đơn đang tít, khóa hydrate giỏ nháp.')
-        }
-        const snap = await fetchProducts()
-        if (snap?.products?.length) {
-          skipNextDraftHydrateRef.current = true
-          setProducts(prepareCatalogForPosSearch(snap.products))
-          setFileName(snap.fileName)
-          setCsvRowCount(snap.csvRowCount)
-        } else {
-          skipNextDraftHydrateRef.current = true
-          setProducts([])
-          setFileName('')
-          setCsvRowCount(0)
-        }
-        setSalesRefresh((x) => x + 1)
-        if (hasLiveSellCart) {
-          queueMicrotask(() => {
-            freezePosDraftHydrateRef.current = false
-          })
-        }
-      })()
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
+  /** Danh mục: chỉ CatalogProvider (boot 1 lần) + Realtime — không refetch khi đổi tab. */
 
   useEffect(() => {
     const onDraftClearedStorage = (e) => {
@@ -4558,28 +4328,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [sellerMenuOpen])
 
   useEffect(() => {
-    if (!lowStockAlertOpen) return
-    const onDoc = (e) => {
-      const t = e.target
-      if (lowStockAlertWrapRef.current?.contains(t)) return
-      if (lowStockPopoverRef.current?.contains(t)) return
-      setLowStockAlertOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [lowStockAlertOpen])
-
-  useEffect(() => {
-    if (!lowStockAlertOpen) return
-    const onEsc = (e) => {
-      if (e.key !== 'Escape') return
-      setLowStockAlertOpen(false)
-    }
-    window.addEventListener('keydown', onEsc, true)
-    return () => window.removeEventListener('keydown', onEsc, true)
-  }, [lowStockAlertOpen])
-
-  useEffect(() => {
     if (activeView !== 'sell') setShortcutsHelpOpen(false)
   }, [activeView])
 
@@ -4817,7 +4565,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return () => {
       cancelled = true
     }
-  }, [salesRefresh, activeView])
+  }, [salesRefresh])
 
   useEffect(() => {
     if (activeView !== 'sell') {
@@ -6377,116 +6125,17 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         </button>
       ) : null
 
-    const costNotifyCount = appCostChangeNotifications.length
-    const totalNotifyCount = supabaseUnreadCount + costNotifyCount
-    const mergedNotifications = [...supabaseNotifications, ...appCostChangeNotifications]
-      .map((n) => ({
-        ...n,
-        source: n?.id && String(n.id).startsWith('cc-') ? 'local' : 'supabase',
-      }))
-      .sort((a, b) => Number(b?.createdAtMs || 0) - Number(a?.createdAtMs || 0))
-    const bellBtn =
-      activeView !== 'sell' ? (
-        <div key="notifications" className="app-header-notify-wrap" ref={lowStockAlertWrapRef}>
-          <button
-            type="button"
-            className="app-header-icon-btn"
-            aria-label={
-              totalNotifyCount > 0
-                ? `Thông báo — ${totalNotifyCount} mục chưa đọc`
-                : 'Thông báo'
-            }
-            aria-expanded={lowStockAlertOpen}
-            title={
-              totalNotifyCount > 0
-                ? `${totalNotifyCount} thông báo chưa đọc`
-                : 'Thông báo'
-            }
-            onClick={() => setLowStockAlertOpen((open) => !open)}
-          >
-            <svg
-              className="app-header-icon-svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-            {totalNotifyCount > 0 ? (
-              <span className="app-header-notify-badge" aria-hidden>
-                {totalNotifyCount > 99 ? '99+' : totalNotifyCount}
-              </span>
-            ) : null}
-          </button>
-          {lowStockAlertOpen && typeof document !== 'undefined'
-            ? createPortal(
-                <div
-                  ref={lowStockPopoverRef}
-                  className="app-header-low-stock-popover app-header-low-stock-popover--elevated"
-                  role="dialog"
-                  aria-label="Thông báo"
-                >
-                  <div className="app-header-low-stock-popover-head">
-                <span className="app-header-low-stock-popover-title">Thông báo</span>
-                {totalNotifyCount > 0 ? (
-                  <button
-                    type="button"
-                    className="app-header-notify-mark-all"
-                    disabled={markingAllNotifications}
-                    title="Đánh dấu tất cả đã đọc"
-                    onClick={() => void markAllNotificationsRead()}
-                  >
-                    <span className="app-header-notify-mark-all-icon" aria-hidden>
-                      ✓✓
-                    </span>
-                    Đọc tất cả
-                  </button>
-                ) : null}
-              </div>
-              <div className="app-header-low-stock-scroll">
-                {mergedNotifications.length === 0 ? (
-                  <p className="app-header-low-stock-empty">Chưa có thông báo</p>
-                ) : (
-                  <>
-                    {mergedNotifications.length > 0 ? (
-                      <>
-                        <div className="app-header-notify-section-h">Thông báo hệ thống</div>
-                        <ul className="app-header-cost-notif-list">
-                          {mergedNotifications.map((n) => (
-                            <li
-                              key={n.id}
-                              className={`app-header-cost-notif-item${
-                                n.source === 'supabase' && n.is_read ? ' app-header-supabase-notif-item--read' : ''
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                className="app-header-supabase-notif-btn"
-                                onClick={() => handleNotificationClick(n, n.source)}
-                              >
-                                <span className="app-header-notify-message-pre">{n.message}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : null}
-                  </>
-                )}
-                  </div>
-                </div>,
-                document.body
-              )
-            : null}
-        </div>
-      ) : null
+    const bellBtn = (
+      <div key="notifications" hidden={activeView === 'sell'} aria-hidden={activeView === 'sell'}>
+        <NotificationBell
+          totalNotifyCount={totalNotifyCount}
+          mergedNotifications={mergedNotifications}
+          markingAllNotifications={markingAllNotifications}
+          onMarkAllRead={markAllNotificationsRead}
+          onNotificationClick={handleNotificationClick}
+        />
+      </div>
+    )
 
     const cartBtn = (
       <button
@@ -7217,8 +6866,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         />
       )}
 
-      {activeView === 'dashboard' && (
-        activeSellerId !== 'admin' && adminPinModalOpen ? (
+      {adminHubMounted ? (
+      <div hidden={activeView !== 'dashboard'} aria-hidden={activeView !== 'dashboard'}>
+        {activeSellerId !== 'admin' && adminPinModalOpen ? (
           <div className="min-h-screen w-full bg-black" aria-hidden />
         ) : (
           <AdminHub
@@ -7247,8 +6897,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
             onRevalidateCatalog={applyServerCatalogAfterPersist}
           />
-        )
-      )}
+        )}
+      </div>
+      ) : null}
 
       {lowStockDetailModal &&
         typeof document !== 'undefined' &&
@@ -8460,7 +8111,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         </div>
       )}
 
-      {activeView === 'sell' && products.length === 0 && initialCatalogLoadPending && !error && (
+      {activeView === 'sell' && products.length === 0 && initialCatalogLoadPending && !error && !catalogLoadError && (
         <div className="welcome welcome--loading">
           <p>Đang tải dữ liệu hàng từ máy chủ…</p>
         </div>
@@ -8490,6 +8141,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       )}
       {activeView === 'sell' && products.length === 0 && !initialCatalogLoadPending && (
         <div className="welcome">
+          {(error || catalogLoadError) ? (
+            <p>{error || catalogLoadError}</p>
+          ) : (
+            <>
           <p>Chọn file CSV (UTF-8) xuất từ KiotViet hoặc có cột <strong>mã</strong>,{' '}
             <strong>tên</strong>, <strong>giá</strong> tương ứng.</p>
           <p className="welcome-sub">
@@ -8497,6 +8152,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             theo dòng tiêu đề). Cột <strong>Giá vốn</strong>, <strong>Mã HH Liên Kết</strong>,{' '}
             <strong>Đơn vị tính</strong>, <strong>Quy đổi</strong> (nếu có) để gom nhóm và báo cáo.
           </p>
+            </>
+          )}
         </div>
       )}
     </div>

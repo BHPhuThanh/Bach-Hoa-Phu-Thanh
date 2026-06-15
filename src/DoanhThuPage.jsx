@@ -1,39 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import './App.css'
 import './dashboard-dark.css'
 import AdminHub from './AdminHub.jsx'
 import DoanhThuErrorBoundary from './DoanhThuErrorBoundary.jsx'
-import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
-import { POS_RETURN_LEDGER_BUMP_EVENT } from './posReturnLedgerRepository.js'
+import { useCatalog } from './CatalogProvider.jsx'
+import { revalidateCatalogFromStore } from './catalogRepository.js'
+import { prepareCatalogForPosSearch } from './catalogSearchSimple.js'
+import { isSupabaseConfigured } from './supabaseClient.js'
 import { useRoleStore } from './roleStore.js'
 import { usePrintReceiptIframe } from './usePrintReceiptIframe.js'
 
 export default function DoanhThuPage() {
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe()
   const { isAdmin } = useRoleStore()
-  const [hubRefreshKey, setHubRefreshKey] = useState(0)
+  const {
+    products,
+    setProducts,
+    productsRef,
+    fileName,
+    setFileName,
+    setCsvRowCount,
+  } = useCatalog()
 
-  useEffect(() => {
-    setHubRefreshKey((k) => k + 1)
-  }, [isAdmin])
-
-  useEffect(() => {
-    const bump = () => setHubRefreshKey((k) => k + 1)
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') bump()
-    }
-    bump()
-    window.addEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
-    window.addEventListener(POS_RETURN_LEDGER_BUMP_EVENT, bump)
-    window.addEventListener('focus', onVisible)
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      window.removeEventListener(ORDERS_SYNC_BUMP_EVENT, bump)
-      window.removeEventListener(POS_RETURN_LEDGER_BUMP_EVENT, bump)
-      window.removeEventListener('focus', onVisible)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [])
+  const onRevalidateCatalog = useCallback(async () => {
+    if (!isSupabaseConfigured()) return null
+    const fresh = await revalidateCatalogFromStore()
+    if (!fresh?.products?.length) return null
+    const prepared = prepareCatalogForPosSearch(fresh.products)
+    setProducts(prepared)
+    productsRef.current = prepared
+    setFileName(fresh.fileName)
+    setCsvRowCount(fresh.csvRowCount)
+    return fresh
+  }, [setProducts, productsRef, setFileName, setCsvRowCount])
 
   return (
     <div className="app app--dark app--doanh-thu-shell">
@@ -48,7 +47,9 @@ export default function DoanhThuPage() {
       <DoanhThuErrorBoundary>
         <AdminHub
           printReceiptHtml={printReceiptHtml}
-          refreshKey={hubRefreshKey}
+          products={products}
+          catalogFileName={fileName}
+          onRevalidateCatalog={onRevalidateCatalog}
           doanhThuMode={isAdmin ? undefined : { readOnlyRevenue: true }}
         />
       </DoanhThuErrorBoundary>

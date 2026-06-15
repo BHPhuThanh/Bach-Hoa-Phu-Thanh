@@ -7,6 +7,8 @@ import CostAdjustCreatePage from './CostAdjustCreatePage.jsx'
 import DoanhThuPage from './DoanhThuPage.jsx'
 import StockCheckCreatePage from './StockCheckCreatePage.jsx'
 import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
+import { CatalogProvider } from './CatalogProvider.jsx'
+import { NotificationsProvider } from './NotificationsProvider.jsx'
 import { registerPwaServiceWorker } from './pwaRegister.js'
 
 /** Lớp 1: chặn Chrome Help — chỉ preventDefault, không stopPropagation (React vẫn nhận F1). */
@@ -35,17 +37,21 @@ async function boot() {
   if (!el) return
   createRoot(el).render(
     <StrictMode>
-      <BrowserRouter basename={appRouterBasename()}>
-        <Routes>
-          <Route path="admin/goods" element={<App />} />
-          <Route path="admin/inventory" element={<App />} />
-          <Route path="dieu-chinh-gia/tao-moi" element={<CostAdjustCreatePage />} />
-          <Route path="kiem-hang/tao-moi" element={<StockCheckCreatePage />} />
-          <Route path="nhap-hang/tao-moi" element={<App standaloneInboundCreate />} />
-          <Route path="doanh-thu" element={<DoanhThuPage />} />
-          <Route path="*" element={<App />} />
-        </Routes>
-      </BrowserRouter>
+      <CatalogProvider>
+        <NotificationsProvider>
+          <BrowserRouter basename={appRouterBasename()}>
+            <Routes>
+              <Route path="admin/goods" element={<App />} />
+              <Route path="admin/inventory" element={<App />} />
+              <Route path="dieu-chinh-gia/tao-moi" element={<CostAdjustCreatePage />} />
+              <Route path="kiem-hang/tao-moi" element={<StockCheckCreatePage />} />
+              <Route path="nhap-hang/tao-moi" element={<App standaloneInboundCreate />} />
+              <Route path="doanh-thu" element={<DoanhThuPage />} />
+              <Route path="*" element={<App />} />
+            </Routes>
+          </BrowserRouter>
+        </NotificationsProvider>
+      </CatalogProvider>
     </StrictMode>,
   )
 }

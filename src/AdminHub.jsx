@@ -32,7 +32,7 @@ import {
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
-import { clearAllOrders, deleteOrderById, getAllOrders, saveOrder } from './ordersDb.js'
+import { clearAllOrders, deleteOrderById, getOrdersForReportRange, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
 import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
 import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
@@ -122,13 +122,13 @@ import { clearPosReturnDayLedger } from './posReturnDayLedger.js'
 import {
   deletePosReturnLedgerByOrderId,
   fetchPosReturnLedgerEntries,
+  fetchPosReturnLedgerEntriesForReportRange,
   insertPosReturnLedgerEntry,
   ledgerProfitSubFromParts,
   migrateLocalPosReturnLedgerToSupabaseOnce,
   POS_RETURN_LEDGER_BUMP_EVENT,
 } from './posReturnLedgerRepository.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
-import { ORDERS_SYNC_BUMP_EVENT } from './ordersSyncEvents.js'
 import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
@@ -162,18 +162,14 @@ import './adminHub.css'
 import './barcodeScan.css'
 import './costAdjustCreatePage.css'
 import {
-  CATALOG_SNAPSHOT_STORAGE_KEY,
-  CATALOG_SYNC_BUMP_KEY,
   applyProductDataToCatalog,
-  fetchProducts,
+  describeCatalogPersistError,
   fetchProductsCostAndStockByMaHang,
-  readCatalogSnapshotSync,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
   updateProductDisplayVariantsSequential,
   insertProductDisplayVariantsSequential,
   revalidateCatalogFromStore,
-  describeCatalogPersistError,
   deleteProductsForRemovedVariants,
   updateProductThuongHieuByMaHang,
 } from './catalogRepository.js'
@@ -1230,86 +1226,35 @@ export default function AdminHub({
   const activeTabForInboundSyncRef = useRef(activeTab)
   activeTabForInboundSyncRef.current = activeTab
   const [orders, setOrders] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [ordersRefreshing, setOrdersRefreshing] = useState(false)
+  /** Khóa cửa sổ đã fetch — tránh gọi lại API khi đổi tab trong cùng khoảng ngày. */
+  const ordersLoadedFetchKeyRef = useRef('')
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const list = await getAllOrders()
-      setOrders(list)
-    } catch (e) {
-      console.error(e)
-      setOrders([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const refetchOrdersQuiet = useCallback(async () => {
-    try {
-      const list = await getAllOrders()
-      setOrders(list)
-    } catch (e) {
-      console.error(e)
-    }
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  useEffect(() => {
-    void refetchOrdersQuiet()
-  }, [refreshKey, refetchOrdersQuiet])
-
-  useEffect(() => {
-    const onOrdersBump = () => {
-      void refetchOrdersQuiet()
-    }
-    window.addEventListener(ORDERS_SYNC_BUMP_EVENT, onOrdersBump)
-    return () => window.removeEventListener(ORDERS_SYNC_BUMP_EVENT, onOrdersBump)
-  }, [refetchOrdersQuiet])
-
-  useEffect(() => {
-    if (activeTab !== TAB_OVERVIEW && activeTab !== TAB_ORDERS) return
-    void refetchOrdersQuiet()
-    if (!parentCatalogSupplied && activeTab === TAB_OVERVIEW) {
-      void (async () => {
-        const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
-        if (snap?.products?.length) {
-          setStandaloneCatalog({
-            products: refreshCatalogSearchTexts(snap.products),
-            fileName: snap.fileName || '',
-          })
+  const fetchOrdersForReportWindow = useCallback(
+    async (rangeKey, fromYmd, toYmd, { cacheKey, force = false, showLoading = false } = {}) => {
+      const key = cacheKey ?? `${rangeKey}|${fromYmd}|${toYmd}`
+      if (!force && ordersLoadedFetchKeyRef.current === key) return
+      if (showLoading) setLoading(true)
+      else setOrdersRefreshing(true)
+      try {
+        const list = await getOrdersForReportRange(rangeKey, fromYmd, toYmd)
+        setOrders(list)
+        ordersLoadedFetchKeyRef.current = key
+        const lr = await fetchPosReturnLedgerEntriesForReportRange(rangeKey, fromYmd, toYmd)
+        if (lr.ok) {
+          setReturnDayLedger(Array.isArray(lr.entries) ? lr.entries : [])
         }
-      })()
-    }
-  }, [activeTab, refetchOrdersQuiet, parentCatalogSupplied])
-
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      if (activeTab === TAB_OVERVIEW || activeTab === TAB_ORDERS) {
-        void refetchOrdersQuiet()
+      } catch (e) {
+        console.error('[AdminHub] fetchOrdersForReportWindow', e)
+        if (showLoading) setOrders([])
+      } finally {
+        setLoading(false)
+        setOrdersRefreshing(false)
       }
-      if (!parentCatalogSupplied && activeTab === TAB_OVERVIEW) {
-        void fetchProducts().then((snap) => {
-          if (snap?.products?.length) {
-            setStandaloneCatalog({
-              products: refreshCatalogSearchTexts(snap.products),
-              fileName: snap.fileName || '',
-            })
-          }
-        })
-      }
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', onVisible)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', onVisible)
-    }
-  }, [activeTab, refetchOrdersQuiet, parentCatalogSupplied])
+    },
+    []
+  )
 
   const refreshPosReturnLedger = useCallback(async () => {
     if (!isSupabaseConfigured()) {
@@ -1341,20 +1286,9 @@ export default function AdminHub({
     void migrateLocalPosReturnLedgerToSupabaseOnce()
   }, [])
 
+  /** Tab chi tiết hoàn trả — tải ledger đầy đủ chỉ khi mở tab đó (không chạy mỗi lần đổi Doanh thu). */
   useEffect(() => {
-    void refreshPosReturnLedger()
-  }, [refreshPosReturnLedger, refreshKey])
-
-  useEffect(() => {
-    const onBump = () => {
-      void refreshPosReturnLedger()
-    }
-    window.addEventListener(POS_RETURN_LEDGER_BUMP_EVENT, onBump)
-    return () => window.removeEventListener(POS_RETURN_LEDGER_BUMP_EVENT, onBump)
-  }, [refreshPosReturnLedger])
-
-  useEffect(() => {
-    if (activeTab !== TAB_OVERVIEW && !isPosReturnDetailTabId(activeTab)) return
+    if (!isPosReturnDetailTabId(activeTab)) return
     void refreshPosReturnLedger()
   }, [activeTab, refreshPosReturnLedger])
 
@@ -1423,7 +1357,10 @@ export default function AdminHub({
       setOpenPosReturnDetailLedgerIds([])
       await clearAllOrders()
       setSelected(null)
-      await load()
+      setOrders([])
+      ordersLoadedFetchKeyRef.current = ''
+      const cacheKey = `${ovRange}|${ovFrom}|${ovTo}`
+      await fetchOrdersForReportWindow(ovRange, ovFrom, ovTo, { cacheKey, force: true })
     } catch (e) {
       console.error(e)
       alert('Không xóa được dữ liệu.')
@@ -1483,20 +1420,8 @@ export default function AdminHub({
     setDeletingOrderId(orderId)
     try {
       let catalog = catalogList
-      let catalogFileName = standaloneCatalog?.fileName || ''
       if (!catalog?.length) {
-        const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
-        if (!snap?.products?.length) {
-          throw new Error('Chưa tải được danh mục hàng — không thể hoàn tồn kho.')
-        }
-        catalog = refreshCatalogSearchTexts(snap.products)
-        catalogFileName = snap.fileName || catalogFileName
-        if (!parentCatalogSupplied) {
-          setStandaloneCatalog({
-            products: catalog,
-            fileName: catalogFileName,
-          })
-        }
+        throw new Error('Chưa tải được danh mục hàng — không thể hoàn tồn kho.')
       }
 
       const orderItems = Array.isArray(base?.items) ? base.items : []
@@ -1613,7 +1538,13 @@ export default function AdminHub({
       }
 
       await deleteOrderById(orderId)
-      await Promise.all([refetchOrdersQuiet(), refreshPosReturnLedger()])
+      const key = ordersLoadedFetchKeyRef.current
+      if (key) {
+        const [rk, from, to] = key.split('|')
+        if (rk && from && to) {
+          await fetchOrdersForReportWindow(rk, from, to, { cacheKey: key, force: true })
+        }
+      }
       showHubCameraToast('Xóa đơn hàng thành công.', 'ok')
     } catch (err) {
       console.error('[handleDeleteOrder] failed', err)
@@ -1627,55 +1558,13 @@ export default function AdminHub({
   }
 
   /* —— Hàng hóa —— */
+  /** Chỉ dùng khi Hub chạy không có `products` từ cha — không auto-fetch; cha phải truyền catalog qua Context. */
   const [standaloneCatalog, setStandaloneCatalog] = useState(null)
   const standaloneImportRef = useRef(null)
 
-  useEffect(() => {
-    if (parentCatalogSupplied) {
-      setStandaloneCatalog(null)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const snap = (await fetchProducts()) ?? readCatalogSnapshotSync()
-      if (cancelled) return
-      if (snap?.products?.length) {
-        setStandaloneCatalog({
-          products: refreshCatalogSearchTexts(snap.products),
-          fileName: snap.fileName || '',
-        })
-      } else {
-        setStandaloneCatalog(null)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [parentCatalogSupplied, refreshKey])
-
-  /** Tab khác ghi IndexedDB + bump → Hàng hóa độc lập cập nhật không cần F5. */
-  useEffect(() => {
-    if (parentCatalogSupplied) return
-    const onStorage = (e) => {
-      if (e.storageArea !== localStorage) return
-      if (e.key !== CATALOG_SNAPSHOT_STORAGE_KEY && e.key !== CATALOG_SYNC_BUMP_KEY) return
-      void (async () => {
-        const snap = await fetchProducts()
-        if (snap?.products?.length) {
-          setStandaloneCatalog({
-            products: refreshCatalogSearchTexts(snap.products),
-            fileName: snap.fileName || '',
-          })
-        } else {
-          setStandaloneCatalog(null)
-        }
-      })()
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [parentCatalogSupplied])
-
-  const catalogList = parentCatalogSupplied ? parentProducts : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+  const catalogList = parentCatalogSupplied
+    ? parentProducts
+    : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
 
   const ovStats = useMemo(() => {
     try {
@@ -5737,12 +5626,22 @@ export default function AdminHub({
   const persistPosOrderAndReload = useCallback(async (nextOrder) => {
     try {
       await saveOrder(nextOrder)
-      await load()
+      const key = ordersLoadedFetchKeyRef.current
+      if (key) {
+        const [rk, from, to] = key.split('|')
+        if (rk && from && to) {
+          await fetchOrdersForReportWindow(rk, from, to, { cacheKey: key, force: true })
+          return
+        }
+      }
+      const t = todayYmd()
+      const cacheKey = `${RANGE_TODAY}|${t}|${t}`
+      await fetchOrdersForReportWindow(RANGE_TODAY, t, t, { cacheKey, force: true })
     } catch (e) {
       console.error(e)
       alert('Không lưu được đơn hàng.')
     }
-  }, [load])
+  }, [fetchOrdersForReportWindow])
 
   const closePosDetailTabByOrderId = useCallback((orderId) => {
     const oid = String(orderId ?? '')
@@ -6711,6 +6610,34 @@ export default function AdminHub({
     setOrdersDateDdOpen(false)
   }, [])
 
+  /** Doanh thu / Đơn hàng — fetch theo khoảng ngày; không auto-fetch khi đổi tab nếu đã có cùng khoảng. */
+  useEffect(() => {
+    if (activeTab === TAB_OVERVIEW) {
+      const cacheKey = `${ovRange}|${ovFrom}|${ovTo}`
+      void fetchOrdersForReportWindow(ovRange, ovFrom, ovTo, {
+        cacheKey,
+        showLoading: ordersLoadedFetchKeyRef.current === '',
+      })
+    } else if (activeTab === TAB_ORDERS) {
+      const cacheKey = `${ordRange}|${ordFrom}|${ordTo}`
+      void fetchOrdersForReportWindow(ordRange, ordFrom, ordTo, { cacheKey })
+    }
+  }, [
+    activeTab,
+    ovRange,
+    ovFrom,
+    ovTo,
+    ordRange,
+    ordFrom,
+    ordTo,
+    fetchOrdersForReportWindow,
+  ])
+
+  const handleRefreshRevenue = useCallback(() => {
+    const cacheKey = `${ovRange}|${ovFrom}|${ovTo}`
+    void fetchOrdersForReportWindow(ovRange, ovFrom, ovTo, { cacheKey, force: true })
+  }, [ovRange, ovFrom, ovTo, fetchOrdersForReportWindow])
+
   const prevActiveTabForOrdersResetRef = useRef(null)
   useEffect(() => {
     const prev = prevActiveTabForOrdersResetRef.current
@@ -7362,6 +7289,8 @@ export default function AdminHub({
                 revenueReadOnly={revenueReadOnly}
                 orders={orders}
                 loading={loading}
+                ordersRefreshing={ordersRefreshing}
+                onRefresh={handleRefreshRevenue}
                 ovRange={ovRange}
                 setOvRange={setOvRange}
                 ovFrom={ovFrom}

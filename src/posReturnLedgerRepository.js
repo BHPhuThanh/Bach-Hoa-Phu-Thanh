@@ -3,6 +3,7 @@
  */
 
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { getReportTimeWindow } from './reportUtils.js'
 import { stripUndefinedDeep } from './supabaseInboundHistory.js'
 import { loadPosReturnDayLedger, savePosReturnDayLedger } from './posReturnDayLedger.js'
 
@@ -231,6 +232,52 @@ export async function insertPosReturnLedgerEntry(entry) {
     return { ok: true, entry: persisted }
   } catch (error) {
     console.error('[posReturnLedger] insert', error)
+    return { ok: false, error }
+  }
+}
+
+/**
+ * Đọc phiếu hoàn trả trong cửa sổ báo cáo (không tải toàn bộ ledger).
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, entries?: object[] }>}
+ */
+export async function fetchPosReturnLedgerEntriesForReportRange(
+  rangeKey,
+  customFromYmd,
+  customToYmd,
+  now = new Date()
+) {
+  const w = getReportTimeWindow(rangeKey, customFromYmd, customToYmd, now)
+  if (!w) return { ok: true, entries: [] }
+  if (!isSupabaseConfigured()) {
+    const local = loadPosReturnDayLedger().filter((e) => {
+      const t = Number(e?.atMs ?? 0)
+      return t >= w.start.getTime() && t <= w.end.getTime()
+    })
+    return { ok: true, skipped: true, entries: local }
+  }
+  const sb = getSupabaseClient()
+  if (!sb) {
+    const error = new Error('Không tạo được Supabase client.')
+    return { ok: false, error }
+  }
+  try {
+    const { data, error } = await sb
+      .from(POS_RETURN_LEDGER_TABLE)
+      .select('id, created_at, order_id, payload')
+      .gte('created_at', w.start.toISOString())
+      .lte('created_at', w.end.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(2000)
+    if (error) {
+      console.error('[posReturnLedger] fetch range', error)
+      return { ok: false, error }
+    }
+    const entries = (data || [])
+      .map((row) => normalizeLedgerEntryFromPayload(row))
+      .filter(Boolean)
+    return { ok: true, entries }
+  } catch (error) {
+    console.error('[posReturnLedger] fetch range', error)
     return { ok: false, error }
   }
 }

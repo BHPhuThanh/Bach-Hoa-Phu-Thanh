@@ -2178,6 +2178,13 @@ async function saveCatalogSnapshotToSupabase(products, fileName) {
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function fetchCatalogSnapshotFromPersistentStore() {
+  return fetchCatalogSnapshotFromPersistentStoreUncached()
+}
+
+/** Promise boot duy nhất / phiên — mọi `fetchProducts()` dùng chung, không gọi lại Supabase khi đổi tab. */
+let catalogBootFetchPromise = null
+
+async function fetchCatalogSnapshotFromPersistentStoreUncached() {
   if (isSupabaseConfigured()) {
     const [fromSnap, fromProducts] = await Promise.all([
       fetchCatalogSnapshotFromSupabase(),
@@ -2255,17 +2262,20 @@ export function readCatalogSnapshotSync() {
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function fetchProducts() {
-  const r = await fetchCatalogSnapshotFromPersistentStore()
+  if (!catalogBootFetchPromise) {
+    catalogBootFetchPromise = fetchCatalogSnapshotFromPersistentStoreUncached()
+  }
+  const r = await catalogBootFetchPromise
   if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)
   return r
 }
 
 /**
- * Tải lại danh mục từ nguồn bền (Supabase `products` / snapshot, …) — dùng sau insert/update như mutate/revalidate.
+ * Tải lại danh mục từ nguồn bền — chỉ sau thao tác ghi DB (insert/update/xóa), không dùng khi đổi tab.
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function revalidateCatalogFromStore() {
-  const r = await fetchCatalogSnapshotFromPersistentStore()
+  const r = await fetchCatalogSnapshotFromPersistentStoreUncached()
   if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)
   return r
 }
@@ -2403,6 +2413,60 @@ export function applyProductDataToCatalog(products, productData) {
     return prepareCatalogForPosSearch(buildDisplayCatalog(next))
   }
   return products
+}
+
+/**
+ * Áp một sự kiện Supabase Realtime (postgres_changes của bảng `products`) vào catalog hiển thị
+ * — cập nhật incremental, KHÔNG fetch lại toàn bộ catalog/snapshot.
+ *
+ * - INSERT/UPDATE: chuyển `payload.new` thành biến thể phẳng rồi vá vào biến thể sẵn có (theo `ma_hang`)
+ *   hoặc thêm mới nếu chưa có.
+ * - DELETE (hard delete): loại biến thể theo `payload.old.ma_hang`.
+ *
+ * @param {Array} products — catalog hiển thị hiện tại (mảng nhóm có `groupVariants`).
+ * @param {{ eventType?: string, type?: string, new?: object, old?: object }} payload
+ * @returns {Array} catalog hiển thị mới (đã sẵn sàng tìm kiếm POS) — trả về tham chiếu cũ nếu không đổi.
+ */
+export function applyRealtimeProductChangeToCatalog(products, payload) {
+  const list = Array.isArray(products) ? products : []
+  if (!payload || typeof payload !== 'object') return products
+
+  const eventType = String(payload.eventType ?? payload.type ?? '').toUpperCase()
+  const newRow = payload.new && typeof payload.new === 'object' ? payload.new : null
+  const oldRow = payload.old && typeof payload.old === 'object' ? payload.old : null
+
+  const removeByCode = (code) => {
+    const target = String(code ?? '').trim()
+    if (!target) return products
+    const ids = list
+      .flatMap((p) => p.groupVariants || [p])
+      .filter((v) => String(v.code ?? '').trim() === target)
+      .map((v) => v.id)
+    if (ids.length === 0) return products
+    return applyProductDataToCatalog(list, { type: 'remove_variants', variantIds: ids })
+  }
+
+  if (eventType === 'DELETE') {
+    return removeByCode(oldRow?.[PRODUCT_PK_COLUMN])
+  }
+
+  if (!newRow) return products
+  const code = String(newRow[PRODUCT_PK_COLUMN] ?? '').trim()
+  if (!code) return products
+
+  const existing = list
+    .flatMap((p) => p.groupVariants || [p])
+    .find((v) => String(v.code ?? '').trim() === code)
+
+  const converted = supabaseProductRowToFlatCatalogRow(newRow, existing ? existing.id : `rt-${code}`)
+  if (!converted) return products
+
+  if (existing) {
+    const patch = { ...converted }
+    delete patch.id // giữ nguyên id biến thể cũ để không phá liên kết tham chiếu
+    return applyProductDataToCatalog(list, { type: 'patch_variant', variantId: existing.id, patch })
+  }
+  return applyProductDataToCatalog(list, { type: 'append_flat_variants', variants: [converted] })
 }
 
 /**

@@ -1,4 +1,5 @@
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { getReportTimeWindow, isOrderInRange } from './reportUtils.js'
 
 const IDB_DB_NAME = 'csv-preview-sales-v1'
 const IDB_STORE = 'orders'
@@ -69,7 +70,7 @@ export function saveOrderWithTimeout(order, ms = 3000) {
   })
 }
 
-/** Mới nhất trước */
+/** Mới nhất trước — toàn bộ lịch sử (chỉ dùng khi thật sự cần, ví dụ POS gộp mã bán). */
 export async function getAllOrders() {
   if (isSupabaseConfigured()) {
     const sb = getSupabaseClient()
@@ -88,6 +89,10 @@ export async function getAllOrders() {
     list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     return list
   }
+  return fetchAllOrdersFromIdb()
+}
+
+async function fetchAllOrdersFromIdb() {
   const db = await openIdb()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly')
@@ -101,6 +106,37 @@ export async function getAllOrders() {
   })
 }
 
+/**
+ * Lấy đơn trong cửa sổ báo cáo (Doanh thu / Đơn hàng) — query theo ngày trên Supabase, không kéo toàn bộ lịch sử.
+ * @param {string} rangeKey — RANGE_* từ reportUtils
+ * @param {string} [customFromYmd]
+ * @param {string} [customToYmd]
+ */
+export async function getOrdersForReportRange(rangeKey, customFromYmd, customToYmd, now = new Date()) {
+  const w = getReportTimeWindow(rangeKey, customFromYmd, customToYmd, now)
+  if (!w) return []
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseClient()
+    if (!sb) throw new Error('Supabase chưa khởi tạo')
+    const { data, error } = await sb
+      .from(SALES_TABLE)
+      .select('payload, created_at')
+      .gte('created_at', w.start.toISOString())
+      .lte('created_at', w.end.toISOString())
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    const list = (data || [])
+      .map((row) => {
+        const p = row.payload
+        return p && typeof p === 'object' ? p : null
+      })
+      .filter(Boolean)
+    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    return list
+  }
+  const all = await fetchAllOrdersFromIdb()
+  return all.filter((o) => isOrderInRange(o.createdAt, w.start, w.end))
+}
 export async function clearAllOrders() {
   if (isSupabaseConfigured()) {
     const sb = getSupabaseClient()
