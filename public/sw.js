@@ -2,7 +2,7 @@
  * Service Worker — cache tài nguyên tĩnh sau lần tải đầu (mạng yếu / lần sau mở nhanh hơn).
  * Không cache HTML navigation để tránh bundle JS cũ; chỉ cache JS/CSS/font/worker.
  */
-const CACHE_VERSION = 'bhpt-pwa-v1'
+const CACHE_VERSION = 'bhpt-pwa-v2'
 const CACHE_NAME = `bhpt-assets-${CACHE_VERSION}`
 
 const STATIC_EXT = /\.(?:js|mjs|css|woff2?|svg|png|jpg|jpeg|gif|webp|ico|worker\.js|wasm)$/i
