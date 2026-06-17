@@ -56,7 +56,7 @@ import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './a
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
 const POS_DRAFT_LAST_CLEARED_KEY = 'pos_draft_last_cleared'
 const POS_DRAFT_CLEAR_BUMP_KEY = 'pos_draft_clear_bump'
-import { getAllOrders, saveOrderWithTimeout } from './ordersDb.js'
+import { getAllOrders, getRecentOrders, saveOrderWithTimeout } from './ordersDb.js'
 import {
   enqueueOfflineOrder,
   getPendingOfflineOrders,
@@ -5589,10 +5589,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const openReturnPickModal = useCallback(() => {
     setReturnPickModalOpen(true)
     setReturnPickModalLoading(true)
-    getAllOrders()
+    getRecentOrders(6)
       .then((list) => {
-        const arr = Array.isArray(list) ? list : []
-        setReturnPickModalOrders(arr.slice(0, 6))
+        setReturnPickModalOrders(Array.isArray(list) ? list : [])
       })
       .catch(() => setReturnPickModalOrders([]))
       .finally(() => setReturnPickModalLoading(false))

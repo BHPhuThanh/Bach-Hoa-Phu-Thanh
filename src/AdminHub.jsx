@@ -32,7 +32,7 @@ import {
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
-import { clearAllOrders, deleteOrderById, getOrdersForReportRange, saveOrder } from './ordersDb.js'
+import { clearAllOrders, deleteOrderById, getOrderById, getOrdersForReportRange, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
 import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
 import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
@@ -129,7 +129,7 @@ import {
   POS_RETURN_LEDGER_BUMP_EVENT,
 } from './posReturnLedgerRepository.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
-import { buildAdminHubOrderDetailHref, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
+import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
 import AdminHubCostAdjustPanel from './AdminHubCostAdjustPanel.jsx'
@@ -161,8 +161,8 @@ import './dashboard-dark.css'
 import './adminHub.css'
 import './barcodeScan.css'
 import './costAdjustCreatePage.css'
+import { useCatalog } from './CatalogProvider.jsx'
 import {
-  applyProductDataToCatalog,
   describeCatalogPersistError,
   fetchProductsCostAndStockByMaHang,
   flattenDisplayCatalogToVariants,
@@ -945,19 +945,18 @@ function appendInboundDraftLinesFromFlatRows(setInboundFormLines, flatRows) {
     console.warn('[AdminHub appendInboundDraftLinesFromFlatRows]', e)
     return
   }
-  setInboundFormLines((prev) => {
-    const next = [...prev]
-    for (const prod of display) {
-      const vars =
-        Array.isArray(prod.groupVariants) && prod.groupVariants.length > 0
-          ? prod.groupVariants
-          : [prod]
-      for (const v of vars) {
-        next.push(createInboundFormLineFromProductVariant(prod, v))
-      }
+  const added = []
+  for (const prod of display) {
+    const vars =
+      Array.isArray(prod.groupVariants) && prod.groupVariants.length > 0
+        ? prod.groupVariants
+        : [prod]
+    for (const v of vars) {
+      added.push(createInboundFormLineFromProductVariant(prod, v))
     }
-    return next
-  })
+  }
+  if (!added.length) return
+  setInboundFormLines((prev) => [...added, ...prev])
 }
 
 function defaultInboundOrders() {
@@ -1217,6 +1216,7 @@ export default function AdminHub({
   )
   const parentCatalogSupplied = productsProp !== undefined && productsProp !== null
   const parentProducts = parentCatalogSupplied ? productsProp : EMPTY_CATALOG_LIST
+  const { initialCatalogLoadPending, catalogStoreHydrated } = useCatalog()
   const [activeTab, setActiveTab] = useState(() => {
     if (standaloneInboundCreate) return TAB_INBOUND_DRAFT
     if (hangHoaGoodsOpenRequest?.rawId) return TAB_GOODS
@@ -1230,27 +1230,43 @@ export default function AdminHub({
   const [ordersRefreshing, setOrdersRefreshing] = useState(false)
   /** Khóa cửa sổ đã fetch — tránh gọi lại API khi đổi tab trong cùng khoảng ngày. */
   const ordersLoadedFetchKeyRef = useRef('')
+  const ordersFetchInFlightRef = useRef(0)
 
   const fetchOrdersForReportWindow = useCallback(
     async (rangeKey, fromYmd, toYmd, { cacheKey, force = false, showLoading = false } = {}) => {
       const key = cacheKey ?? `${rangeKey}|${fromYmd}|${toYmd}`
-      if (!force && ordersLoadedFetchKeyRef.current === key) return
-      if (showLoading) setLoading(true)
+      if (!force && ordersLoadedFetchKeyRef.current === key) {
+        setLoading(false)
+        setOrdersRefreshing(false)
+        return
+      }
+
+      const usePrimarySpinner = Boolean(showLoading)
+      ordersFetchInFlightRef.current += 1
+      if (usePrimarySpinner) setLoading(true)
       else setOrdersRefreshing(true)
+
       try {
         const list = await getOrdersForReportRange(rangeKey, fromYmd, toYmd)
         setOrders(list)
         ordersLoadedFetchKeyRef.current = key
-        const lr = await fetchPosReturnLedgerEntriesForReportRange(rangeKey, fromYmd, toYmd)
-        if (lr.ok) {
-          setReturnDayLedger(Array.isArray(lr.entries) ? lr.entries : [])
+        try {
+          const lr = await fetchPosReturnLedgerEntriesForReportRange(rangeKey, fromYmd, toYmd)
+          if (lr.ok) {
+            setReturnDayLedger(Array.isArray(lr.entries) ? lr.entries : [])
+          }
+        } catch (ledgerErr) {
+          console.error('[AdminHub] fetchPosReturnLedgerEntriesForReportRange', ledgerErr)
         }
       } catch (e) {
         console.error('[AdminHub] fetchOrdersForReportWindow', e)
-        if (showLoading) setOrders([])
+        if (usePrimarySpinner) setOrders([])
       } finally {
-        setLoading(false)
-        setOrdersRefreshing(false)
+        ordersFetchInFlightRef.current = Math.max(0, ordersFetchInFlightRef.current - 1)
+        if (ordersFetchInFlightRef.current === 0) {
+          setLoading(false)
+          setOrdersRefreshing(false)
+        }
       }
     },
     []
@@ -1321,6 +1337,43 @@ export default function AdminHub({
       return mergeRevenueTableRows(ovFiltered, [])
     }
   }, [orders, ovFiltered, returnDayLedger, ovRange, ovFrom, ovTo])
+
+  /** Đơn đã mở chi tiết — giữ object khi `orders` đổi khoảng ngày (Doanh thu ≠ Đơn hàng). */
+  const posDetailOrderCacheRef = useRef(new Map())
+
+  const rememberPosDetailOrder = useCallback((order) => {
+    if (!order?.id) return
+    posDetailOrderCacheRef.current.set(String(order.id), order)
+  }, [])
+
+  const findPosOrderForDetail = useCallback(
+    (orderId) => {
+      const sid = String(orderId ?? '').trim()
+      if (!sid) return null
+      const fromList = orders.find((o) => String(o.id) === sid)
+      if (fromList) return fromList
+      const cached = posDetailOrderCacheRef.current.get(sid)
+      if (cached) return cached
+      for (const row of ovRevenueTableRows) {
+        if (row?.kind === 'sale' && row.order && String(row.order.id) === sid) {
+          return row.order
+        }
+      }
+      return null
+    },
+    [orders, ovRevenueTableRows]
+  )
+
+  const openRevenueOrderInNewTab = useCallback(
+    (order) => {
+      const id = String(order?.id ?? '').trim()
+      if (!id) return
+      rememberPosDetailOrder(order)
+      const url = buildAdminOrdersDetailAbsUrl(id)
+      if (url) window.open(url, '_blank', 'noopener,noreferrer')
+    },
+    [rememberPosDetailOrder]
+  )
 
   const handleExport = () => {
     if (revenueReadOnly) {
@@ -1565,6 +1618,11 @@ export default function AdminHub({
   const catalogList = parentCatalogSupplied
     ? parentProducts
     : (standaloneCatalog?.products ?? EMPTY_CATALOG_LIST)
+
+  const catalogBootstrapPending = useMemo(
+    () => initialCatalogLoadPending || (!catalogStoreHydrated && catalogList.length === 0),
+    [initialCatalogLoadPending, catalogStoreHydrated, catalogList.length]
+  )
 
   const ovStats = useMemo(() => {
     try {
@@ -2131,7 +2189,13 @@ export default function AdminHub({
     if (!pending?.baseCode) return
     const flat = flattenDisplayCatalogToVariants(catalogListForGoodsEdit)
     const hit = flat.find((v) => String(v?.code ?? '').trim() === pending.baseCode)
-    if (!hit) return
+    if (!hit) {
+      if (catalogStoreHydrated && !initialCatalogLoadPending) {
+        inboundQuickEditResyncPendingRef.current = null
+        setInboundQuickEditResyncing(false)
+      }
+      return
+    }
     inboundQuickEditResyncPendingRef.current = null
     const preserve = pending.preserve || {}
     const seeded = buildGoodsDetailDraft(hit)
@@ -2146,7 +2210,7 @@ export default function AdminHub({
       weightRaw: preserve.weightRaw ?? seeded?.weightRaw ?? '',
     })
     setInboundQuickEditResyncing(false)
-  }, [catalogListForGoodsEdit, buildGoodsDetailDraft])
+  }, [catalogListForGoodsEdit, buildGoodsDetailDraft, catalogStoreHydrated, initialCatalogLoadPending])
 
   useEffect(() => {
     if (!inboundQuickEditExpandId) return
@@ -4069,7 +4133,10 @@ export default function AdminHub({
 
   const addInboundFormLine = useCallback((product, variant) => {
     const hint = brandThuongHieuFromProductVariant(product, variant)
-    setInboundFormLines((prev) => [...prev, createInboundFormLineFromProductVariant(product, variant)])
+    setInboundFormLines((prev) => [
+      createInboundFormLineFromProductVariant(product, variant),
+      ...prev,
+    ])
     setInboundFormProductQ('')
     if (hint) {
       setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : hint))
@@ -4384,7 +4451,7 @@ export default function AdminHub({
           setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : brandHint))
         })
       }
-      return [...cur, ...toAdd]
+      return [...toAdd, ...cur]
     })
     setInboundQuickPickOpen(false)
     setInboundQuickPickSelected(new Set())
@@ -5688,17 +5755,21 @@ export default function AdminHub({
     setActiveTab(toPosReturnDetailTabId(lid))
   }, [])
 
-  const openPosDetailTab = useCallback((order) => {
-    if (!order?.id) return
-    const oid = String(order.id)
-    setOpenPosDetailOrderIds((prev) => {
-      if (prev.includes(oid)) return prev
-      const appended = [...prev, oid]
-      if (appended.length <= MAX_OPEN_POS_ORDER_DETAIL_TABS) return appended
-      return appended.slice(-MAX_OPEN_POS_ORDER_DETAIL_TABS)
-    })
-    setActiveTab(toPosOrderDetailTabId(oid))
-  }, [])
+  const openPosDetailTab = useCallback(
+    (order) => {
+      if (!order?.id) return
+      rememberPosDetailOrder(order)
+      const oid = String(order.id)
+      setOpenPosDetailOrderIds((prev) => {
+        if (prev.includes(oid)) return prev
+        const appended = [...prev, oid]
+        if (appended.length <= MAX_OPEN_POS_ORDER_DETAIL_TABS) return appended
+        return appended.slice(-MAX_OPEN_POS_ORDER_DETAIL_TABS)
+      })
+      setActiveTab(toPosOrderDetailTabId(oid))
+    },
+    [rememberPosDetailOrder]
+  )
 
   const handleInventoryLedgerDocActivate = useCallback(
     (row) => {
@@ -5706,9 +5777,14 @@ export default function AdminHub({
       const doc = String(row.docNo ?? '').trim()
       setSelected(null)
       if (/^HD/i.test(doc)) {
-        const o = orders.find(
-          (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
-        )
+        const o =
+          orders.find(
+            (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
+          ) ??
+          [...posDetailOrderCacheRef.current.values()].find(
+            (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
+          ) ??
+          null
         if (o) {
           syncHubUrlToMainTab(TAB_ORDERS)
           openPosDetailTab(o)
@@ -5765,17 +5841,34 @@ export default function AdminHub({
       hubDeepLinkConsumeRef.current?.()
       return
     }
-    if (loading) return
+
     const k = `${hubDeepLink.posOrderId ?? ''}|${hubDeepLink.inboundOrderId ?? ''}|${hubDeepLink.posReturnLedgerId ?? ''}`
     if (hubDeepLinkHandledKeyRef.current === k) return
     hubDeepLinkHandledKeyRef.current = k
 
     const { posOrderId, inboundOrderId, posReturnLedgerId } = hubDeepLink
+
     if (posOrderId) {
-      const o = orders.find((x) => String(x.id) === String(posOrderId))
-      if (o) openPosDetailTab(o)
-      else window.alert('Không tìm thấy đơn bán.')
-    } else if (inboundOrderId) {
+      void (async () => {
+        let o = findPosOrderForDetail(posOrderId)
+        if (!o) {
+          try {
+            o = await getOrderById(posOrderId)
+            if (o) rememberPosDetailOrder(o)
+          } catch (e) {
+            console.error('[AdminHub] getOrderById deep-link', posOrderId, e)
+          }
+        }
+        if (o) openPosDetailTab(o)
+        else window.alert('Không tìm thấy đơn bán.')
+        hubDeepLinkConsumeRef.current?.()
+      })()
+      return
+    }
+
+    if (loading) return
+
+    if (inboundOrderId) {
       const row = inboundOrders.find((x) => String(x.id) === String(inboundOrderId))
       if (row) openInboundDetailTab(row)
       else window.alert('Không tìm thấy phiếu nhập.')
@@ -5791,6 +5884,8 @@ export default function AdminHub({
     orders,
     inboundOrders,
     returnDayLedger,
+    findPosOrderForDetail,
+    rememberPosDetailOrder,
     openPosDetailTab,
     openInboundDetailTab,
     openPosReturnDetailTab,
@@ -6610,6 +6705,14 @@ export default function AdminHub({
     setOrdersDateDdOpen(false)
   }, [])
 
+  /** Rời tab Doanh thu / Đơn hàng — không để spinner kẹt khi fetch nền còn chạy. */
+  useEffect(() => {
+    if (activeTab !== TAB_OVERVIEW && activeTab !== TAB_ORDERS) {
+      setLoading(false)
+      setOrdersRefreshing(false)
+    }
+  }, [activeTab])
+
   /** Doanh thu / Đơn hàng — fetch theo khoảng ngày; không auto-fetch khi đổi tab nếu đã có cùng khoảng. */
   useEffect(() => {
     if (activeTab === TAB_OVERVIEW) {
@@ -6942,8 +7045,8 @@ export default function AdminHub({
   const posDetailTabOid = useMemo(() => parsePosOrderDetailTabId(activeTab), [activeTab])
   const posDetailOrderRow = useMemo(() => {
     if (!posDetailTabOid) return null
-    return orders.find((o) => String(o.id) === String(posDetailTabOid)) ?? null
-  }, [posDetailTabOid, orders])
+    return findPosOrderForDetail(posDetailTabOid)
+  }, [posDetailTabOid, findPosOrderForDetail])
   const posDetailNorm = useMemo(
     () =>
       posDetailOrderRow
@@ -6978,6 +7081,12 @@ export default function AdminHub({
     if (loading) return
     if (openPosDetailOrderIds.length === 0) return
     const validIds = new Set(orders.map((o) => String(o.id)))
+    for (const id of openPosDetailOrderIds) {
+      const sid = String(id)
+      if (!validIds.has(sid) && posDetailOrderCacheRef.current.has(sid)) {
+        validIds.add(sid)
+      }
+    }
     const invalid = openPosDetailOrderIds.filter((id) => !validIds.has(String(id)))
     if (invalid.length === 0) return
     const nextOpen = openPosDetailOrderIds.filter((id) => !invalid.includes(id))
@@ -7308,6 +7417,7 @@ export default function AdminHub({
                 onExport={handleExport}
                 onClearAll={handleClearAll}
                 onOpenPosReturnDetail={openPosReturnDetailTab}
+                onOpenOrderInNewTab={openRevenueOrderInNewTab}
                 onDeleteOrder={handleDeleteOrder}
                 deletingOrderId={deletingOrderId}
                 isDeletingOrder={isDeletingOrder}
@@ -7682,15 +7792,17 @@ export default function AdminHub({
               </div>
               {goodsRowsFiltered.length === 0 ? (
                 <div className="ah-goods-empty-stack">
-                  {catalogList.length === 0 ? (
+                  {catalogBootstrapPending ? (
                     <p className="ah-goods-loading-line" role="status">
                       Đang tải dữ liệu...
                     </p>
                   ) : null}
                   <div className="admin-hub-muted ah-goods-empty-inset">
-                    {catalogList.length === 0
-                      ? 'Chưa có dữ liệu hàng hóa. Dùng Import file hoặc nhập CSV ở màn Bán hàng.'
-                      : 'Không có dòng nào khớp tìm kiếm hoặc bộ lọc (ngày tạo, thương hiệu).'}
+                    {catalogBootstrapPending
+                      ? 'Đang đồng bộ danh mục hàng từ máy chủ…'
+                      : catalogList.length === 0
+                        ? 'Chưa có dữ liệu hàng hóa. Dùng Import file hoặc nhập CSV ở màn Bán hàng.'
+                        : 'Không có dòng nào khớp tìm kiếm hoặc bộ lọc (ngày tạo, thương hiệu).'}
                   </div>
                 </div>
               ) : (

@@ -137,6 +137,58 @@ export async function getOrdersForReportRange(rangeKey, customFromYmd, customToY
   const all = await fetchAllOrdersFromIdb()
   return all.filter((o) => isOrderInRange(o.createdAt, w.start, w.end))
 }
+
+/**
+ * Lấy một đơn theo id — query đơn lẻ (đổi trả / deep-link), không tải toàn bộ lịch sử.
+ * @param {string} orderIdRaw
+ * @returns {Promise<object | null>}
+ */
+export async function getOrderById(orderIdRaw) {
+  const orderId = String(orderIdRaw ?? '').trim()
+  if (!orderId) return null
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseClient()
+    if (!sb) throw new Error('Supabase chưa khởi tạo')
+    const { data, error } = await sb.from(SALES_TABLE).select('*').eq('id', orderId).maybeSingle()
+    if (error) throw error
+    const p = data?.payload
+    return p && typeof p === 'object' ? p : null
+  }
+  const db = await openIdb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly')
+    const req = tx.objectStore(IDB_STORE).get(orderId)
+    req.onsuccess = () => resolve(req.result ?? null)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+/**
+ * N đơn mới nhất — modal đổi trả POS (vài KB), không getAllOrders.
+ * @param {number} [limit]
+ */
+export async function getRecentOrders(limit = 6) {
+  const n = Math.max(1, Math.min(20, Number(limit) || 6))
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseClient()
+    if (!sb) throw new Error('Supabase chưa khởi tạo')
+    const { data, error } = await sb
+      .from(SALES_TABLE)
+      .select('payload, created_at')
+      .order('created_at', { ascending: false })
+      .limit(n)
+    if (error) throw error
+    return (data || [])
+      .map((row) => {
+        const p = row.payload
+        return p && typeof p === 'object' ? p : null
+      })
+      .filter(Boolean)
+  }
+  const all = await fetchAllOrdersFromIdb()
+  return all.slice(0, n)
+}
+
 export async function clearAllOrders() {
   if (isSupabaseConfigured()) {
     const sb = getSupabaseClient()

@@ -19,9 +19,6 @@ export function useCatalog() {
   return ctx
 }
 
-/** Khóa module — chỉ 1 lần fetch boot / phiên (sống qua StrictMode remount). */
-let catalogBootEffectRan = false
-
 /**
  * Provider gốc: danh mục + fetch lần đầu + Realtime singleton.
  * Bọc ngoài Router để chuyển tab/route không unmount WebSocket.
@@ -40,7 +37,7 @@ export function CatalogProvider({ children }) {
   const [fileName, setFileName] = useState(catalogBoot.fileName)
   const [csvRowCount, setCsvRowCount] = useState(catalogBoot.csvRowCount)
   const [initialCatalogLoadPending, setInitialCatalogLoadPending] = useState(
-    !catalogBoot.products?.length
+    () => !catalogBoot.products?.length
   )
   const [catalogStoreHydrated, setCatalogStoreHydrated] = useState(false)
   const [catalogLoadError, setCatalogLoadError] = useState('')
@@ -49,6 +46,7 @@ export function CatalogProvider({ children }) {
   productsRef.current = products
   const catalogStoreHydratedRef = useRef(false)
   const initialCatalogLoadPendingRef = useRef(initialCatalogLoadPending)
+  /** Chỉ true sau khi fetchProducts boot trả về có products — cho phép retry khi lỗi. */
   const hasFetchedRef = useRef(false)
 
   useEffect(() => {
@@ -59,19 +57,18 @@ export function CatalogProvider({ children }) {
     initialCatalogLoadPendingRef.current = initialCatalogLoadPending
   }, [initialCatalogLoadPending])
 
-  /** Tải catalog đầy đủ ĐÚNG 1 LẦN khi mở web — không refetch khi đổi tab / remount. */
+  /** Tải catalog đầy đủ khi mở web — không refetch khi đổi tab; retry được nếu boot lỗi. */
   useEffect(() => {
-    if (catalogBootEffectRan || hasFetchedRef.current) return
-    catalogBootEffectRan = true
-    hasFetchedRef.current = true
+    if (hasFetchedRef.current) return
 
     let cancelled = false
     void (async () => {
       try {
         const snap = await fetchProducts()
         if (cancelled) return
+
         if (snap?.products?.length) {
-          setInitialCatalogLoadPending(false)
+          hasFetchedRef.current = true
           setProducts((prev) => {
             if (!isSupabaseConfigured() && prev.length > 0) return prev
             queueMicrotask(() => {
@@ -81,24 +78,34 @@ export function CatalogProvider({ children }) {
             return prepareCatalogForPosSearch(snap.products)
           })
         } else if (isSupabaseConfigured()) {
-          setInitialCatalogLoadPending(false)
           setCatalogLoadError(
             (prev) =>
               prev ||
               'Danh mục trên Supabase đang trống. Đẩy dữ liệu từ file CSV trong repo một lần (máy dev): `npm run push-catalog` với SUPABASE_URL và khóa ghi — ví dụ đẩy `public/bhphuthanh.csv` lên Supabase.'
           )
         } else {
-          setInitialCatalogLoadPending(false)
           setCatalogLoadError(
             (prev) =>
               prev ||
               'Chưa cấu hình Supabase (VITE_SUPABASE_URL và VITE_SUPABASE_ANON_KEY). Ứng dụng không còn tự tải file CSV mặc định; hãy cấu hình env và tải lại — hoặc dùng «Nhập CSV» để nạp thủ công (offline).'
           )
         }
+      } catch (err) {
+        hasFetchedRef.current = false
+        console.error('[CatalogProvider] boot fetchProducts', err)
+        setCatalogLoadError(
+          (prev) =>
+            prev ||
+            'Không tải được danh mục từ máy chủ. Kiểm tra mạng / Supabase rồi tải lại trang.'
+        )
       } finally {
-        if (!cancelled) setCatalogStoreHydrated(true)
+        if (!cancelled) {
+          setInitialCatalogLoadPending(false)
+          setCatalogStoreHydrated(true)
+        }
       }
     })()
+
     return () => {
       cancelled = true
     }
@@ -114,8 +121,15 @@ export function CatalogProvider({ children }) {
           const next = applyRealtimeProductChangeToCatalog(prev, payload)
           if (next === prev) return prev
           productsRef.current = next
+          const variantCount = flattenDisplayCatalogToVariants(next).length
+          if (variantCount > 0) {
+            queueMicrotask(() => {
+              setInitialCatalogLoadPending(false)
+              setCatalogStoreHydrated(true)
+            })
+          }
           queueMicrotask(() => {
-            setCsvRowCount(flattenDisplayCatalogToVariants(next).length)
+            setCsvRowCount(variantCount)
           })
           return next
         })

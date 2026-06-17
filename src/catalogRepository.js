@@ -2186,10 +2186,18 @@ let catalogBootFetchPromise = null
 
 async function fetchCatalogSnapshotFromPersistentStoreUncached() {
   if (isSupabaseConfigured()) {
-    const [fromSnap, fromProducts] = await Promise.all([
-      fetchCatalogSnapshotFromSupabase(),
-      fetchDisplayCatalogFromSupabaseProductsTable(),
-    ])
+    let fromSnap = null
+    let fromProducts = null
+    try {
+      fromSnap = await fetchCatalogSnapshotFromSupabase()
+    } catch (e) {
+      console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
+    }
+    try {
+      fromProducts = await fetchDisplayCatalogFromSupabaseProductsTable()
+    } catch (e) {
+      console.warn('[catalogRepository] bảng products lỗi', e)
+    }
     if (fromSnap?.products?.length && fromProducts?.products?.length) {
       return mergeSnapshotCatalogWithProductsTable(fromSnap, fromProducts)
     }
@@ -2263,7 +2271,10 @@ export function readCatalogSnapshotSync() {
  */
 export async function fetchProducts() {
   if (!catalogBootFetchPromise) {
-    catalogBootFetchPromise = fetchCatalogSnapshotFromPersistentStoreUncached()
+    catalogBootFetchPromise = fetchCatalogSnapshotFromPersistentStoreUncached().catch((e) => {
+      catalogBootFetchPromise = null
+      throw e
+    })
   }
   const r = await catalogBootFetchPromise
   if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)

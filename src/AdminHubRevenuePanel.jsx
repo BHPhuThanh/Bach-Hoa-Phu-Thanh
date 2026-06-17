@@ -28,21 +28,27 @@ function formatVndProfitReturn(n) {
   return body
 }
 
-function RevenueOrderDetailLink({ orderId }) {
-  const oid = String(orderId ?? '').trim()
-  const href = oid ? buildAdminOrdersDetailAbsUrl(oid) : ''
+function RevenueOrderDetailLink({ orderId, order, onOpenOrderInNewTab }) {
+  const oid = String(orderId ?? order?.id ?? '').trim()
+  if (!oid) return <span className="ah-revenue-order-detail-dash">—</span>
+  const href = buildAdminOrdersDetailAbsUrl(oid)
   if (!href) return <span className="ah-revenue-order-detail-dash">—</span>
   return (
-    <a
-      href={href}
+    <button
+      type="button"
       className="ah-revenue-order-detail-link"
-      target="_blank"
-      rel="noopener noreferrer"
       title="Xem chi tiết đơn trong tab mới"
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (typeof onOpenOrderInNewTab === 'function') {
+          onOpenOrderInNewTab(order?.id ? order : { id: oid })
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }
+      }}
     >
       Xem chi tiết
-    </a>
+    </button>
   )
 }
 
@@ -50,6 +56,7 @@ function RevenueTableRows({
   rows,
   selected,
   setSelected,
+  onOpenOrderInNewTab,
   onOpenPosReturnDetail,
   revenueReadOnly,
   onDeleteOrder,
@@ -105,7 +112,7 @@ function RevenueTableRows({
               {formatVndSafe(profit)}
             </td>
             <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
-              <RevenueOrderDetailLink orderId={o.id} />
+              <RevenueOrderDetailLink orderId={o.id} order={o} onOpenOrderInNewTab={onOpenOrderInNewTab} />
             </td>
             <td className="ah-revenue-cell-actions" data-label="Thao tác" onClick={(e) => e.stopPropagation()}>
               {!revenueReadOnly ? (
@@ -168,7 +175,10 @@ function RevenueTableRows({
             {formatVndProfitReturn(r.displayProfit)}
           </td>
           <td className="ah-revenue-cell-detail" data-label="Chi tiết" onClick={(e) => e.stopPropagation()}>
-            <RevenueOrderDetailLink orderId={r.sourceOrderId} />
+            <RevenueOrderDetailLink
+              orderId={r.sourceOrderId}
+              onOpenOrderInNewTab={onOpenOrderInNewTab}
+            />
           </td>
           <td className="ah-revenue-cell-actions" data-label="Thao tác">
             <span className="ah-revenue-order-detail-dash">—</span>
@@ -214,6 +224,7 @@ export default function AdminHubRevenuePanel({
   onExport,
   onClearAll,
   onOpenPosReturnDetail,
+  onOpenOrderInNewTab,
   onDeleteOrder,
   deletingOrderId,
   isDeletingOrder,
@@ -397,6 +408,7 @@ export default function AdminHubRevenuePanel({
                   rows={rowsSafe}
                   selected={selected}
                   setSelected={setSelected}
+                  onOpenOrderInNewTab={onOpenOrderInNewTab}
                   onOpenPosReturnDetail={onOpenPosReturnDetail}
                   revenueReadOnly={revenueReadOnly}
                   onDeleteOrder={onDeleteOrder}
