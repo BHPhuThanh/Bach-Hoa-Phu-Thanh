@@ -34,6 +34,12 @@ function parseMoneyDraftVi(raw) {
   return Number.isFinite(n) ? n : 0
 }
 
+function inboundRowDomId(line) {
+  const raw = String(line?.ma_hang || line?.code || line?.variantId || line?.lineId || '').trim()
+  const safe = raw.replace(/[^\w.-]/g, '_') || 'row'
+  return `inbound-row-${safe}`
+}
+
 function propsEqual(a, b) {
   if (a === b) return true
   if (a.ln !== b.ln || a.idx !== b.idx || a.catalogListForInbound !== b.catalogListForInbound) return false
@@ -72,7 +78,7 @@ const AdminHubInboundDraftLineRow = memo(function AdminHubInboundDraftLineRow({
   )
 
   return (
-    <tr className="ah-inbound-draft-line-card">
+    <tr id={inboundRowDomId(ln)} className="ah-inbound-draft-line-card">
       <td className="ah-inbound-ln-del ah-inbound-draft-td-del">
         <button
           type="button"

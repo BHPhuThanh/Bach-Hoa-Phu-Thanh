@@ -120,6 +120,23 @@ function findCatalogVariantById(products, variantId) {
   return null
 }
 
+function formatActualDraftNumber(n) {
+  if (!Number.isFinite(n)) return ''
+  const rounded = Math.round(n * 1000) / 1000
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace('.', ',')
+}
+
+/** Tồn kho hệ thống hiển thị theo ĐVT dòng (dùng cho «Kiểm thêm»). */
+function systemStockDisplayNumber(branchQty, variant) {
+  if (branchQty == null || branchQty === '' || !Number.isFinite(Number(branchQty))) return 0
+  const n = Number(branchQty)
+  if (variant && typeof variant === 'object') {
+    const disp = displayTonKhoNumber(n, variant)
+    if (disp != null && Number.isFinite(disp)) return disp
+  }
+  return n
+}
+
 function buildRowFromVariant(product, variant) {
   const sq = variant.stockQty
   let branchQty = null
@@ -135,13 +152,13 @@ function buildRowFromVariant(product, variant) {
     unitLabel: normalizeCatalogUnitLabel(variant.unitLabel),
     branchQty,
     actualDraft: '',
-    reasonDraft: '',
-    noteDraft: '',
   }
 }
 
 export default function StockCheckCreatePage() {
   const searchRef = useRef(null)
+  const actualInputRefs = useRef(new Map())
+  const pendingFocusVariantIdRef = useRef(null)
   const [loading, setLoading] = useState(true)
   const [products, setProducts] = useState([])
   const [fileName, setFileName] = useState('')
@@ -220,17 +237,67 @@ export default function StockCheckCreatePage() {
 
   const existingIds = useMemo(() => new Set(rows.map((r) => r.variantId)), [rows])
 
+  const focusVariantRowNow = useCallback((variantId) => {
+    const id = String(variantId ?? '').trim()
+    if (!id) return
+    const rowCode = rows.find((r) => r.variantId === id)?.productCode || id
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`check-row-${rowCode}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const input = actualInputRefs.current.get(id)
+      input?.focus()
+      input?.select()
+    })
+  }, [rows])
+
+  const scheduleFocusVariantRow = useCallback(
+    (variantId) => {
+      const id = String(variantId ?? '').trim()
+      if (!id) return
+      const rowIndex = rows.findIndex((r) => r.variantId === id)
+      if (rowIndex < 0) return
+      const targetPage = Math.floor(rowIndex / pageSize) + 1
+      pendingFocusVariantIdRef.current = id
+      if (targetPage !== page) {
+        setPage(targetPage)
+      } else {
+        pendingFocusVariantIdRef.current = null
+        focusVariantRowNow(id)
+      }
+    },
+    [rows, pageSize, page, focusVariantRowNow]
+  )
+
+  useEffect(() => {
+    const id = pendingFocusVariantIdRef.current
+    if (!id) return
+    if (!rows.some((r) => r.variantId === id)) return
+    const rowIndex = rows.findIndex((r) => r.variantId === id)
+    const targetPage = Math.floor(rowIndex / pageSize) + 1
+    const maxPage = Math.max(1, Math.ceil(rows.length / pageSize) || 1)
+    const currentPage = Math.min(page, maxPage)
+    if (currentPage !== targetPage) return
+    pendingFocusVariantIdRef.current = null
+    focusVariantRowNow(id)
+  }, [rows, page, pageSize, focusVariantRowNow])
+
   const addVariant = useCallback(
     (product, variant) => {
       const id = String(variant.id)
-      if (existingIds.has(id)) return
-      // Sản phẩm vừa thêm hiển thị TRÊN CÙNG (đầu danh sách) để thấy ngay, khỏi cuộn.
+      if (existingIds.has(id)) {
+        setSearchQ('')
+        setSuggestOpen(false)
+        scheduleFocusVariantRow(id)
+        return
+      }
       setRows((r) => [buildRowFromVariant(product, variant), ...r])
       setSearchQ('')
       setSuggestOpen(false)
       setPage(1)
+      pendingFocusVariantIdRef.current = id
     },
-    [existingIds]
+    [existingIds, scheduleFocusVariantRow]
   )
 
   const onSearchKeyDown = useCallback(
@@ -312,6 +379,22 @@ export default function StockCheckCreatePage() {
     [products, resolveScanMatch, addVariant]
   )
 
+  const applyKiemThem = useCallback(
+    (key) => {
+      setRows((list) =>
+        list.map((row) => {
+          if (row.key !== key) return row
+          const x = parseStockInput(row.actualDraft)
+          if (x === null) return row
+          const v = findCatalogVariantById(products, row.variantId)
+          const systemStock = systemStockDisplayNumber(row.branchQty, v ?? undefined)
+          return { ...row, actualDraft: formatActualDraftNumber(systemStock + x) }
+        })
+      )
+    },
+    [products]
+  )
+
   const updateActual = useCallback((key, raw) => {
     setRows((list) =>
       list.map((row) => (row.key === key ? { ...row, actualDraft: raw } : row))
@@ -330,18 +413,6 @@ export default function StockCheckCreatePage() {
         const str = Number.isInteger(rounded) ? String(rounded) : String(rounded).replace('.', ',')
         return { ...row, actualDraft: str }
       })
-    )
-  }, [])
-
-  const updateReason = useCallback((key, raw) => {
-    setRows((list) =>
-      list.map((row) => (row.key === key ? { ...row, reasonDraft: raw } : row))
-    )
-  }, [])
-
-  const updateNoteRow = useCallback((key, raw) => {
-    setRows((list) =>
-      list.map((row) => (row.key === key ? { ...row, noteDraft: raw } : row))
     )
   }, [])
 
@@ -452,8 +523,8 @@ export default function StockCheckCreatePage() {
         branchQty: branchTon,
         actualQty: actualDisplay,
         deltaQty: deltaDisplay,
-        reason: String(row.reasonDraft ?? '').trim() || '—',
-        note: String(row.noteDraft ?? '').trim(),
+        reason: '—',
+        note: '',
       })
     }
     for (const [maGoc, baseTon] of baseTonByMaGoc) {
@@ -666,8 +737,6 @@ export default function StockCheckCreatePage() {
                 <col className="scc-col-br" />
                 <col className="scc-col-act" />
                 <col className="scc-col-delta" />
-                <col className="scc-col-reason" />
-                <col className="scc-col-note" />
                 <col className="scc-col-x" />
               </colgroup>
               <thead>
@@ -679,15 +748,13 @@ export default function StockCheckCreatePage() {
                   <th className="cac-num">Tồn chi nhánh</th>
                   <th className="cac-num">Tồn thực tế</th>
                   <th className="cac-num">Số lượng lệch</th>
-                  <th>Lý do</th>
-                  <th>Ghi chú</th>
                   <th aria-label="Xóa" />
                 </tr>
               </thead>
               <tbody>
                 {pageRows.length === 0 ? (
                   <tr>
-                    <td colSpan={10} style={{ textAlign: 'center', color: 'rgba(148,163,184,0.85)', padding: '1.25rem' }}>
+                    <td colSpan={8} style={{ textAlign: 'center', color: 'rgba(148,163,184,0.85)', padding: '1.25rem' }}>
                       Chưa có dòng — dùng ô tìm kiếm hoặc Chọn nhanh.
                     </td>
                   </tr>
@@ -695,7 +762,7 @@ export default function StockCheckCreatePage() {
                   pageRows.map((row, i) => {
                     const vDisp = findCatalogVariantById(products, row.variantId)
                     return (
-                    <tr key={row.key}>
+                    <tr key={row.key} id={`check-row-${row.productCode || row.variantId}`}>
                       <td>{(pageSafe - 1) * pageSize + i + 1}</td>
                       <td>
                         <span className="scc-ph-img" aria-hidden />
@@ -707,32 +774,30 @@ export default function StockCheckCreatePage() {
                       <td>{row.unitLabel || '—'}</td>
                       <td className="cac-num">{formatDisplayTonKhoVi(row.branchQty, vDisp ?? {})}</td>
                       <td className="cac-num">
-                        <input
-                          className="cac-in"
-                          aria-label="Tồn thực tế"
-                          value={row.actualDraft}
-                          onChange={(e) => updateActual(row.key, e.target.value)}
-                          inputMode="decimal"
-                        />
+                        <div className="scc-actual-cell">
+                          <input
+                            ref={(el) => {
+                              if (el) actualInputRefs.current.set(row.variantId, el)
+                              else actualInputRefs.current.delete(row.variantId)
+                            }}
+                            className="cac-in scc-actual-in"
+                            aria-label="Tồn thực tế"
+                            value={row.actualDraft}
+                            onChange={(e) => updateActual(row.key, e.target.value)}
+                            inputMode="decimal"
+                          />
+                          <button
+                            type="button"
+                            className="scc-kiem-them-btn"
+                            title="Cộng số đang gõ vào tồn hệ thống"
+                            onClick={() => applyKiemThem(row.key)}
+                          >
+                            Kiểm thêm
+                          </button>
+                        </div>
                       </td>
                       <td className="cac-num scc-delta-cell">
                         {deltaLabelDisplay(row.branchQty, row.actualDraft, vDisp ?? undefined)}
-                      </td>
-                      <td>
-                        <input
-                          className="cac-in scc-in-text"
-                          aria-label="Lý do"
-                          value={row.reasonDraft}
-                          onChange={(e) => updateReason(row.key, e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="cac-in scc-in-text"
-                          aria-label="Ghi chú dòng"
-                          value={row.noteDraft}
-                          onChange={(e) => updateNoteRow(row.key, e.target.value)}
-                        />
                       </td>
                       <td>
                         <button
@@ -767,7 +832,11 @@ export default function StockCheckCreatePage() {
                       ? 'scc-card__delta--pos'
                       : 'scc-card__delta--neg'
                 return (
-                  <div className="scc-card" key={row.key}>
+                  <div
+                    className="scc-card"
+                    key={row.key}
+                    id={`check-row-${row.productCode || row.variantId}`}
+                  >
                     <div className="scc-card__head">
                       <div className="scc-card__title-wrap">
                         <div className="scc-card__name">
@@ -813,6 +882,10 @@ export default function StockCheckCreatePage() {
                         −
                       </button>
                       <input
+                        ref={(el) => {
+                          if (el) actualInputRefs.current.set(row.variantId, el)
+                          else actualInputRefs.current.delete(row.variantId)
+                        }}
                         className="scc-step-input"
                         inputMode="decimal"
                         placeholder="Thực tế"
@@ -830,22 +903,14 @@ export default function StockCheckCreatePage() {
                       </button>
                     </div>
 
-                    <div className="scc-card__extra">
-                      <input
-                        className="scc-card__extra-in"
-                        placeholder="Lý do"
-                        aria-label="Lý do"
-                        value={row.reasonDraft}
-                        onChange={(e) => updateReason(row.key, e.target.value)}
-                      />
-                      <input
-                        className="scc-card__extra-in"
-                        placeholder="Ghi chú"
-                        aria-label="Ghi chú dòng"
-                        value={row.noteDraft}
-                        onChange={(e) => updateNoteRow(row.key, e.target.value)}
-                      />
-                    </div>
+                    <button
+                      type="button"
+                      className="scc-kiem-them-btn scc-kiem-them-btn--card"
+                      title="Cộng số đang gõ vào tồn hệ thống"
+                      onClick={() => applyKiemThem(row.key)}
+                    >
+                      Kiểm thêm
+                    </button>
                   </div>
                 )
               })

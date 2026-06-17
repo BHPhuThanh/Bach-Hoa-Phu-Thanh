@@ -866,6 +866,31 @@ function createInboundFormLineFromProductVariant(product, variant) {
   }
 }
 
+function inboundRowDomIdFromLine(line) {
+  const raw = String(line?.ma_hang || line?.code || line?.variantId || line?.lineId || '').trim()
+  const safe = raw.replace(/[^\w.-]/g, '_') || 'row'
+  return `inbound-row-${safe}`
+}
+
+/** Tìm dòng phiếu nhập đã có — khớp variantId hoặc mã hàng. */
+function findInboundLineForVariant(lines, variant) {
+  const list = Array.isArray(lines) ? lines : []
+  const vid = String(variant?.id ?? '').trim()
+  const codeLc = String(variant?.code ?? '').trim().toLowerCase()
+  return (
+    list.find((l) => {
+      if (vid && String(l.variantId) === vid) return true
+      if (codeLc) {
+        const lc = String(l.code ?? l.ma_hang ?? '')
+          .trim()
+          .toLowerCase()
+        if (lc === codeLc) return true
+      }
+      return false
+    }) ?? null
+  )
+}
+
 /** Gộp biến thể vừa tạo (modal) chờ đồng bộ props — chỉ trong luồng phiếu nhập. */
 function mergeInboundPendingFlatVariantsById(prev, incoming) {
   const map = new Map()
@@ -4131,18 +4156,50 @@ export default function AdminHub({
     syncHubUrlToMainTab(TAB_INBOUND)
   }, [resetInboundForm, standaloneInboundCreate, syncHubUrlToMainTab])
 
-  const addInboundFormLine = useCallback((product, variant) => {
-    const hint = brandThuongHieuFromProductVariant(product, variant)
-    setInboundFormLines((prev) => [
-      createInboundFormLineFromProductVariant(product, variant),
-      ...prev,
-    ])
-    setInboundFormProductQ('')
-    if (hint) {
-      setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : hint))
-      setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : hint))
-    }
+  const focusInboundLineQty = useCallback((line) => {
+    if (!line?.lineId) return
+    const domId = inboundRowDomIdFromLine(line)
+    const lineId = String(line.lineId)
+    requestAnimationFrame(() => {
+      document.getElementById(domId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const el = document.querySelector(
+        `input[data-inbound-line="${lineId}"][data-inbound-field="qty"]`
+      )
+      if (!el || typeof el.focus !== 'function') return
+      el.focus()
+      requestAnimationFrame(() => {
+        try {
+          if (typeof el.select === 'function') el.select()
+        } catch {
+          /* ignore */
+        }
+      })
+    })
   }, [])
+
+  const addInboundFormLine = useCallback(
+    (product, variant) => {
+      const existing = findInboundLineForVariant(inboundFormLinesRef.current, variant)
+      if (existing) {
+        setInboundFormProductQ('')
+        setInboundProductSuggestIdx(0)
+        focusInboundLineQty(existing)
+        return 'focused'
+      }
+      const hint = brandThuongHieuFromProductVariant(product, variant)
+      setInboundFormLines((prev) => [
+        createInboundFormLineFromProductVariant(product, variant),
+        ...prev,
+      ])
+      setInboundFormProductQ('')
+      if (hint) {
+        setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : hint))
+        setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : hint))
+      }
+      return 'added'
+    },
+    [focusInboundLineQty]
+  )
 
   const openInboundDraftWithProductPairs = useCallback(
     (pairs) => {
@@ -4196,10 +4253,14 @@ export default function AdminHub({
       setInboundProductSuggestIdx(0)
       if (!catalogListForInbound.length) return false
 
-      const toastAdded = (product, variant) => {
+      const toastInboundLine = (product, variant, action) => {
         const label = String(variant?.name || product?.name || variant?.code || '').trim() || '—'
         const u = normalizeCatalogUnitLabel(variant?.unitLabel)
-        showHubCameraToast(`Đã thêm: ${label} - ${u}`, 'ok')
+        if (action === 'focused') {
+          showHubCameraToast(`Đã có: ${label} - ${u}`, 'ok')
+        } else {
+          showHubCameraToast(`Đã thêm: ${label} - ${u}`, 'ok')
+        }
       }
 
       if (posQueryLooksLikeBarcodeKeyInput(q)) {
@@ -4207,8 +4268,8 @@ export default function AdminHub({
         for (const p of catalogListForInbound) {
           for (const v of p.groupVariants || [p]) {
             if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) {
-              addInboundFormLine(p, v)
-              toastAdded(p, v)
+              const action = addInboundFormLine(p, v)
+              toastInboundLine(p, v, action)
               return true
             }
           }
@@ -4217,8 +4278,8 @@ export default function AdminHub({
       for (const p of catalogListForInbound) {
         for (const v of p.groupVariants || [p]) {
           if (String(v.code ?? '').trim() === q) {
-            addInboundFormLine(p, v)
-            toastAdded(p, v)
+            const action = addInboundFormLine(p, v)
+            toastInboundLine(p, v, action)
             return true
           }
         }
@@ -4229,8 +4290,8 @@ export default function AdminHub({
       })
       if (hits.length > 0) {
         const { product, variant } = hits[0]
-        addInboundFormLine(product, variant)
-        toastAdded(product, variant)
+        const action = addInboundFormLine(product, variant)
+        toastInboundLine(product, variant, action)
         return true
       }
       const disp = String(normalizeBarcodeValue(q) || q).trim() || q
@@ -4424,39 +4485,49 @@ export default function AdminHub({
     })
   }, [])
 
-  const confirmInboundQuickPick = useCallback((pickedRows) => {
-    const rows = Array.isArray(pickedRows) ? pickedRows : []
-    const catalog = catalogForInboundRef.current
-    setInboundFormLines((cur) => {
-      const have = new Set(cur.map((l) => String(l.variantId)))
-      const toAdd = []
-      let brandHint = ''
-      for (const r of rows) {
-        const { product, variant } = resolveInboundCatalogProductVariant(
-          catalog,
-          r._product,
-          r._variant
-        )
-        const vid = String(variant?.id ?? '').trim()
-        if (!vid || have.has(vid)) continue
-        have.add(vid)
-        const line = createInboundFormLineFromProductVariant(product, variant)
-        if (!brandHint) brandHint = String(line.thuong_hieu || '').trim()
-        toAdd.push(line)
-      }
-      if (toAdd.length === 0) return cur
-      if (brandHint) {
-        queueMicrotask(() => {
-          setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : brandHint))
-          setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : brandHint))
-        })
-      }
-      return [...toAdd, ...cur]
-    })
-    setInboundQuickPickOpen(false)
-    setInboundQuickPickSelected(new Set())
-    setInboundFormProductQ('')
-  }, [])
+  const confirmInboundQuickPick = useCallback(
+    (pickedRows) => {
+      const rows = Array.isArray(pickedRows) ? pickedRows : []
+      const catalog = catalogForInboundRef.current
+      let focusLine = null
+      setInboundFormLines((cur) => {
+        const have = new Set(cur.map((l) => String(l.variantId)))
+        const toAdd = []
+        let brandHint = ''
+        for (const r of rows) {
+          const { product, variant } = resolveInboundCatalogProductVariant(
+            catalog,
+            r._product,
+            r._variant
+          )
+          const vid = String(variant?.id ?? '').trim()
+          if (!vid) continue
+          if (have.has(vid)) {
+            const hit = findInboundLineForVariant(cur, variant)
+            if (hit) focusLine = hit
+            continue
+          }
+          have.add(vid)
+          const line = createInboundFormLineFromProductVariant(product, variant)
+          if (!brandHint) brandHint = String(line.thuong_hieu || '').trim()
+          toAdd.push(line)
+        }
+        if (toAdd.length === 0) return cur
+        if (brandHint) {
+          queueMicrotask(() => {
+            setInboundFormSupplierName((p) => (String(p ?? '').trim() ? p : brandHint))
+            setInboundFormSupplierQ((p) => (String(p ?? '').trim() ? p : brandHint))
+          })
+        }
+        return [...toAdd, ...cur]
+      })
+      if (focusLine) focusInboundLineQty(focusLine)
+      setInboundQuickPickOpen(false)
+      setInboundQuickPickSelected(new Set())
+      setInboundFormProductQ('')
+    },
+    [focusInboundLineQty]
+  )
 
   const updateInboundFormLine = useCallback((lineId, patch) => {
     setInboundFormLines((prev) =>
