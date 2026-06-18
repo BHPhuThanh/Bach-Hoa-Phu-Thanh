@@ -596,6 +596,15 @@ function isPosReturnDetailTabId(tab) {
   return String(tab ?? '').startsWith(POS_RETURN_DETAIL_TAB_PREFIX)
 }
 
+/** Tab chính cần quay lại khi đóng tab chi tiết (không còn tab con cùng loại). */
+function parentMainTabForDetailTab(tabId) {
+  if (isInboundDetailTabId(tabId)) return TAB_INBOUND
+  if (isPosOrderDetailTabId(tabId)) return TAB_ORDERS
+  if (isPosReturnDetailTabId(tabId)) return TAB_OVERVIEW
+  if (isSoloProductTabId(tabId)) return TAB_GOODS
+  return null
+}
+
 /** Tổng tiền hàng + thanh toán từ dòng và chiết khấu đơn (giống logic phiếu nhập). */
 function computeInboundOrderTotalsFromDiscountedLines(lines, orderDiscountMode, orderDiscountValue) {
   const goodsSubtotal = (lines || []).reduce(
@@ -2865,7 +2874,7 @@ export default function AdminHub({
     setActiveTab((cur) => {
       if (parseSoloProductTabId(cur) !== vid) return cur
       if (next.length > 0) return toSoloProductTabId(next[next.length - 1])
-      return inboundCostResultOriginTabRef.current ?? TAB_GOODS
+      return inboundCostResultOriginTabRef.current ?? parentMainTabForDetailTab(cur) ?? TAB_GOODS
     })
   }, [])
 
@@ -5570,12 +5579,15 @@ export default function AdminHub({
       delete o[oid]
       return o
     })
+    let parentTab = null
     setActiveTab((cur) => {
       if (parseInboundDetailTabId(cur) !== oid) return cur
       if (next.length > 0) return toInboundDetailTabId(next[next.length - 1])
-      return TAB_ORDERS
+      parentTab = parentMainTabForDetailTab(cur) ?? TAB_INBOUND
+      return parentTab
     })
-  }, [])
+    if (parentTab) syncHubUrlToMainTab(parentTab)
+  }, [syncHubUrlToMainTab])
 
   const openInboundDetailTab = useCallback((orderRow) => {
     const row = normalizeInboundRow(orderRow)
@@ -5793,12 +5805,15 @@ export default function AdminHub({
       delete o[oid]
       return o
     })
+    let parentTab = null
     setActiveTab((cur) => {
       if (parsePosOrderDetailTabId(cur) !== oid) return cur
       if (next.length > 0) return toPosOrderDetailTabId(next[next.length - 1])
-      return TAB_ORDERS
+      parentTab = parentMainTabForDetailTab(cur) ?? TAB_ORDERS
+      return parentTab
     })
-  }, [])
+    if (parentTab) syncHubUrlToMainTab(parentTab)
+  }, [syncHubUrlToMainTab])
 
   const closePosReturnDetailTabByLedgerId = useCallback((ledgerId) => {
     const lid = String(ledgerId ?? '')
@@ -5806,12 +5821,15 @@ export default function AdminHub({
     const prev = openPosReturnDetailLedgerIdsRef.current
     const next = prev.filter((x) => x !== lid)
     setOpenPosReturnDetailLedgerIds(next)
+    let parentTab = null
     setActiveTab((cur) => {
       if (parsePosReturnDetailTabId(cur) !== lid) return cur
       if (next.length > 0) return toPosReturnDetailTabId(next[next.length - 1])
-      return TAB_OVERVIEW
+      parentTab = parentMainTabForDetailTab(cur) ?? TAB_OVERVIEW
+      return parentTab
     })
-  }, [])
+    if (parentTab) syncHubUrlToMainTab(parentTab)
+  }, [syncHubUrlToMainTab])
 
   const openPosReturnDetailTab = useCallback((ledgerEntryId) => {
     const lid = String(ledgerEntryId ?? '').trim()
@@ -7107,7 +7125,7 @@ export default function AdminHub({
       const curOid = parseInboundDetailTabId(cur)
       if (curOid && invalid.includes(curOid)) {
         if (nextOpen.length > 0) return toInboundDetailTabId(nextOpen[nextOpen.length - 1])
-        return TAB_ORDERS
+        return parentMainTabForDetailTab(cur) ?? TAB_INBOUND
       }
       return cur
     })
@@ -7177,7 +7195,7 @@ export default function AdminHub({
       const curOid = parsePosOrderDetailTabId(cur)
       if (curOid && invalid.includes(curOid)) {
         if (nextOpen.length > 0) return toPosOrderDetailTabId(nextOpen[nextOpen.length - 1])
-        return TAB_ORDERS
+        return parentMainTabForDetailTab(cur) ?? TAB_ORDERS
       }
       return cur
     })
@@ -7196,7 +7214,7 @@ export default function AdminHub({
       const curLid = parsePosReturnDetailTabId(cur)
       if (curLid && invalid.includes(curLid)) {
         if (nextOpen.length > 0) return toPosReturnDetailTabId(nextOpen[nextOpen.length - 1])
-        return TAB_OVERVIEW
+        return parentMainTabForDetailTab(cur) ?? TAB_OVERVIEW
       }
       return cur
     })
@@ -7221,8 +7239,10 @@ export default function AdminHub({
     if (inboundDraftSession) {
       ins(TAB_INBOUND, { id: TAB_INBOUND_DRAFT, label: 'Phiếu nhập mới' })
     }
-    const ordIdx = tabs.findIndex((t) => t.id === TAB_ORDERS)
-    if (ordIdx >= 0 && openInboundDetailOrderIds.length > 0) {
+    const inboundIdx = tabs.findIndex((t) => t.id === TAB_INBOUND)
+    if (inboundIdx >= 0 && openInboundDetailOrderIds.length > 0) {
+      let insertAt = inboundIdx + 1
+      if (tabs[insertAt]?.id === TAB_INBOUND_DRAFT) insertAt += 1
       const detailItems = openInboundDetailOrderIds.map((oid) => {
         const ord = inboundOrders.find((o) => String(o.id) === String(oid))
         const code = String(ord?.code ?? '').trim() || String(oid)
@@ -7230,10 +7250,11 @@ export default function AdminHub({
         const label = rawLabel.length > 56 ? `${rawLabel.slice(0, 53)}…` : rawLabel
         return { id: toInboundDetailTabId(oid), label, detailCloseOrderId: oid }
       })
-      tabs = [...tabs.slice(0, ordIdx + 1), ...detailItems, ...tabs.slice(ordIdx + 1)]
+      tabs = [...tabs.slice(0, insertAt), ...detailItems, ...tabs.slice(insertAt)]
     }
+    const ordIdx = tabs.findIndex((t) => t.id === TAB_ORDERS)
     if (ordIdx >= 0 && openPosDetailOrderIds.length > 0) {
-      const insertAt = ordIdx + 1 + openInboundDetailOrderIds.length
+      const insertAt = ordIdx + 1
       const posItems = openPosDetailOrderIds.map((oid) => {
         const ord = orders.find((o) => String(o.id) === String(oid))
         const inv = String(ord?.invoiceNo ?? '').trim() || String(oid)
@@ -7244,7 +7265,7 @@ export default function AdminHub({
       tabs = [...tabs.slice(0, insertAt), ...posItems, ...tabs.slice(insertAt)]
     }
     if (ordIdx >= 0 && openPosReturnDetailLedgerIds.length > 0) {
-      const insertAt = ordIdx + 1 + openInboundDetailOrderIds.length + openPosDetailOrderIds.length
+      const insertAt = ordIdx + 1 + openPosDetailOrderIds.length
       const retItems = openPosReturnDetailLedgerIds.map((lid) => {
         const entry = (returnDayLedger || []).find((e) => String(e?.id) === String(lid))
         const srcInv =
