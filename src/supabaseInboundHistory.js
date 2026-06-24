@@ -150,3 +150,67 @@ export async function fetchInboundInvoices() {
     return { ok: false, error }
   }
 }
+
+/**
+ * Lấy một phiếu nhập theo id — query đơn lẻ (deep-link / lịch sử kho), không fetch toàn bộ.
+ * @param {string} orderIdRaw
+ * @returns {Promise<object | null>}
+ */
+export async function getInboundOrderById(orderIdRaw) {
+  const orderId = String(orderIdRaw ?? '').trim()
+  if (!orderId || !isSupabaseConfigured()) return null
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .select('payload')
+      .eq('payload->>id', orderId)
+      .limit(1)
+      .maybeSingle()
+    if (error) throw error
+    const p = data?.payload
+    return p && typeof p === 'object' ? p : null
+  } catch (e) {
+    console.warn('[inbound_history] getInboundOrderById', orderId, e)
+    return null
+  }
+}
+
+/**
+ * Lấy một phiếu nhập theo mã (PN… / NH…) — query đơn lẻ.
+ * @param {string} codeRaw
+ * @returns {Promise<object | null>}
+ */
+export async function getInboundOrderByCode(codeRaw) {
+  const code = String(codeRaw ?? '').trim()
+  if (!code || !isSupabaseConfigured()) return null
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .select('payload')
+      .eq('order_code', code)
+      .limit(1)
+      .maybeSingle()
+    if (error) throw error
+    let p = data?.payload
+    if (p && typeof p === 'object') return p
+    const { data: rows, error: err2 } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .select('payload')
+      .ilike('order_code', code)
+      .limit(5)
+    if (err2) throw err2
+    const codeUpper = code.toUpperCase()
+    const hit = (rows || []).find(
+      (row) => String(row?.payload?.code ?? row?.payload?.order_code ?? '').trim().toUpperCase() === codeUpper
+    )
+    p = hit?.payload
+    return p && typeof p === 'object' ? p : null
+  } catch (e) {
+    console.warn('[inbound_history] getInboundOrderByCode', code, e)
+    return null
+  }
+}

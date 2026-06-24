@@ -164,6 +164,45 @@ export async function getOrderById(orderIdRaw) {
 }
 
 /**
+ * Lấy một đơn theo số hóa đơn (HD…) — query đơn lẻ, không tải toàn bộ lịch sử.
+ * @param {string} invoiceNoRaw
+ * @returns {Promise<object | null>}
+ */
+export async function getOrderByInvoiceNo(invoiceNoRaw) {
+  const inv = String(invoiceNoRaw ?? '').trim()
+  if (!inv) return null
+  const invUpper = inv.toUpperCase()
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseClient()
+    if (!sb) throw new Error('Supabase chưa khởi tạo')
+    const { data, error } = await sb
+      .from(SALES_TABLE)
+      .select('payload')
+      .eq('payload->>invoiceNo', inv)
+      .limit(1)
+      .maybeSingle()
+    if (error) throw error
+    let p = data?.payload
+    if (p && typeof p === 'object') return p
+    const { data: rows, error: err2 } = await sb
+      .from(SALES_TABLE)
+      .select('payload')
+      .ilike('payload->>invoiceNo', inv)
+      .limit(5)
+    if (err2) throw err2
+    const hit = (rows || []).find(
+      (row) => String(row?.payload?.invoiceNo ?? '').trim().toUpperCase() === invUpper
+    )
+    p = hit?.payload
+    return p && typeof p === 'object' ? p : null
+  }
+  const all = await fetchAllOrdersFromIdb()
+  return (
+    all.find((o) => String(o?.invoiceNo ?? '').trim().toUpperCase() === invUpper) ?? null
+  )
+}
+
+/**
  * N đơn mới nhất — modal đổi trả POS (vài KB), không getAllOrders.
  * @param {number} [limit]
  */

@@ -526,6 +526,11 @@ export function mapInventoryLogDbRowToDisplay(row, opts = {}) {
   const balance = Number(row.stock_after)
   const docNo = String(row.document_code ?? '—')
   const staffName = String(row.staff_name ?? '').trim() || '—'
+  const posOrderId = String(row.pos_order_id ?? '').trim() || null
+  const inboundOrderId = String(row.inbound_order_id ?? '').trim() || null
+  let docLink = null
+  if (posOrderId) docLink = { type: 'pos', posOrderId, docNo }
+  else if (inboundOrderId) docLink = { type: 'inbound', inboundOrderId, docNo }
   const { unitTxnLabel, conversionLabel, detailLabel } = formatInventoryLogUnitConversionLabels(
     row,
     opts.catalogProducts
@@ -556,13 +561,16 @@ export function mapInventoryLogDbRowToDisplay(row, opts = {}) {
     inventoryNavSource: 'supabase',
     inventoryDocClickable: /^HD/i.test(docNo) || isInboundDocumentCode(docNo),
 
+    posOrderId,
+    inboundOrderId,
+
     /* Tương thích mã JSX cũ */
     delta,
     deltaLabel: formatQtyViSigned(delta),
     balanceLabel: formatStockAfterVi(balance),
     staff: staffName,
     action: String(row.transaction_type ?? '—'),
-    docLink: null,
+    docLink,
   }
 }
 

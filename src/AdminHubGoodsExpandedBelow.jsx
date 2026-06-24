@@ -658,7 +658,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                         </td>
                                                         <td className="ah-num">{pr.stockAfterLabel ?? pr.balanceLabel}</td>
                                                         <td onClick={(e) => e.stopPropagation()}>
-                                                          {pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable ? (
+                                                          {(pr.docLink || (pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable)) ? (
                                                             <button
                                                               type="button"
                                                               className="ah-solo-stock-doc-link"
@@ -764,14 +764,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                   </td>
                                                 </tr>
                                               ) : (
-                                                glRows.map((row) => {
-                                                  const detailUrl =
-                                                    row.inventoryNavSource === 'supabase'
-                                                      ? ''
-                                                      : row.docLink
-                                                        ? getStockLedgerDetailAbsoluteUrl(row.docLink)
-                                                        : ''
-                                                  return (
+                                                glRows.map((row) => (
                                                     <tr key={row.key}>
                                                       <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
                                                       <td>{row.staffNameLabel ?? row.staff}</td>
@@ -801,21 +794,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                       </td>
                                                       <td className="ah-num">{row.stockAfterLabel ?? row.balanceLabel}</td>
                                                       <td onClick={(e) => e.stopPropagation()}>
-                                                        {detailUrl ? (
-                                                          <a
-                                                            className="ah-solo-stock-doc-link"
-                                                            href={detailUrl}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            title="Mở chi tiết chứng từ (tab mới)"
-                                                            onClick={(e) => {
-                                                              e.stopPropagation()
-                                                            }}
-                                                          >
-                                                            {row.docNo}
-                                                          </a>
-                                                        ) : row.inventoryNavSource === 'supabase' &&
-                                                          row.inventoryDocClickable ? (
+                                                        {(row.docLink || (row.inventoryNavSource === 'supabase' && row.inventoryDocClickable)) ? (
                                                           <button
                                                             type="button"
                                                             className="ah-solo-stock-doc-link"
@@ -828,8 +807,7 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                         )}
                                                       </td>
                                                     </tr>
-                                                  )
-                                                })
+                                                  ))
                                               )}
                                             </tbody>
                                           </table>

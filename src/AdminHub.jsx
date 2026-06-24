@@ -32,7 +32,7 @@ import {
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
-import { clearAllOrders, deleteOrderById, getOrderById, getOrdersForReportRange, saveOrder } from './ordersDb.js'
+import { clearAllOrders, deleteOrderById, getOrderById, getOrderByInvoiceNo, getOrdersForReportRange, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
 import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
 import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
@@ -176,6 +176,8 @@ import {
 import {
   bumpInboundSync,
   fetchInboundInvoices,
+  getInboundOrderByCode,
+  getInboundOrderById,
   INBOUND_SYNC_BUMP_EVENT,
 } from './supabaseInboundHistory.js'
 import {
@@ -594,6 +596,17 @@ function parsePosReturnDetailTabId(tab) {
 
 function isPosReturnDetailTabId(tab) {
   return String(tab ?? '').startsWith(POS_RETURN_DETAIL_TAB_PREFIX)
+}
+
+/** Tab con (chi tiết) — không ghi đè bởi đồng bộ pathname → tab chính. */
+function isHubDetailSubTabId(tab) {
+  return (
+    isInboundDetailTabId(tab) ||
+    isPosOrderDetailTabId(tab) ||
+    isPosReturnDetailTabId(tab) ||
+    isSoloProductTabId(tab) ||
+    tab === TAB_INBOUND_DRAFT
+  )
 }
 
 /** Tab chính cần quay lại khi đóng tab chi tiết (không còn tab con cùng loại). */
@@ -1396,6 +1409,62 @@ export default function AdminHub({
       return null
     },
     [orders, ovRevenueTableRows]
+  )
+
+  const findPosOrderByInvoiceNo = useCallback(
+    (invoiceNoRaw) => {
+      const inv = String(invoiceNoRaw ?? '').trim()
+      if (!inv) return null
+      const invUpper = inv.toUpperCase()
+      const fromList = orders.find(
+        (o) => String(o?.invoiceNo ?? '').trim().toUpperCase() === invUpper
+      )
+      if (fromList) return fromList
+      for (const row of ovRevenueTableRows) {
+        if (
+          row?.kind === 'sale' &&
+          row.order &&
+          String(row.order.invoiceNo ?? '').trim().toUpperCase() === invUpper
+        ) {
+          return row.order
+        }
+      }
+      for (const o of posDetailOrderCacheRef.current.values()) {
+        if (String(o?.invoiceNo ?? '').trim().toUpperCase() === invUpper) return o
+      }
+      return null
+    },
+    [orders, ovRevenueTableRows]
+  )
+
+  /** Tìm trong cache → fetch 1 row Supabase/IDB — không kéo toàn bộ lịch sử. */
+  const fetchPosOrderForDetailOpen = useCallback(
+    async ({ orderId, invoiceNo } = {}) => {
+      const sid = String(orderId ?? '').trim()
+      if (sid) {
+        const hit = findPosOrderForDetail(sid)
+        if (hit) return hit
+        try {
+          const remote = await getOrderById(sid)
+          if (remote) return remote
+        } catch (e) {
+          console.error('[AdminHub] getOrderById', sid, e)
+        }
+      }
+      const inv = String(invoiceNo ?? '').trim()
+      if (inv) {
+        const local = findPosOrderByInvoiceNo(inv)
+        if (local) return local
+        try {
+          const remote = await getOrderByInvoiceNo(inv)
+          if (remote) return remote
+        } catch (e) {
+          console.error('[AdminHub] getOrderByInvoiceNo', inv, e)
+        }
+      }
+      return null
+    },
+    [findPosOrderForDetail, findPosOrderByInvoiceNo]
   )
 
   const openRevenueOrderInNewTab = useCallback(
@@ -5860,37 +5929,122 @@ export default function AdminHub({
     [rememberPosDetailOrder]
   )
 
+  const requestOpenPosOrderDetail = useCallback(
+    async ({ orderId, invoiceNo } = {}) => {
+      setSelected(null)
+      const o = await fetchPosOrderForDetailOpen({ orderId, invoiceNo })
+      if (!o) {
+        const label = String(invoiceNo || orderId || '').trim() || '—'
+        window.alert(`Không tìm thấy đơn bán (Hóa đơn ${label}).`)
+        return false
+      }
+      syncHubUrlToMainTab(TAB_ORDERS)
+      openPosDetailTab(o)
+      return true
+    },
+    [fetchPosOrderForDetailOpen, openPosDetailTab, syncHubUrlToMainTab]
+  )
+
+  const fetchInboundOrderForDetailOpen = useCallback(
+    async ({ orderId, code } = {}) => {
+      const sid = String(orderId ?? '').trim()
+      if (sid) {
+        const local = inboundOrders.find((x) => String(x.id) === sid)
+        if (local) return local
+        const remote = await getInboundOrderById(sid)
+        if (remote) return remote
+      }
+      const doc = String(code ?? '').trim()
+      if (doc) {
+        const docUpper = doc.toUpperCase()
+        const local = inboundOrders.find(
+          (x) => String(x.code ?? '').trim().toUpperCase() === docUpper
+        )
+        if (local) return local
+        const remote = await getInboundOrderByCode(doc)
+        if (remote) return remote
+      }
+      return null
+    },
+    [inboundOrders]
+  )
+
+  const requestOpenInboundOrderDetail = useCallback(
+    async ({ orderId, code } = {}) => {
+      setSelected(null)
+      const row = await fetchInboundOrderForDetailOpen({ orderId, code })
+      if (!row) {
+        const label = String(code || orderId || '').trim() || '—'
+        window.alert(`Không tìm thấy phiếu nhập (${label}).`)
+        return false
+      }
+      syncHubUrlToMainTab(TAB_INBOUND)
+      openInboundDetailTab(row)
+      return true
+    },
+    [fetchInboundOrderForDetailOpen, openInboundDetailTab, syncHubUrlToMainTab]
+  )
+
+  const handleStockLedgerDocLinkActivate = useCallback(
+    (link) => {
+      if (!stockLedgerDocLinkHasTarget(link)) return
+      if (link.type === 'pos') {
+        void requestOpenPosOrderDetail({
+          orderId: link.posOrderId,
+          invoiceNo: link.docNo,
+        })
+        return
+      }
+      if (link.type === 'inbound') {
+        void requestOpenInboundOrderDetail({
+          orderId: link.inboundOrderId,
+          code: link.docNo,
+        })
+        return
+      }
+      if (link.type === 'pos_return') {
+        const lid = String(link.returnLedgerId ?? '').trim()
+        if (!lid) return
+        setSelected(null)
+        syncHubUrlToMainTab(TAB_OVERVIEW)
+        const ok = (returnDayLedger || []).some((e) => String(e?.id) === lid)
+        if (ok) openPosReturnDetailTab(lid)
+        else window.alert('Không tìm thấy phiếu hoàn trả.')
+      }
+    },
+    [
+      requestOpenPosOrderDetail,
+      requestOpenInboundOrderDetail,
+      syncHubUrlToMainTab,
+      returnDayLedger,
+      openPosReturnDetailTab,
+    ]
+  )
+
   const handleInventoryLedgerDocActivate = useCallback(
     (row) => {
-      if (!row || row.inventoryNavSource !== 'supabase') return
+      if (!row) return
+      if (row.docLink && stockLedgerDocLinkHasTarget(row.docLink)) {
+        handleStockLedgerDocLinkActivate(row.docLink)
+        return
+      }
+      if (row.inventoryNavSource !== 'supabase') return
       const doc = String(row.docNo ?? '').trim()
-      setSelected(null)
       if (/^HD/i.test(doc)) {
-        const o =
-          orders.find(
-            (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
-          ) ??
-          [...posDetailOrderCacheRef.current.values()].find(
-            (x) => String(x.invoiceNo ?? '').trim().toUpperCase() === doc.toUpperCase()
-          ) ??
-          null
-        if (o) {
-          syncHubUrlToMainTab(TAB_ORDERS)
-          openPosDetailTab(o)
-        } else window.alert('Không tìm thấy đơn bán (Hóa đơn) tương ứng chứng từ này.')
+        void requestOpenPosOrderDetail({
+          orderId: row.posOrderId,
+          invoiceNo: doc,
+        })
         return
       }
       if (/^(NH|PN)/i.test(doc)) {
-        const rRow = inboundOrders.find(
-          (x) => String(x.code ?? '').trim().toUpperCase() === doc.toUpperCase()
-        )
-        if (rRow) {
-          syncHubUrlToMainTab(TAB_INBOUND)
-          openInboundDetailTab(rRow)
-        } else window.alert('Không tìm thấy phiếu nhập tương ứng chứng từ này.')
+        void requestOpenInboundOrderDetail({
+          orderId: row.inboundOrderId,
+          code: doc,
+        })
       }
     },
-    [orders, inboundOrders, openPosDetailTab, openInboundDetailTab, syncHubUrlToMainTab]
+    [handleStockLedgerDocLinkActivate, requestOpenPosOrderDetail, requestOpenInboundOrderDetail]
   )
 
   const [soloGoodsUiTab, setSoloGoodsUiTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
@@ -5910,7 +6064,10 @@ export default function AdminHub({
     if (standaloneInboundCreate) return
     const tab = hubMainTabFromPathname(location.pathname)
     if (tab == null) return
-    setActiveTab(tab)
+    setActiveTab((cur) => {
+      if (isHubDetailSubTabId(cur)) return cur
+      return tab
+    })
     setSelected(null)
   }, [location.pathname, standaloneInboundCreate])
 
@@ -5939,17 +6096,7 @@ export default function AdminHub({
 
     if (posOrderId) {
       void (async () => {
-        let o = findPosOrderForDetail(posOrderId)
-        if (!o) {
-          try {
-            o = await getOrderById(posOrderId)
-            if (o) rememberPosDetailOrder(o)
-          } catch (e) {
-            console.error('[AdminHub] getOrderById deep-link', posOrderId, e)
-          }
-        }
-        if (o) openPosDetailTab(o)
-        else window.alert('Không tìm thấy đơn bán.')
+        await requestOpenPosOrderDetail({ orderId: posOrderId })
         hubDeepLinkConsumeRef.current?.()
       })()
       return
@@ -5958,10 +6105,17 @@ export default function AdminHub({
     if (loading) return
 
     if (inboundOrderId) {
-      const row = inboundOrders.find((x) => String(x.id) === String(inboundOrderId))
-      if (row) openInboundDetailTab(row)
-      else window.alert('Không tìm thấy phiếu nhập.')
-    } else if (posReturnLedgerId) {
+      void (async () => {
+        const ok = await requestOpenInboundOrderDetail({ orderId: inboundOrderId })
+        if (!ok) {
+          /* đã alert */
+        }
+        hubDeepLinkConsumeRef.current?.()
+      })()
+      return
+    }
+
+    if (posReturnLedgerId) {
       const ok = (returnDayLedger || []).some((e) => String(e.id) === String(posReturnLedgerId))
       if (ok) openPosReturnDetailTab(posReturnLedgerId)
       else window.alert('Không tìm thấy phiếu hoàn trả.')
@@ -5973,10 +6127,8 @@ export default function AdminHub({
     orders,
     inboundOrders,
     returnDayLedger,
-    findPosOrderForDetail,
-    rememberPosDetailOrder,
-    openPosDetailTab,
-    openInboundDetailTab,
+    requestOpenPosOrderDetail,
+    requestOpenInboundOrderDetail,
     openPosReturnDetailTab,
     syncHubUrlToMainTab,
   ])
@@ -9061,7 +9213,15 @@ export default function AdminHub({
                                 </td>
                                 <td className="ah-num">{pr.stockAfterLabel ?? pr.balanceLabel}</td>
                                 <td onClick={(e) => e.stopPropagation()}>
-                                  {pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable ? (
+                                  {pr.docLink && stockLedgerDocLinkHasTarget(pr.docLink) ? (
+                                    <button
+                                      type="button"
+                                      className="ah-solo-stock-doc-link"
+                                      onClick={() => handleStockLedgerDocLinkActivate(pr.docLink)}
+                                    >
+                                      {pr.docNo}
+                                    </button>
+                                  ) : pr.inventoryNavSource === 'supabase' && pr.inventoryDocClickable ? (
                                     <button
                                       type="button"
                                       className="ah-solo-stock-doc-link"
@@ -9158,14 +9318,7 @@ export default function AdminHub({
                             </td>
                           </tr>
                         ) : (
-                          soloMergedInventoryLedgerRows.rows.map((row) => {
-                            const detailUrl =
-                              row.inventoryNavSource === 'supabase'
-                                ? ''
-                                : row.docLink
-                                  ? getStockLedgerDetailAbsoluteUrl(row.docLink)
-                                  : ''
-                            return (
+                          soloMergedInventoryLedgerRows.rows.map((row) => (
                               <tr key={row.key}>
                                 <td className="ah-solo-stock-cell-time">{row.dateLabel}</td>
                                 <td>{row.staffNameLabel ?? row.staff}</td>
@@ -9195,19 +9348,14 @@ export default function AdminHub({
                                 </td>
                                 <td className="ah-num">{row.stockAfterLabel ?? row.balanceLabel}</td>
                                 <td onClick={(e) => e.stopPropagation()}>
-                                  {detailUrl ? (
-                                    <a
+                                  {row.docLink && stockLedgerDocLinkHasTarget(row.docLink) ? (
+                                    <button
+                                      type="button"
                                       className="ah-solo-stock-doc-link"
-                                      href={detailUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      title="Mở chi tiết chứng từ (tab mới)"
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                      }}
+                                      onClick={() => handleStockLedgerDocLinkActivate(row.docLink)}
                                     >
                                       {row.docNo}
-                                    </a>
+                                    </button>
                                   ) : row.inventoryNavSource === 'supabase' && row.inventoryDocClickable ? (
                                     <button
                                       type="button"
@@ -9221,8 +9369,7 @@ export default function AdminHub({
                                   )}
                                 </td>
                               </tr>
-                            )
-                          })
+                            ))
                         )}
                       </tbody>
                     </table>
