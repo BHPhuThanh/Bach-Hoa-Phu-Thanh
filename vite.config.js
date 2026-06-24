@@ -50,6 +50,16 @@ function applyDoanhThuFallback(req, next) {
     return next()
   }
 
+  /** `/admin/goods`, `/admin/nhap-hang`, … — fallback SPA (script/css phải nạp từ `/`). */
+  const adminIdx = path.toLowerCase().indexOf('/admin/')
+  if (adminIdx >= 0) {
+    let basePath = path.slice(0, adminIdx)
+    if (!basePath) basePath = '/'
+    else if (!basePath.endsWith('/')) basePath += '/'
+    req.url = basePath + q
+    return next()
+  }
+
   /** `/hang-hoa/:productId` — dev/preview cần fallback về index.html */
   const hangIdx = path.toLowerCase().indexOf('/hang-hoa/')
   if (hangIdx >= 0) {
@@ -77,6 +87,8 @@ function applyDoanhThuFallback(req, next) {
 }
 
 export default defineConfig(() => ({
+  /** Đường dẫn tuyệt đối từ gốc site — tránh lỗi MIME khi mở deep-link /admin/... */
+  base: '/',
   /** SPA: route lạ (vd. /hang-hoa/SP001) → index.html — Vite không có `historyApiFallback` (Webpack). */
   appType: 'spa',
   server: {
