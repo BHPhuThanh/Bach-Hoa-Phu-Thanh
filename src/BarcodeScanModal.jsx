@@ -8,6 +8,111 @@ const SCAN_SAME_CODE_DEBOUNCE_MS = 400
 /** Sau mỗi lần xử lý mã: không nhận mã mới trong khoảng này (camera vẫn mở). */
 const SCAN_COOLDOWN_MS = 1200
 
+/** Khung quét vuông — tập trung vùng giữa (tốt cho iOS không macro-focus). */
+const SCAN_QRBOX = { width: 250, height: 250 }
+
+const SCAN_CONFIG_BASE = {
+  fps: 10,
+  qrbox: SCAN_QRBOX,
+  aspectRatio: 1,
+  disableFlip: false,
+}
+
+/** Độ phân giải cao + camera sau + continuous focus (iOS PWA / Safari). */
+const HIGH_RES_VIDEO_CONSTRAINTS = {
+  facingMode: { ideal: 'environment' },
+  width: { ideal: 1280, max: 1920 },
+  height: { ideal: 720, max: 1080 },
+  advanced: [{ focusMode: 'continuous' }],
+}
+
+const HIGH_RES_VIDEO_CONSTRAINTS_EXACT_REAR = {
+  facingMode: { exact: 'environment' },
+  width: { ideal: 1280, max: 1920 },
+  height: { ideal: 720, max: 1080 },
+  advanced: [{ focusMode: 'continuous' }],
+}
+
+function pickRearCameraId(cameras) {
+  const list = Array.isArray(cameras) ? cameras : []
+  if (!list.length) return null
+  const rear = list.find((c) => /back|rear|environment|sau/i.test(String(c?.label ?? '')))
+  return (rear ?? list[list.length - 1])?.id ?? null
+}
+
+async function applyContinuousFocus(h5) {
+  if (!h5?.applyVideoConstraints) return
+  try {
+    await h5.applyVideoConstraints({
+      advanced: [{ focusMode: 'continuous' }],
+    })
+  } catch {
+    try {
+      await h5.applyVideoConstraints({ focusMode: 'continuous' })
+    } catch {
+      /* iOS Safari thường bỏ qua — không chặn quét */
+    }
+  }
+}
+
+async function startScannerWithFallback(h5, onDecoded) {
+  const noop = () => {}
+  const attempts = [
+    () =>
+      h5.start(
+        { facingMode: { exact: 'environment' } },
+        { ...SCAN_CONFIG_BASE, videoConstraints: HIGH_RES_VIDEO_CONSTRAINTS_EXACT_REAR },
+        onDecoded,
+        noop
+      ),
+    () =>
+      h5.start(
+        { facingMode: 'environment' },
+        { ...SCAN_CONFIG_BASE, videoConstraints: HIGH_RES_VIDEO_CONSTRAINTS },
+        onDecoded,
+        noop
+      ),
+    () => h5.start({ facingMode: 'environment' }, SCAN_CONFIG_BASE, onDecoded, noop),
+    async () => {
+      const cams = await Html5Qrcode.getCameras()
+      const deviceId = pickRearCameraId(cams)
+      if (!deviceId) throw new Error('Không tìm thấy camera.')
+      await h5.start(
+        { deviceId: { exact: deviceId } },
+        { ...SCAN_CONFIG_BASE, videoConstraints: HIGH_RES_VIDEO_CONSTRAINTS },
+        onDecoded,
+        noop
+      )
+    },
+    async () => {
+      const cams = await Html5Qrcode.getCameras()
+      if (!cams?.length) throw new Error('Không tìm thấy camera.')
+      await h5.start({ deviceId: { exact: cams[0].id } }, SCAN_CONFIG_BASE, onDecoded, noop)
+    },
+  ]
+
+  let lastErr = null
+  for (const attempt of attempts) {
+    try {
+      await attempt()
+      return
+    } catch (e) {
+      lastErr = e
+      try {
+        await h5.stop()
+      } catch {
+        /* ignore */
+      }
+      try {
+        await h5.clear()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  throw lastErr ?? new Error('Không mở được camera.')
+}
+
 /**
  * Quét mã vạch / QR — quét liên tục; không đóng modal.
  * Thứ tự: beep → `onScan(text)` (toast do parent) → nghỉ {@link SCAN_COOLDOWN_MS} ms.
@@ -29,6 +134,7 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
     if (!open) return undefined
     let cancelled = false
     let h5 = null
+    let focusTimer = 0
     setErr('')
     lastScanRef.current = { text: '', at: 0 }
     cooldownUntilRef.current = 0
@@ -50,7 +156,6 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
     const run = async () => {
       try {
         h5 = new Html5Qrcode(readerId, { verbose: false })
-        const config = { fps: 8, qrbox: { width: 280, height: 160 } }
 
         const onDecoded = (text) => {
           const t = String(text ?? '').trim()
@@ -77,13 +182,10 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           cooldownUntilRef.current = Date.now() + SCAN_COOLDOWN_MS
         }
 
-        try {
-          await h5.start({ facingMode: 'environment' }, config, onDecoded, () => {})
-        } catch {
-          const cams = await Html5Qrcode.getCameras()
-          if (!cams?.length) throw new Error('Không tìm thấy camera.')
-          await h5.start({ deviceId: { exact: cams[0].id } }, config, onDecoded, () => {})
-        }
+        await startScannerWithFallback(h5, onDecoded)
+        focusTimer = window.setTimeout(() => {
+          if (!cancelled && h5) void applyContinuousFocus(h5)
+        }, 1500)
       } catch (e) {
         if (!cancelled) {
           setErr(String(e?.message || e || 'Không mở được camera.'))
@@ -95,6 +197,7 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
 
     return () => {
       cancelled = true
+      if (focusTimer) window.clearTimeout(focusTimer)
       void stop()
     }
   }, [open, readerId])
@@ -119,7 +222,8 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung — sau mỗi lần nhận có nghỉ ngắn để tránh quét trùng. Bấm «Hủy» hoặc × để tắt camera.
+          Đưa mã vào khung vuông giữa màn hình — giữ điện thoại cách vừa phải (iOS không lấy nét cận). Sau mỗi lần
+          nhận có nghỉ ngắn. Bấm «Hủy» hoặc × để tắt camera.
         </p>
         <div
           className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}

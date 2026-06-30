@@ -31,7 +31,8 @@
   width: 100%;
   box-sizing: border-box;
   min-height: 48px;
-  padding: 0.35rem 0.65rem;
+  padding: calc(0.35rem + env(safe-area-inset-top, 0px)) max(0.65rem, env(safe-area-inset-right, 0px)) 0.35rem
+    max(0.65rem, env(safe-area-inset-left, 0px));
   background: #0056b3;
   border-bottom: 1px solid rgba(0, 0, 0, 0.12);
   flex-shrink: 0;
@@ -8836,7 +8837,6 @@ li.ah-inbound-suggest-empty {
 
   .admin-hub-nav {
     flex-wrap: nowrap;
-    padding-bottom: max(0.35rem, env(safe-area-inset-top, 0px));
   }
 
   .admin-hub-main {

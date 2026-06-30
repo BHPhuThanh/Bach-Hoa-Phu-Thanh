@@ -84,6 +84,9 @@
 
 .barcode-scan-viewport video {
   border-radius: 12px;
+  object-fit: cover;
+  width: 100%;
+  max-height: min(52vh, 420px);
 }
 
 .barcode-scan-err {
