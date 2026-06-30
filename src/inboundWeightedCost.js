@@ -103,6 +103,34 @@ export function calculateWeightedAverage(oldQty, oldCost, inboundQty, inboundUni
   return Math.round(weighted)
 }
 
+/** Giá trị nhập ròng của phần hoàn trả `returnQty` đơn vị dòng (theo đơn giá + CK dòng gốc). */
+export function inboundLineReturnNetPurchaseTotal(line, returnQty) {
+  const l = normalizeInboundLineForCost(line)
+  const cap = inboundLineReturnableQtyForCost(l)
+  const rq = Math.min(cap, Math.max(0, parseNumberVi(returnQty)))
+  if (rq <= 0) return 0
+  const gross = rq * l.unitPrice
+  const discPortion = l.qty > 0 ? Math.max(0, l.lineDiscount) * (rq / l.qty) : 0
+  return Math.max(0, gross - discPortion)
+}
+
+/**
+ * Hoàn tác bình quân gia quyền khi trả hàng nhập.
+ * newCost = (oldQty×oldCost − returnQty×returnUnitCost) / (oldQty − returnQty)
+ * Nếu tồn sau trả ≤ 0: giữ nguyên giá vốn (tránh chia 0 / NaN).
+ */
+export function reverseWeightedAverage(oldQty, oldCost, returnQty, returnUnitCost) {
+  const oldQtyNum = Math.max(0, parseNumberVi(oldQty))
+  const oldCostNum = Math.max(0, parseNumberVi(oldCost))
+  const returnQtyNum = Math.max(0, parseNumberVi(returnQty))
+  const returnUnitCostNum = Math.max(0, parseNumberVi(returnUnitCost))
+  const newQty = oldQtyNum - returnQtyNum
+  if (newQty <= 0) return Math.round(oldCostNum)
+  const totalValue = oldQtyNum * oldCostNum - returnQtyNum * returnUnitCostNum
+  if (totalValue <= 0) return 0
+  return Math.round(totalValue / newQty)
+}
+
 function lineGroupRootOfVariant(v, fallbackCode = '') {
   const code = String(v?.code || fallbackCode || '').trim()
   const linked = String(v?.linkedMasterCode || '').trim()
@@ -200,6 +228,42 @@ function aggregateInboundPurchaseByGroupRoot(lines, byVid, serverByMaHang, flat)
     const srv = serverByMaHang?.get(String(v.code || '').trim())
     const conv = conversionToBaseForVariant(v, srv)
     const baseQty = q * conv
+    const prev = m.get(root) || { qty: 0, net: 0 }
+    m.set(root, { qty: prev.qty + baseQty, net: prev.net + net })
+  }
+  return { byRoot: m }
+}
+
+function aggregateInboundReturnByGroupRoot(lines, returnQtyByLineId, byVid, serverByMaHang, flat) {
+  const m = new Map()
+  for (const raw of lines || []) {
+    const ln = normalizeInboundLineForCost(raw)
+    const cap = inboundLineReturnableQtyForCost(ln)
+    const draft = Math.max(0, parseNumberVi(returnQtyByLineId?.[ln.lineId]))
+    const rq = Math.min(cap, draft)
+    if (rq <= 0) continue
+    if (!ln.variantId) {
+      // eslint-disable-next-line no-console
+      console.warn('Dòng hoàn trả bị từ chối:', raw, 'Lý do: thiếu variantId')
+      continue
+    }
+    const v = findCatalogVariantForInboundLine(ln, byVid, flat)
+    if (!v) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'Dòng hoàn trả bị từ chối:',
+        raw,
+        'Lý do: không tìm thấy biến thể trong danh mục',
+        { variantId: ln.variantId, ma_hang_line: ln.code }
+      )
+      continue
+    }
+    const root = lineGroupRootOfVariant(v, ln.code)
+    if (!root) continue
+    const net = inboundLineReturnNetPurchaseTotal(ln, rq)
+    const srv = serverByMaHang?.get(String(v.code || '').trim())
+    const conv = conversionToBaseForVariant(v, srv)
+    const baseQty = rq * conv
     const prev = m.get(root) || { qty: 0, net: 0 }
     m.set(root, { qty: prev.qty + baseQty, net: prev.net + net })
   }
@@ -371,4 +435,101 @@ export function computeInboundFulfillmentPlan(
   }
 
   return { diffs, patches }
+}
+
+/**
+ * Kế hoạch trừ tồn + hoàn tác giá vốn khi trả hàng nhập (hoặc hủy phiếu còn hàng).
+ * @param {Array<object>} catalogList
+ * @param {Array<object>} orderLines — dòng phiếu nhập
+ * @param {Record<string, number>} returnQtyByLineId — map lineId → SL trả lần này
+ * @param {Map<string, { ma_hang: string, gia_von?: unknown, ton_kho?: unknown }>} serverByMaHang
+ * @returns {{ patches: Array<{ variantId: string, patch: { stockQty: number, cost: number, ton_nho_nhat: number, persistMaHang: string } }> }}
+ */
+export function computeInboundReturnFulfillmentPlan(
+  catalogList,
+  orderLines,
+  returnQtyByLineId,
+  serverByMaHang
+) {
+  const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
+  const byVid = new Map(flat.map((v) => [String(v.id), v]))
+  const groupMembers = new Map()
+  for (const v of flat) {
+    const root = lineGroupRootOfVariant(v)
+    if (!root) continue
+    const prev = groupMembers.get(root) || []
+    prev.push(v)
+    groupMembers.set(root, prev)
+  }
+
+  const agg = aggregateInboundReturnByGroupRoot(
+    orderLines,
+    returnQtyByLineId,
+    byVid,
+    serverByMaHang,
+    flat
+  )
+  const patches = []
+
+  for (const root of agg.byRoot.keys()) {
+    const members = groupMembers.get(root) || []
+    if (!members.length) continue
+    const rep = [...members].sort((a, b) => {
+      const ac = conversionToBaseForVariant(a, serverByMaHang?.get(String(a?.code || '').trim()))
+      const bc = conversionToBaseForVariant(b, serverByMaHang?.get(String(b?.code || '').trim()))
+      if (ac !== bc) return ac - bc
+      return String(a?.code || '').localeCompare(String(b?.code || ''), 'vi')
+    })[0]
+    if (!rep) continue
+
+    const ret = agg.byRoot.get(root) || { qty: 0, net: 0 }
+    const returnBaseQty = ret.qty
+    const returnNet = ret.net
+    if (returnBaseQty <= 0) continue
+
+    const srvGroup = parseGroupServerSnapshot(rep, members, serverByMaHang)
+    const fallbackBaseTon = members.reduce((acc, v) => {
+      const n = Number(v?.stockQty)
+      if (!Number.isFinite(n) || n < 0) return acc
+      const conv = conversionToBaseForVariant(v, null)
+      return Math.max(acc, n * conv)
+    }, 0)
+    const fallbackBaseCost = members.reduce((acc, v) => {
+      const conv = conversionToBaseForVariant(v, null)
+      const n = Number(v?.cost)
+      if (!Number.isFinite(n) || n < 0) return acc
+      const baseCost = n / conv
+      return Number.isFinite(baseCost) && baseCost > 0 ? Math.max(acc, baseCost) : acc
+    }, 0)
+
+    const oldBaseQty = srvGroup.hasServer ? srvGroup.baseQty : fallbackBaseTon
+    const oldBaseCost = srvGroup.hasServer ? srvGroup.baseCost : fallbackBaseCost
+    const newBaseQty = Math.max(0, oldBaseQty - returnBaseQty)
+
+    let newBaseCost
+    if (newBaseQty <= 0) {
+      newBaseCost = oldBaseCost
+    } else {
+      const returnUnitCost = returnNet / returnBaseQty
+      newBaseCost = reverseWeightedAverage(oldBaseQty, oldBaseCost, returnBaseQty, returnUnitCost)
+    }
+
+    for (const member of members) {
+      if (!member?.id) continue
+      const memberCode = String(member.code || '').trim()
+      const memberSrv = serverByMaHang?.get(memberCode)
+      const conv = conversionToBaseForVariant(member, memberSrv)
+      patches.push({
+        variantId: member.id,
+        patch: {
+          stockQty: fixed4Number(newBaseQty),
+          cost: Math.round(newBaseCost * conv),
+          ton_nho_nhat: Number(member?.ton_nho_nhat ?? memberSrv?.ton_nho_nhat ?? 0),
+          persistMaHang: memberCode,
+        },
+      })
+    }
+  }
+
+  return { patches }
 }

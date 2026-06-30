@@ -183,6 +183,7 @@ import {
 import {
   collectInboundMaHangCodes,
   computeInboundFulfillmentPlan,
+  computeInboundReturnFulfillmentPlan,
 } from './inboundWeightedCost.js'
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 import { updateProductDvtFieldsSequential } from './productDvtSupabaseUpdate.js'
@@ -5064,6 +5065,7 @@ export default function AdminHub({
             patch: {
               stockQty: Math.max(0, cur + delta),
               ton_nho_nhat: Number(v.ton_nho_nhat || 0),
+              persistMaHang: String(v.code ?? '').trim(),
             },
           })
         }
@@ -5075,8 +5077,9 @@ export default function AdminHub({
                   documentCode: String(stockMeta.documentCode || '').trim(),
                   inboundOrderId: String(stockMeta.inboundOrderId || '').trim(),
                 },
+                allowCodeAsOldMaHang: true,
               }
-            : {}
+            : { allowCodeAsOldMaHang: true }
         return onBulkPatchCatalogVariants(patches, ib)
       }
       if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
@@ -5098,6 +5101,45 @@ export default function AdminHub({
       return r?.ok ? { ok: true } : { ok: false, error: r?.error || 'Không ghi được danh mục.' }
     },
     [catalogListForInbound, onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
+  )
+
+  /** Trả hàng nhập / hủy phiếu — patch tồn + giá vốn (MAC hoàn tác) lên Supabase. */
+  const applyInboundFulfillmentPatches = useCallback(
+    async (patches, stockMeta) => {
+      const valid = (patches || []).filter(
+        (e) => e && e.variantId != null && e.patch && typeof e.patch === 'object'
+      )
+      if (valid.length === 0) return { ok: true }
+      if (typeof onBulkPatchCatalogVariants === 'function') {
+        const ib = {
+          allowCodeAsOldMaHang: true,
+          ...(stockMeta?.documentCode || stockMeta?.inboundOrderId
+            ? {
+                inboundInventoryMeta: {
+                  documentCode: String(stockMeta.documentCode || '').trim(),
+                  inboundOrderId: String(stockMeta.inboundOrderId || '').trim(),
+                },
+              }
+            : {}),
+        }
+        return onBulkPatchCatalogVariants(valid, ib)
+      }
+      if (!standaloneCatalog?.products?.length) return { ok: false, error: 'Chưa có danh mục.' }
+      const standaloneProducts = Array.isArray(standaloneCatalog?.products) ? standaloneCatalog.products : []
+      let nextFlat = (Array.isArray(standaloneProducts) ? standaloneProducts : [])
+        .flatMap((p) => p?.groupVariants || [p])
+        .filter(Boolean)
+      for (const entry of valid) {
+        nextFlat = nextFlat.map((v) => {
+          if (v.id !== entry.variantId) return v
+          return { ...v, ...entry.patch }
+        })
+      }
+      const nextProducts = buildDisplayCatalog(nextFlat)
+      const r = await persistStandaloneProducts(nextProducts, standaloneCatalog.fileName || '')
+      return r?.ok ? { ok: true } : { ok: false, error: r?.error || 'Không ghi được danh mục.' }
+    },
+    [onBulkPatchCatalogVariants, standaloneCatalog, persistStandaloneProducts]
   )
 
   const applyInboundStockDeltasFromNetMaps = useCallback(
@@ -5556,7 +5598,7 @@ export default function AdminHub({
   const confirmInboundReturnSubmit = useCallback(async () => {
     if (!inboundReturnModal) return
     const order = normalizeInboundRow(inboundReturnModal)
-    const deltas = new Map()
+    const returnQtyByLineId = {}
     let anyTake = false
     const newLines = order.lines.map((raw) => {
       const ln = normalizeInboundLine(raw)
@@ -5564,16 +5606,43 @@ export default function AdminHub({
       const draft = parseReturnQtyDraft(inboundReturnQtyDraft[ln.lineId], cap)
       if (draft <= 0) return ln
       anyTake = true
-      if (ln.variantId) deltas.set(ln.variantId, (deltas.get(ln.variantId) || 0) - draft)
+      returnQtyByLineId[ln.lineId] = draft
       return { ...ln, returnedQty: ln.returnedQty + draft }
     })
     if (!anyTake) {
       alert('Nhập số lượng trả (> 0) cho ít nhất một dòng.')
       return
     }
-    const stockRes = await applyInboundStockDeltas(deltas)
+    const codes = collectInboundMaHangCodes(catalogListForInbound, order.lines)
+    let serverMap = new Map()
+    if (codes.length > 0 && isSupabaseConfigured()) {
+      try {
+        serverMap = await fetchProductsCostAndStockByMaHang(codes)
+      } catch (e) {
+        console.error('[confirmInboundReturnSubmit] fetch products', e)
+        alert(
+          'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
+        )
+        return
+      }
+    }
+    const { patches } = computeInboundReturnFulfillmentPlan(
+      catalogListForInbound,
+      order.lines,
+      returnQtyByLineId,
+      serverMap
+    )
+    if (!patches?.length) {
+      alert('Không khớp sản phẩm trong danh mục để hoàn trả (kiểm tra mã hàng / biến thể).')
+      return
+    }
+    const returnDocCode = `TR-${String(order.code || order.id || '').trim() || '—'}`
+    const stockRes = await applyInboundFulfillmentPatches(patches, {
+      documentCode: returnDocCode,
+      inboundOrderId: order.id,
+    })
     if (stockRes && stockRes.ok === false) {
-      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
+      window.alert(String(stockRes.error || 'Không cập nhật được tồn kho / giá vốn.'))
       return
     }
     const allReturned = newLines.every((raw) => {
@@ -5597,7 +5666,12 @@ export default function AdminHub({
     })
     setInboundReturnModal(null)
     setInboundReturnQtyDraft({})
-  }, [inboundReturnModal, inboundReturnQtyDraft, applyInboundStockDeltas])
+  }, [
+    inboundReturnModal,
+    inboundReturnQtyDraft,
+    catalogListForInbound,
+    applyInboundFulfillmentPatches,
+  ])
 
   const requestInboundCancel = useCallback((order) => {
     const row = normalizeInboundRow(order)
@@ -5612,16 +5686,46 @@ export default function AdminHub({
       row.status === 'completed' ||
       row.status === 'returned_partial' ||
       row.status === 'returned_full'
-    const deltas = new Map()
     if (hadStock) {
+      const returnQtyByLineId = {}
       for (const l of row.lines) {
-        const q = inboundLineReturnableQty(l)
-        if (q > 0 && l.variantId) deltas.set(l.variantId, (deltas.get(l.variantId) || 0) - q)
+        const ln = normalizeInboundLine(l)
+        const q = inboundLineReturnableQty(ln)
+        if (q > 0) returnQtyByLineId[ln.lineId] = q
       }
-      const stockRes = await applyInboundStockDeltas(deltas)
-      if (stockRes && stockRes.ok === false) {
-        window.alert(String(stockRes.error || 'Không cập nhật được tồn kho.'))
-        return
+      if (Object.keys(returnQtyByLineId).length > 0) {
+        const codes = collectInboundMaHangCodes(catalogListForInbound, row.lines)
+        let serverMap = new Map()
+        if (codes.length > 0 && isSupabaseConfigured()) {
+          try {
+            serverMap = await fetchProductsCostAndStockByMaHang(codes)
+          } catch (e) {
+            console.error('[confirmInboundCancelSubmit] fetch products', e)
+            alert(
+              'Không đọc được giá vốn / tồn kho trên Supabase (bảng products). Kiểm tra mạng và quyền.'
+            )
+            return
+          }
+        }
+        const { patches } = computeInboundReturnFulfillmentPlan(
+          catalogListForInbound,
+          row.lines,
+          returnQtyByLineId,
+          serverMap
+        )
+        if (!patches?.length) {
+          alert('Không khớp sản phẩm trong danh mục để hoàn tồn (kiểm tra mã hàng / biến thể).')
+          return
+        }
+        const cancelDocCode = `HUY-${String(row.code || row.id || '').trim() || '—'}`
+        const stockRes = await applyInboundFulfillmentPatches(patches, {
+          documentCode: cancelDocCode,
+          inboundOrderId: row.id,
+        })
+        if (stockRes && stockRes.ok === false) {
+          window.alert(String(stockRes.error || 'Không cập nhật được tồn kho / giá vốn.'))
+          return
+        }
       }
     }
     setInboundOrders((p) =>
@@ -5634,7 +5738,7 @@ export default function AdminHub({
       return n
     })
     setInboundCancelModal(null)
-  }, [inboundCancelModal, applyInboundStockDeltas])
+  }, [inboundCancelModal, catalogListForInbound, applyInboundFulfillmentPatches])
 
   const closeInboundDetailTabByOrderId = useCallback((orderId) => {
     const oid = String(orderId ?? '')
