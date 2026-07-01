@@ -1,25 +1,22 @@
 /* Trung tâm quản trị Doanh thu — menu xanh + nội dung dark */
 
 .admin-hub {
-  flex: 1;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  flex: 1 1 auto;
   min-height: 0;
   background: #0a0c0f;
   color: #e8eaed;
 }
 
-.app.app--dark > .admin-hub {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* Tab Hàng hóa: hub giãn ít nhất theo viewport để AutoSizer luôn có không gian đo */
 .admin-hub.admin-hub--goods-tab {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: calc(100vh - 5.5rem);
+  min-height: 0;
 }
 
 .admin-hub-nav {
@@ -230,24 +227,24 @@
 }
 
 .admin-hub-main {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
-  overscroll-behavior-y: contain;
+  overflow-x: hidden;
+  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.85rem 0.75rem 1.25rem;
+  overscroll-behavior-y: contain;
+  padding: 0.85rem 0.75rem 120px !important;
   box-sizing: border-box;
 }
 
-/* Tab Hàng hóa: main là cột flex, cuộn chỉ trong virtual list — tránh khoảng trống tối dưới list */
+/* Tab Hàng hóa: virtual list cần cột flex; cuộn chính vẫn ở .admin-hub-main */
 .admin-hub-main.admin-hub-main--goods {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  overflow: hidden;
   min-height: 0;
-  /* Fallback chiều cao khi chuỗi flex chưa gán được (header app + nav hub ~ 8rem) */
-  min-height: calc(100vh - 8.5rem);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .admin-hub-panel-title {
@@ -5018,22 +5015,17 @@ a.ah-inbound-line-code-link:hover {
 
 /* —— Tab Phiếu nhập mới (full width, không modal) —— */
 .admin-hub-main--inbound-draft {
-  padding: 0;
+  padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
   max-width: 100vw;
   width: 100%;
-  box-sizing: border-box;
-  overflow-x: hidden;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
 }
 
 .ah-inbound-draft-root {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   width: 100%;
   max-width: 100vw;
   box-sizing: border-box;
@@ -5081,8 +5073,6 @@ a.ah-inbound-line-code-link:hover {
 }
 
 .ah-inbound-draft-body {
-  flex: 1;
-  min-height: 0;
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -5093,7 +5083,7 @@ a.ah-inbound-line-code-link:hover {
   width: 100%;
   box-sizing: border-box;
   overflow-x: hidden;
-  overflow-y: hidden;
+  overflow-y: visible;
 }
 
 .ah-inbound-draft-col-lines {
@@ -5102,8 +5092,7 @@ a.ah-inbound-line-code-link:hover {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  overflow-x: hidden;
-  overflow-y: hidden;
+  overflow: visible;
 }
 
 .ah-inbound-draft-line-search {
@@ -5247,15 +5236,10 @@ li.ah-inbound-suggest-empty {
 }
 
 .ah-inbound-draft-table-wrap.ah-inbound-lines-table-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  min-width: 0;
-  max-width: 100%;
-  max-height: none;
   margin-top: 0.3rem;
-  overflow-x: hidden;
-  overflow-y: auto;
+  max-width: 100%;
   box-sizing: border-box;
+  overflow: visible;
 }
 
 .ah-inbound-draft-table-wrap.admin-hub-table-wrap {
@@ -5735,13 +5719,14 @@ li.ah-inbound-suggest-empty {
   box-sizing: border-box;
   border-top: 1px solid rgba(37, 43, 54, 0.95);
   background: rgba(12, 15, 20, 0.96);
+  position: relative;
+  z-index: 1;
 }
 
 @media (max-width: 960px) {
   .ah-inbound-draft-body {
     grid-template-columns: minmax(0, 1fr);
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: visible;
     align-content: start;
   }
 
@@ -7505,12 +7490,6 @@ li.ah-inbound-suggest-empty {
   background: rgba(56, 189, 248, 0.18);
 }
 
-/* —— Kiểm hàng / Điều chỉnh giá vốn —— */
-.admin-hub.admin-hub--stock-check-tab .admin-hub-main,
-.admin-hub.admin-hub--cost-adjust-tab .admin-hub-main {
-  overflow: auto;
-}
-
 .ah-cost-adjust-create-btn {
   display: inline-flex;
   align-items: center;
@@ -8841,8 +8820,8 @@ li.ah-inbound-suggest-empty {
     flex-wrap: nowrap;
   }
 
-  .admin-hub-main {
-    padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  .ah-inbound-draft-foot {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   }
 
   .ah-mnav-dock {

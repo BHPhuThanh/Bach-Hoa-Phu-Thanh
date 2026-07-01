@@ -6866,7 +6866,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       )}
 
       {adminHubMounted ? (
-      <div hidden={activeView !== 'dashboard'} aria-hidden={activeView !== 'dashboard'}>
+      <div
+        className="app-view-shell"
+        hidden={activeView !== 'dashboard'}
+        aria-hidden={activeView !== 'dashboard'}
+      >
         {activeSellerId !== 'admin' && adminPinModalOpen ? (
           <div className="min-h-screen w-full bg-black" aria-hidden />
         ) : (
@@ -6918,7 +6922,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           <div className="pos-main-body max-md:flex max-md:flex-col max-md:bg-white md:flex md:flex-row">
           <div className="pos-left max-md:w-full" key={activeSellOrderId ?? 'pos-no-active-order'}>
             <div className="pos-table-wrap cart-list-mobile">
-              <div style={{ flex: 1, minHeight: 0, height: 'calc(100vh - 360px)', overflowY: 'auto' }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               <table className="pos-table pos-table--cart">
                 <colgroup>
                   <col className="pos-cart-col pos-cart-col--act" style={{ width: '4%' }} />
