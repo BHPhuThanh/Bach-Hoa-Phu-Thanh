@@ -4014,6 +4014,19 @@ export default function AdminHub({
   const [inboundFormLines, setInboundFormLines] = useState([])
   const inboundFormLinesRef = useRef(inboundFormLines)
   inboundFormLinesRef.current = inboundFormLines
+
+  /** Lưới an toàn: cảnh báo trước khi reload/đóng tab khi đang có dòng nhập hàng chưa lưu. */
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (inboundFormLines.length > 0) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [inboundFormLines])
+
   const [inboundFormProductQ, setInboundFormProductQ] = useState('')
   const [inboundProductSuggestIdx, setInboundProductSuggestIdx] = useState(0)
   const inboundProductSearchRef = useRef(null)
