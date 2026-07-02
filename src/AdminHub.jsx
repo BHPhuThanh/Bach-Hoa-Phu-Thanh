@@ -2102,10 +2102,14 @@ export default function AdminHub({
   }, [soloInvLedgerDocSearch])
 
   useEffect(() => {
-    setGoodsInvLedgerDocSearch('')
-    setGoodsInvLedgerDocDebounced('')
-    setGoodsInvLedgerDateFrom(inventoryDateDefaults.fromYmd)
-    setGoodsInvLedgerDateTo(inventoryDateDefaults.toYmd)
+    setGoodsInvLedgerDocSearch((prev) => (prev ? '' : prev))
+    setGoodsInvLedgerDocDebounced((prev) => (prev ? '' : prev))
+    setGoodsInvLedgerDateFrom((prev) =>
+      prev !== inventoryDateDefaults.fromYmd ? inventoryDateDefaults.fromYmd : prev
+    )
+    setGoodsInvLedgerDateTo((prev) =>
+      prev !== inventoryDateDefaults.toYmd ? inventoryDateDefaults.toYmd : prev
+    )
   }, [inboundQuickEditExpandId, inboundQuickEditSelectedVid, inventoryDateDefaults])
 
   useEffect(() => {
@@ -2241,11 +2245,11 @@ export default function AdminHub({
   useEffect(() => {
     if (!inboundQuickEditExpandId) return
     const ctx = findVariantContext(catalogListForGoodsEdit, inboundQuickEditExpandId)
-    if (ctx?.product && isComboCatalogProduct(ctx.product)) {
-      setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_COMBO)
-      return
-    }
-    setInboundQuickEditShelfTab(GOODS_DETAIL_VIEW_TONKHO)
+    const nextTab =
+      ctx?.product && isComboCatalogProduct(ctx.product)
+        ? GOODS_DETAIL_VIEW_COMBO
+        : GOODS_DETAIL_VIEW_TONKHO
+    setInboundQuickEditShelfTab((prev) => (prev === nextTab ? prev : nextTab))
   }, [inboundQuickEditExpandId, catalogListForGoodsEdit])
 
   const inboundQuickEditCtx = useMemo(() => {
@@ -6292,7 +6296,7 @@ export default function AdminHub({
     }
     let cancelled = false
     setGoodsSfInventoryLoading(true)
-    fetchInventoryLogsByProductId(productId, catalogList, {
+    fetchInventoryLogsByProductId(productId, catalogListRef.current, {
       limit: 200,
       dateFrom: goodsInvLedgerDateFrom,
       dateTo: goodsInvLedgerDateTo,
@@ -6315,7 +6319,6 @@ export default function AdminHub({
     inboundQuickEditExpandId,
     inboundQuickEditCtx?.product?.id,
     inboundQuickEditShelfTab,
-    catalogList,
     inventoryLogRefreshTick,
     goodsInvLedgerDateFrom,
     goodsInvLedgerDateTo,

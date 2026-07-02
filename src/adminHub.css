@@ -5723,6 +5723,134 @@ li.ah-inbound-suggest-empty {
   z-index: 1;
 }
 
+@media (min-width: 1024px) {
+  .admin-hub-main.admin-hub-main--inbound-draft {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0 !important;
+  }
+
+  .admin-hub-main.admin-hub-main--inbound-draft .ah-inbound-draft-root {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .ah-inbound-draft-root {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .ah-inbound-draft-head {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  /* Hai cột + footer tham gia grid gốc; bỏ lớp body trung gian */
+  .ah-inbound-draft-body {
+    display: contents;
+  }
+
+  /* Cột trái: kéo dài qua cả vùng nội dung + footer (bảng chạm đáy) */
+  .ah-inbound-draft-col-lines {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .ah-inbound-draft-col-lines > .ah-inbound-form-lbl,
+  .ah-inbound-draft-col-lines > .ah-inbound-draft-search-row {
+    flex-shrink: 0;
+  }
+
+  .ah-inbound-draft-col-lines .ah-inbound-draft-table-wrap.ah-inbound-lines-table-wrap,
+  .ah-inbound-draft-col-lines .ah-inbound-draft-table-wrap.admin-hub-table-wrap {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    margin-top: 0.3rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background-color: #12161c;
+    border: 1px solid #252b33;
+    border-radius: 8px;
+  }
+
+  .ah-inbound-draft-col-lines .ah-inbound-draft-table-wrap > .ah-inbound-draft-lines-table,
+  .ah-inbound-draft-col-lines .ah-inbound-draft-table-wrap > .admin-hub-table.ah-inbound-draft-lines-table {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    height: auto;
+    max-height: max-content;
+    min-height: 0;
+    margin-top: 0;
+    width: 100%;
+  }
+
+  .ah-inbound-draft-col-lines .ah-inbound-draft-lines-table tbody {
+    height: auto;
+    vertical-align: top;
+  }
+
+  .ah-inbound-draft-col-lines .ah-inbound-draft-lines-table tbody tr.ah-inbound-draft-line-empty td {
+    background: rgba(15, 23, 42, 0.55);
+  }
+
+  /* Cột phải: panel thông tin giãn nội dung */
+  .ah-inbound-draft-sidebar {
+    grid-column: 2;
+    grid-row: 2;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    width: 300px;
+    max-width: 300px;
+    height: 100%;
+    min-height: 0;
+    overflow-x: visible;
+    overflow-y: hidden;
+    align-self: stretch;
+  }
+
+  .ah-inbound-draft-sidebar > *:not(.ah-inbound-form-textarea) {
+    flex-shrink: 0;
+  }
+
+  .ah-inbound-draft-sidebar .ah-inbound-form-textarea {
+    flex: 1 1 auto;
+    flex-grow: 1;
+    min-height: 4.5rem;
+    resize: none;
+  }
+
+  /* Nút bấm: khối liền đáy cột phải, không tách rời bằng margin-top: auto */
+  .ah-inbound-draft-foot {
+    grid-column: 2;
+    grid-row: 3;
+    flex-shrink: 0;
+    margin-top: 0;
+    border-top: 1px solid rgba(37, 43, 54, 0.95);
+  }
+}
+
 @media (max-width: 960px) {
   .ah-inbound-draft-body {
     grid-template-columns: minmax(0, 1fr);
@@ -10291,5 +10419,51 @@ li.ah-inbound-suggest-empty {
     margin-top: 0.45rem;
     font-size: 0.82rem;
     color: rgba(203, 213, 225, 0.92);
+  }
+}
+
+/* PC (≥1024px): bỏ padding dock mobile, bảng Hàng hóa giãn full chiều cao main */
+@media (min-width: 1024px) {
+  .admin-hub-main {
+    padding-bottom: 20px !important;
+  }
+
+  .admin-hub-main.admin-hub-main--goods {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-page {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-catalog-shell {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-catalog-shell > .ah-goods-table-wrap {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-catalog-shell .ah-goods-virtual-host {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
   }
 }

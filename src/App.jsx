@@ -3998,19 +3998,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setActiveSellOrderId(sellOrders[sellOrders.length - 1].id)
   }, [sellOrders, activeSellOrderId])
 
-  useEffect(() => {
-    console.log(
-      '[cart]',
-      cart.map((l) => ({
-        name: l.name,
-        code: l.code,
-        variantId: l.variantId,
-        catalogId: l.catalogId,
-        qty: l.qty,
-      }))
-    )
-  }, [cart])
-
   cartRef.current = cart
   const orderDiscountStr = activeOrder?.orderDiscountStr ?? ''
   const cashGivenStr = activeOrder?.cashGivenStr ?? ''
@@ -4197,18 +4184,32 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [sellOrders, activeSellOrderId, products, fileName])
 
   /** Khi catalog đổi (tab Hàng hóa / nhập hàng) — đồng bộ giá vốn, tồn, ĐVT trên mọi đơn đang mở. */
+  const catalogCartSyncFingerprintRef = useRef('')
   useEffect(() => {
     if (!products.length) return
     if (posDraftHydratingRef.current) return
-    setSellOrders((orders) =>
-      orders.map((o) => ({
-        ...o,
-        cart: (o.cart || []).map((line) =>
-          remapCartLineFromCatalog(line, products, o.isWholesale === true)
-        ),
-      }))
-    )
-  }, [products])
+    const fp = buildCatalogFingerprint(products, fileName)
+    if (catalogCartSyncFingerprintRef.current === fp) return
+    catalogCartSyncFingerprintRef.current = fp
+    const prods = productsRef.current
+    setSellOrders((orders) => {
+      let changed = false
+      const next = orders.map((o) => {
+        const prevCart = o.cart || []
+        if (!prevCart.length) return o
+        const nextCart = prevCart.map((line) =>
+          remapCartLineFromCatalog(line, prods, o.isWholesale === true)
+        )
+        const same =
+          nextCart.length === prevCart.length &&
+          nextCart.every((line, i) => line === prevCart[i])
+        if (same) return o
+        changed = true
+        return { ...o, cart: nextCart }
+      })
+      return changed ? next : orders
+    })
+  }, [products, fileName])
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(new Date()), 1000)
@@ -5130,9 +5131,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   useEffect(() => {
     if (cart.length === 0) {
-      setCartQtyDraftByLine({})
-      setSelectedCartLineId(null)
-      setSelectedItemIndex(null)
+      setCartQtyDraftByLine((prev) => (Object.keys(prev).length ? {} : prev))
+      setSelectedCartLineId((prev) => (prev !== null ? null : prev))
+      setSelectedItemIndex((prev) => (prev !== null ? null : prev))
       return
     }
     setSelectedCartLineId((prev) => {
