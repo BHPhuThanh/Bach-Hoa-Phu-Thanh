@@ -5202,11 +5202,20 @@
  * Không dùng @media (orientation: landscape); không ép xoay bằng transform.
  */
 @media (max-width: 768px) {
+  .app > .pos-main {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .pos-main.pos-main--dock {
     display: flex !important;
     flex-direction: column !important;
     grid-template-columns: unset !important;
     grid-template-rows: unset !important;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .pos-main.pos-main--dock > .pos-main-body {
@@ -5214,15 +5223,18 @@
     flex-direction: column !important;
     grid-column: unset !important;
     grid-row: unset !important;
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: 0 1 auto;
+    flex-shrink: 0;
+    min-height: 150px;
     width: 100%;
+    overflow: visible;
   }
 
   .pos-main.pos-main--dock > .pos-right-rail {
     grid-column: unset !important;
     grid-row: unset !important;
     flex: 0 0 auto;
+    flex-shrink: 0;
     width: 100% !important;
     max-width: 100% !important;
     height: auto;
@@ -5232,12 +5244,39 @@
   .pos-main.pos-main--dock > .pos-main-checkout-footer {
     grid-column: unset !important;
     grid-row: unset !important;
+    flex: 0 0 auto;
+    flex-shrink: 0;
     width: 100%;
     max-width: 100%;
   }
 
   .pos-main-body {
     flex-direction: column !important;
+    overflow: visible;
+  }
+
+  .pos-left {
+    flex: 1 1 auto;
+    flex-shrink: 0;
+    min-height: 150px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .pos-table-wrap.cart-list-mobile {
+    flex: 1 1 auto;
+    flex-shrink: 0;
+    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .pos-table-wrap.cart-list-mobile > div {
+    flex: 1 1 auto;
+    flex-shrink: 0;
+    min-height: 150px !important;
+    overflow: visible !important;
   }
 
   .pos-right-rail {
@@ -5256,11 +5295,6 @@
 
   .pos-sidebar--minimal .pos-btn-checkout {
     border-radius: 0;
-  }
-
-  .pos-left {
-    width: 100%;
-    max-width: 100%;
   }
 }
 
