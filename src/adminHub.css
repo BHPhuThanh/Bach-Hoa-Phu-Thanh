@@ -10467,3 +10467,51 @@ li.ah-inbound-suggest-empty {
     min-height: 0;
   }
 }
+
+/* Mobile + tablet (<1024px): Hàng hóa + Kiểm hàng (Admin Hub) — không đụng PC */
+@media (max-width: 1023px) {
+  .admin-hub-main.admin-hub-main--goods {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    background-color: #0a0c0f;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    background-color: #0a0c0f;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-catalog-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    background-color: #0a0c0f;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-catalog-shell > .ah-goods-table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background-color: #0a0c0f;
+  }
+
+  .admin-hub-main.admin-hub-main--goods .ah-goods-table-wrap--virtual,
+  .admin-hub-main.admin-hub-main--goods .ah-goods-virtual-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    background-color: #0a0c0f;
+  }
+}
