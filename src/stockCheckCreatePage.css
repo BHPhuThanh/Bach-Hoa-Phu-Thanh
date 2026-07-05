@@ -112,21 +112,102 @@
   text-align: right;
 }
 
-/* ===== Card Layout cho Mobile (mặc định ẩn, chỉ bật ở <=768px) ===== */
+/* ===== Card Layout — PC ẩn; mobile bật trong @media (max-width: 1023px) ===== */
 .scc-cards {
   display: none;
 }
 
-@media (max-width: 768px) {
-  /* PC dùng bảng; Mobile ẩn bảng, bật lưới thẻ. */
-  .scc-table-wrap {
-    display: none;
+/* Mobile + tablet (<1024px): Kiểm hàng — display toggle + flex chain + card layout */
+@media (max-width: 1023px) {
+  /* —— 1. Công tắc hiển thị: bảng PC tắt, thẻ bật —— */
+  .app.app--dark .cac-page .cac-table-wrap,
+  .app.app--dark .cac-page .scc-table-wrap,
+  .app.app--dark .cac-page .cac-products .cac-table-wrap.scc-table-wrap {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    visibility: hidden !important;
   }
-  .scc-cards {
-    display: flex;
-    flex-direction: column;
+
+  .app.app--dark .cac-page .scc-cards {
+    display: flex !important;
+    flex-direction: column !important;
+    visibility: visible !important;
+  }
+
+  /* —— 2. Nối chuỗi Flexbox: app → cac-page → cac-products → scc-cards —— */
+  .app.app--dark {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    min-height: 100dvh;
+    overflow: hidden;
+    background: #0b0e12;
+  }
+
+  .app.app--dark > .cac-page {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    padding-bottom: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: #0b0e12;
+    box-sizing: border-box;
+  }
+
+  .app.app--dark .cac-page > .cac-page__title,
+  .app.app--dark .cac-page > .cac-grid-top {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+  }
+
+  .app.app--dark .cac-page .cac-products {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: visible;
+    margin-bottom: 0;
+    background: transparent;
+  }
+
+  .app.app--dark .cac-page .cac-products > .cac-products__head,
+  .app.app--dark .cac-page .cac-products > .cac-search-row,
+  .app.app--dark .cac-page .cac-products > .cac-muted,
+  .app.app--dark .cac-page .cac-products > .cac-suggest {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+  }
+
+  /* Vùng thẻ: không co về 0 — kích thước theo nội dung, cuộn ở .cac-page */
+  .app.app--dark .cac-page .scc-cards {
+    flex: 0 0 auto;
+    flex-grow: 0;
+    flex-shrink: 0;
+    min-height: auto;
+    overflow: visible;
     gap: 0.85rem;
     margin-top: 0.5rem;
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* —— 3. Thẻ con: không bị dẹt —— */
+  .app.app--dark .cac-page .scc-card {
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    min-height: auto;
+    overflow: visible;
   }
 
   .scc-cards__empty {
@@ -135,6 +216,7 @@
     padding: 1.5rem 1rem;
     border: 1px dashed rgba(148, 163, 184, 0.35);
     border-radius: 12px;
+    flex-shrink: 0;
   }
 
   .scc-card {
@@ -275,73 +357,35 @@
     border-color: rgba(56, 189, 248, 0.8);
     box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
   }
-}
 
-/* Mobile + tablet (<1024px): Tạo phiếu kiểm hàng — thẻ SP cuộn, footer cố định đáy */
-@media (max-width: 1023px) {
-  .app.app--dark .cac-page:has(.scc-cards) {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-    min-height: 0;
-    max-height: 100dvh;
-    overflow: hidden;
-    padding-bottom: 0;
-    box-sizing: border-box;
-  }
-
-  .app.app--dark .cac-page:has(.scc-cards) > .cac-page__title,
-  .app.app--dark .cac-page:has(.scc-cards) > .cac-grid-top {
+  /* Footer tối — đồng bộ .ah-inbound-draft-foot */
+  .app.app--dark .cac-page .cac-footer {
+    display: flex !important;
+    flex: 0 0 auto;
     flex-shrink: 0;
-  }
-
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-    margin-bottom: 0;
-  }
-
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products > .cac-products__head,
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products > .cac-search-row,
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products > .cac-muted,
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products > .cac-suggest {
-    flex-shrink: 0;
-  }
-
-  .app.app--dark .cac-page:has(.scc-cards) .scc-cards,
-  .app.app--dark .cac-page:has(.scc-cards) .cac-products .cac-table-wrap {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 120px;
-  }
-
-  .app.app--dark .cac-page:has(.scc-cards) .cac-footer {
-    position: fixed;
+    position: sticky;
+    bottom: 0;
     left: 0;
     right: 0;
-    bottom: 0;
     width: 100%;
-    z-index: 10;
+    z-index: 100;
     margin-top: 0;
     box-sizing: border-box;
-    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
-    background: #f1f5f9;
-    border-top: 1px solid rgba(148, 163, 184, 0.35);
-    box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.12);
+    padding: 0.55rem max(1rem, env(safe-area-inset-right, 0px))
+      calc(0.55rem + env(safe-area-inset-bottom, 0px))
+      max(1rem, env(safe-area-inset-left, 0px));
+    background: rgba(12, 15, 20, 0.98);
+    border-top: 1px solid rgba(37, 43, 54, 0.95);
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
   }
 
-  .app.app--dark .cac-page:has(.scc-cards) .cac-footer .cac-pager {
-    color: #475569;
+  .app.app--dark .cac-page .cac-footer .cac-pager {
+    color: #94a3b8;
   }
 
-  .app.app--dark .cac-page:has(.scc-cards) .cac-footer .cac-pager select {
-    background: #ffffff;
-    color: #0f172a;
-    border-color: rgba(100, 116, 139, 0.45);
+  .app.app--dark .cac-page .cac-footer .cac-pager select {
+    background: #12161c;
+    color: #e2e8f0;
+    border-color: rgba(71, 85, 105, 0.85);
   }
 }
