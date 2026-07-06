@@ -42,7 +42,7 @@ import AdminHub from './AdminHub.jsx'
 import AdminHubGoodsCreateModal from './AdminHubGoodsCreateModal.jsx'
 import LowStockReportModal from './LowStockReportModal.jsx'
 import { blurActiveElement } from './scanFeedback.js'
-import BarcodeScanModal from './BarcodeScanModal.jsx'
+import PosBarcodeScanModal from './PosBarcodeScanModal.jsx'
 import {
   parseAdminHubDeepLinkFromWindow,
   parseAhOpenProductVariantIdFromLocation,
@@ -6858,7 +6858,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       )}
 
       {activeView === 'sell' && (
-        <BarcodeScanModal
+        <PosBarcodeScanModal
           open={posBarcodeScanOpen}
           onClose={() => setPosBarcodeScanOpen(false)}
           title="Quét mã — thêm vào đơn"
