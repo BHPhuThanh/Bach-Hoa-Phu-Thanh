@@ -58,6 +58,7 @@
 }
 
 .barcode-scan-viewport-wrap {
+  position: relative;
   margin: 0.5rem 0.75rem;
   border-radius: 12px;
   overflow: hidden;
@@ -65,6 +66,20 @@
     box-shadow 0.15s ease,
     border-color 0.15s ease;
   border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.barcode-scan-refocus-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.55);
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .barcode-scan-viewport-wrap--flash {
@@ -75,7 +90,9 @@
 }
 
 .barcode-scan-viewport {
-  min-height: 220px;
+  /* Canvas giải mã (không đặt qrbox) = đúng kích thước hiển thị CSS của khung này — càng lớn
+     càng nhiều pixel cho bộ giải mã JS thuần (Safari không có BarcodeDetector phần cứng). */
+  min-height: 320px;
   margin: 0;
   border-radius: 12px;
   overflow: hidden;
@@ -86,7 +103,7 @@
   border-radius: 12px;
   object-fit: cover;
   width: 100%;
-  max-height: min(52vh, 420px);
+  max-height: min(66vh, 560px);
 }
 
 .barcode-scan-err {
@@ -98,7 +115,13 @@
 .barcode-scan-foot {
   padding: 0.5rem 0.75rem 0.85rem;
   display: flex;
+  gap: 0.5rem;
   justify-content: flex-end;
+}
+
+.barcode-scan-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .barcode-scan-btn {

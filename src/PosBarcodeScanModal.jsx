@@ -8,12 +8,17 @@ const SCAN_SAME_CODE_DEBOUNCE_MS = 400
 /** Sau mỗi lần xử lý mã: không nhận mã mới trong khoảng này (camera vẫn mở). */
 const SCAN_COOLDOWN_MS = 1200
 
-const SCAN_QRBOX = { width: 250, height: 250 }
-
+/**
+ * KHÔNG đặt `qrbox` — html5-qrcode vẽ ảnh vào 1 canvas giải mã đúng bằng kích thước `qrbox` (dù
+ * camera quay phân giải cao, ảnh vẫn bị co nhỏ xuống đúng kích thước đó trước khi decode). Khung
+ * nhỏ khiến canvas giải mã quá ít pixel — Android không sao (dùng BarcodeDetector phần cứng của
+ * trình duyệt, không qua canvas này), nhưng Safari (iPhone/iPad) không có API đó nên phải decode
+ * bằng JS thuần trên đúng canvas nhỏ này — không đủ chi tiết để đọc mã vạch mảnh (EAN-13…) dù ảnh
+ * nhìn qua ống kính vẫn nét. Bỏ `qrbox` → thư viện dùng TOÀN BỘ khung hình camera làm vùng giải
+ * mã, canvas lớn hơn hẳn.
+ */
 const SCAN_CONFIG_BASE = {
   fps: 10,
-  qrbox: SCAN_QRBOX,
-  aspectRatio: 1,
   disableFlip: false,
 }
 
@@ -91,17 +96,40 @@ async function releasePosCamera(h5, readerId) {
 }
 
 async function applyContinuousFocusSafe(h5) {
-  if (!h5?.applyVideoConstraints) return
+  if (!h5?.applyVideoConstraints) return false
   try {
     await h5.applyVideoConstraints({
       advanced: [{ focusMode: 'continuous' }],
     })
+    return true
   } catch {
     try {
       await h5.applyVideoConstraints({ focusMode: 'continuous' })
+      return true
     } catch {
-      /* Safari / máy cũ có thể không hỗ trợ — bỏ qua */
+      /* Safari (iPhone/iPad) không có API điều khiển nét — applyVideoConstraints luôn lỗi ở đây. */
+      return false
     }
+  }
+}
+
+/**
+ * Zoom hỗ trợ lấy nét — Safari (iPhone/iPad) không có API chỉnh `focusMode`, và camera của
+ * trình duyệt (khác app Camera gốc) lấy nét rất kém ở khoảng cách gần (macro). Zoom nhẹ để bù
+ * khung hình, cho phép cầm máy xa hơn — ra khỏi vùng mất nét gần — mà mã vạch vẫn đủ to để quét.
+ */
+async function applyAssistZoomSafe(h5) {
+  if (!h5?.getRunningTrackCapabilities || !h5?.applyVideoConstraints) return
+  try {
+    const caps = h5.getRunningTrackCapabilities()
+    const zoom = caps?.zoom
+    if (!zoom || typeof zoom.min !== 'number' || typeof zoom.max !== 'number' || zoom.max <= zoom.min) {
+      return
+    }
+    const target = Math.min(zoom.max, Math.max(zoom.min, 1.6))
+    await h5.applyVideoConstraints({ advanced: [{ zoom: target }] })
+  } catch {
+    /* Thiết bị/trình duyệt không hỗ trợ zoom qua web — bỏ qua êm. */
   }
 }
 
@@ -186,6 +214,9 @@ async function startPosScannerWithFallback(h5, readerId, onDecoded) {
  * Quét mã POS — tối ưu cleanup RAM + fallback constraints cho máy cũ.
  * Chỉ dùng tại tab Bán hàng; các tab khác giữ BarcodeScanModal.
  */
+/** Dưới ngưỡng này giữa 2 lần lấy nét cứng (khởi động lại luồng camera) — chống bấm/chạm liên tục. */
+const HARD_REFOCUS_MIN_GAP_MS = 1500
+
 export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', onClose, onScan }) {
   const readerId = useMemo(() => `bhpt-pos-qr-${Math.random().toString(36).slice(2, 11)}`, [])
   const onScanRef = useRef(onScan)
@@ -193,8 +224,12 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
   const lastScanRef = useRef({ text: '', at: 0 })
   const cooldownUntilRef = useRef(0)
   const h5Ref = useRef(null)
+  /** `run()` hiện tại — cho phép nút «Lấy nét» khởi động lại toàn bộ luồng camera (ép nét lại trên máy cũ/Safari). */
+  const runRef = useRef(null)
+  const lastHardRefocusAtRef = useRef(0)
   const [err, setErr] = useState('')
   const [viewportFlash, setViewportFlash] = useState(false)
+  const [refocusing, setRefocusing] = useState(false)
 
   onScanRef.current = onScan
   onCloseRef.current = onClose
@@ -202,8 +237,9 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
   useEffect(() => {
     if (!open) return undefined
     let cancelled = false
-    let focusTimer = 0
+    let softFocusTimer = 0
     setErr('')
+    setRefocusing(false)
     lastScanRef.current = { text: '', at: 0 }
     cooldownUntilRef.current = 0
     h5Ref.current = null
@@ -240,12 +276,25 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
         }
 
         await startPosScannerWithFallback(h5, readerId, onDecoded)
-        focusTimer = window.setTimeout(() => {
-          if (!cancelled && h5Ref.current) void applyContinuousFocusSafe(h5Ref.current)
-        }, 1500)
+        setRefocusing(false)
+        void applyAssistZoomSafe(h5)
+        /**
+         * Lấy nét mềm định kỳ (không gián đoạn hình ảnh) — máy hỗ trợ `focusMode: continuous`
+         * đôi khi bị "kẹt nét" sau ít giây, áp lại constraint giúp camera tự nét lại. Vô hại với
+         * máy không hỗ trợ (applyVideoConstraints tự thất bại êm, xem applyContinuousFocusSafe).
+         */
+        const scheduleSoftFocus = (delay) => {
+          softFocusTimer = window.setTimeout(async () => {
+            if (cancelled || !h5Ref.current) return
+            await applyContinuousFocusSafe(h5Ref.current)
+            if (!cancelled) scheduleSoftFocus(2500)
+          }, delay)
+        }
+        scheduleSoftFocus(1200)
       } catch (e) {
         if (!cancelled) {
           setErr(String(e?.message || e || 'Không mở được camera.'))
+          setRefocusing(false)
         }
         if (h5) {
           await releasePosCamera(h5, readerId)
@@ -253,18 +302,36 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
         }
       }
     }
+    runRef.current = run
 
     void run()
 
     return () => {
       cancelled = true
-      if (focusTimer) window.clearTimeout(focusTimer)
+      if (softFocusTimer) window.clearTimeout(softFocusTimer)
       const h5 = h5Ref.current
       h5Ref.current = null
       stopMediaTracksInReader(readerId)
       void releasePosCamera(h5, readerId)
     }
   }, [open, readerId])
+
+  /**
+   * Lấy nét CỨNG — khởi động lại toàn bộ luồng camera. Nhiều máy cũ (đặc biệt Safari trên
+   * iPhone/iPad) khóa nét ở khoảng cách lần đầu và không có API để chỉnh lại; khởi động lại
+   * luồng thường ép camera chạy lại chu trình tự động lấy nét từ đầu.
+   */
+  const hardRefocus = () => {
+    const now = Date.now()
+    if (now - lastHardRefocusAtRef.current < HARD_REFOCUS_MIN_GAP_MS) return
+    lastHardRefocusAtRef.current = now
+    setRefocusing(true)
+    void (async () => {
+      await releasePosCamera(h5Ref.current, readerId)
+      h5Ref.current = null
+      await runRef.current?.()
+    })()
+  }
 
   if (!open) return null
 
@@ -286,14 +353,17 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung vuông giữa màn hình — giữ thiết bị cách vừa phải để lấy nét. Sau mỗi lần nhận có nghỉ ngắn.
-          Bấm «Hủy» hoặc × để tắt camera.
+          Đưa mã vào giữa khung hình camera bên dưới. Ảnh mờ khó nét (hay gặp ở iPhone/iPad và máy đời cũ)? <b>Lùi
+          máy ra xa mã vạch hơn (khoảng 10–15cm, đừng để sát ống kính)</b> rồi chạm vào khung hình hoặc bấm «Lấy
+          nét» bên dưới. Sau mỗi lần nhận có nghỉ ngắn.
         </p>
         <div
           className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}
-          aria-hidden
+          onClick={hardRefocus}
+          title="Chạm để lấy nét lại"
         >
           <div id={readerId} className="barcode-scan-viewport" />
+          {refocusing ? <div className="barcode-scan-refocus-overlay">Đang lấy nét lại…</div> : null}
         </div>
         {err ? (
           <p className="barcode-scan-err" role="alert">
@@ -301,6 +371,14 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
           </p>
         ) : null}
         <footer className="barcode-scan-foot">
+          <button
+            type="button"
+            className="barcode-scan-btn barcode-scan-btn--ghost"
+            onClick={hardRefocus}
+            disabled={refocusing}
+          >
+            {refocusing ? 'Đang lấy nét…' : 'Lấy nét'}
+          </button>
           <button type="button" className="barcode-scan-btn barcode-scan-btn--ghost" onClick={() => onCloseRef.current?.()}>
             Hủy
           </button>

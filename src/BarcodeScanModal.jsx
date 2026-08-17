@@ -8,13 +8,17 @@ const SCAN_SAME_CODE_DEBOUNCE_MS = 400
 /** Sau mỗi lần xử lý mã: không nhận mã mới trong khoảng này (camera vẫn mở). */
 const SCAN_COOLDOWN_MS = 1200
 
-/** Khung quét vuông — tập trung vùng giữa (tốt cho iOS không macro-focus). */
-const SCAN_QRBOX = { width: 250, height: 250 }
-
+/**
+ * KHÔNG đặt `qrbox` — html5-qrcode vẽ ảnh vào 1 canvas giải mã đúng bằng kích thước `qrbox` (dù
+ * camera quay phân giải cao, ảnh vẫn bị co nhỏ xuống đúng kích thước đó trước khi decode). Khung
+ * nhỏ khiến canvas giải mã quá ít pixel — Android không sao (dùng BarcodeDetector phần cứng của
+ * trình duyệt, không qua canvas này), nhưng Safari (iPhone/iPad) không có API đó nên phải decode
+ * bằng JS thuần trên đúng canvas nhỏ này — không đủ chi tiết để đọc mã vạch mảnh (EAN-13…) dù ảnh
+ * nhìn qua ống kính vẫn nét. Bỏ `qrbox` → thư viện dùng TOÀN BỘ khung hình camera làm vùng giải
+ * mã, canvas lớn hơn hẳn.
+ */
 const SCAN_CONFIG_BASE = {
   fps: 10,
-  qrbox: SCAN_QRBOX,
-  aspectRatio: 1,
   disableFlip: false,
 }
 
@@ -222,8 +226,8 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung vuông giữa màn hình — giữ điện thoại cách vừa phải (iOS không lấy nét cận). Sau mỗi lần
-          nhận có nghỉ ngắn. Bấm «Hủy» hoặc × để tắt camera.
+          Đưa mã vào giữa khung hình camera bên dưới — giữ điện thoại cách vừa phải (iOS không lấy nét cận). Sau mỗi
+          lần nhận có nghỉ ngắn. Bấm «Hủy» hoặc × để tắt camera.
         </p>
         <div
           className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}
