@@ -90,7 +90,9 @@
 }
 
 .barcode-scan-viewport {
-  min-height: 220px;
+  /* Canvas giải mã (không đặt qrbox) = đúng kích thước hiển thị CSS của khung này — càng lớn
+     càng nhiều pixel cho bộ giải mã JS thuần (Safari không có BarcodeDetector phần cứng). */
+  min-height: 320px;
   margin: 0;
   border-radius: 12px;
   overflow: hidden;
@@ -101,7 +103,7 @@
   border-radius: 12px;
   object-fit: cover;
   width: 100%;
-  max-height: min(52vh, 420px);
+  max-height: min(66vh, 560px);
 }
 
 .barcode-scan-err {

@@ -9,17 +9,16 @@ const SCAN_SAME_CODE_DEBOUNCE_MS = 400
 const SCAN_COOLDOWN_MS = 1200
 
 /**
- * Khung chữ nhật ngang — mã vạch bán lẻ (EAN-13/UPC…) là hình chữ nhật dài, không phải hình
- * vuông. Thư viện chỉ giải mã đúng phần ảnh NẰM TRONG khung (crop trước khi decode) — khung
- * vuông trước đây cắt mất 2 đầu mã vạch nên dù ảnh nét vẫn không đọc được.
+ * KHÔNG đặt `qrbox` — html5-qrcode vẽ ảnh vào 1 canvas giải mã đúng bằng kích thước `qrbox` (dù
+ * camera quay phân giải cao, ảnh vẫn bị co nhỏ xuống đúng kích thước đó trước khi decode). Khung
+ * nhỏ khiến canvas giải mã quá ít pixel — Android không sao (dùng BarcodeDetector phần cứng của
+ * trình duyệt, không qua canvas này), nhưng Safari (iPhone/iPad) không có API đó nên phải decode
+ * bằng JS thuần trên đúng canvas nhỏ này — không đủ chi tiết để đọc mã vạch mảnh (EAN-13…) dù ảnh
+ * nhìn qua ống kính vẫn nét. Bỏ `qrbox` → thư viện dùng TOÀN BỘ khung hình camera làm vùng giải
+ * mã, canvas lớn hơn hẳn.
  */
-const SCAN_QRBOX = { width: 300, height: 150 }
-
 const SCAN_CONFIG_BASE = {
   fps: 10,
-  qrbox: SCAN_QRBOX,
-  // Không ép aspectRatio vuông — để khung xem giữ tỉ lệ ngang tự nhiên của camera, tận dụng hết
-  // chiều rộng cho mã vạch dài thay vì bị crop vuông từ trước khi tới bước khoanh vùng qrbox.
   disableFlip: false,
 }
 
@@ -227,8 +226,8 @@ export default function BarcodeScanModal({ open, title = 'Quét mã vạch', onC
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung vuông giữa màn hình — giữ điện thoại cách vừa phải (iOS không lấy nét cận). Sau mỗi lần
-          nhận có nghỉ ngắn. Bấm «Hủy» hoặc × để tắt camera.
+          Đưa mã vào giữa khung hình camera bên dưới — giữ điện thoại cách vừa phải (iOS không lấy nét cận). Sau mỗi
+          lần nhận có nghỉ ngắn. Bấm «Hủy» hoặc × để tắt camera.
         </p>
         <div
           className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}
