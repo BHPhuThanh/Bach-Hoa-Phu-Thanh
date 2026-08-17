@@ -3849,11 +3849,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         // Tab này đang có đơn dở dang riêng (khác đơn vừa thanh toán) → đừng xóa nháp chung, tự
         // ghi lại ngay đúng nháp của tab này để không bị tab kia đè mất (trước đây xóa vô điều
         // kiện ở đây khiến đóng/mở lại tab này bị mất trắng đơn đang dở dù chưa hề thanh toán).
-        syncPosSessionDraftNow({
-          products: productsRef.current,
-          fileName: fileNameRef.current,
+        //
+        // savedAt PHẢI chắc chắn mới hơn mốc `lastClearedAt` vừa được tab kia ghi (localStorage
+        // `pos_draft_last_cleared`) — nếu chỉ dùng `Date.now()` thường, 2 tab trên cùng máy xử lý
+        // gần như đồng thời có thể ra cùng mili-giây hoặc thậm chí sớm hơn 1-2ms; lúc đó bước
+        // hydrate lúc mở lại tab (so sánh `draftSavedAt <= lastClearedAt`) coi nháp vừa ghi là
+        // "cũ hơn mốc xóa" và xóa luôn — đúng hiện tượng "đóng mở lại tab bị trắng".
+        const safeSavedAtMs = Math.max(Date.now(), readPosDraftLastClearedAt() + 1)
+        savePosSessionDraft({
+          v: POS_SESSION_DRAFT_VERSION,
+          fingerprint: buildPosDraftFingerprint(productsRef.current, fileNameRef.current),
+          fileName: fileNameRef.current || '',
           sellOrders: sellOrdersRef.current,
           activeSellOrderId: activeSellOrderIdRef.current,
+          savedAt: new Date(safeSavedAtMs).toISOString(),
         })
         return
       }
