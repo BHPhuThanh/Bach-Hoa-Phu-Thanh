@@ -8,18 +8,12 @@ const SCAN_SAME_CODE_DEBOUNCE_MS = 400
 /** Sau mỗi lần xử lý mã: không nhận mã mới trong khoảng này (camera vẫn mở). */
 const SCAN_COOLDOWN_MS = 1200
 
-/**
- * Khung chữ nhật ngang — mã vạch bán lẻ (EAN-13/UPC…) là hình chữ nhật dài, không phải hình
- * vuông. Thư viện chỉ giải mã đúng phần ảnh NẰM TRONG khung (crop trước khi decode) — khung
- * vuông trước đây cắt mất 2 đầu mã vạch nên dù ảnh nét vẫn không đọc được.
- */
-const SCAN_QRBOX = { width: 300, height: 150 }
+const SCAN_QRBOX = { width: 250, height: 250 }
 
 const SCAN_CONFIG_BASE = {
   fps: 10,
   qrbox: SCAN_QRBOX,
-  // Không ép aspectRatio vuông — để khung xem giữ tỉ lệ ngang tự nhiên của camera, tận dụng hết
-  // chiều rộng cho mã vạch dài thay vì bị crop vuông từ trước khi tới bước khoanh vùng qrbox.
+  aspectRatio: 1,
   disableFlip: false,
 }
 
