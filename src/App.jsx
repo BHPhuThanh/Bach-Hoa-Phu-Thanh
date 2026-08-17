@@ -5573,7 +5573,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           tonKhoOnlyVariants,
         })
         if (r.ok) {
-          await applyServerCatalogAfterPersist()
+          // KHÔNG tải lại toàn bộ danh mục (~1.6MB/3888 sản phẩm) sau mỗi đơn — quá tốn egress
+          // Supabase cho thao tác chạy nhiều lần nhất trong ngày. `nextProducts` (đã trừ tồn) đã
+          // được set optimistic vào state qua `settleAfterPrint` ở trên; Realtime tự đồng bộ các
+          // thiết bị khác.
           if (isSupabaseConfigured()) {
             const invRows = buildPosSaleInventoryLogRows(productsSnap, nextProducts, order, cartForStock)
             await insertInventoryLogRows(invRows)
@@ -5608,7 +5611,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     scrollCartLineIntoView,
     setBatchPickLineId,
     sellWholesaleMode,
-    applyServerCatalogAfterPersist,
     activeSeller,
     activeSellerId,
     mergeCreatedLowStockNotifications,
