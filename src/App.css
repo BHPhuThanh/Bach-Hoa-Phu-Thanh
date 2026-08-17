@@ -1156,6 +1156,14 @@
   font-weight: 600;
 }
 
+/* In hóa đơn gặp sự cố — vàng/cảnh báo, KHÔNG dùng đỏ (đơn đã lưu chắc chắn, không phải lỗi đồng bộ). */
+.pos-scan-toast--print-warn {
+  bottom: 5rem;
+  border-color: rgba(251, 191, 36, 0.55);
+  background: linear-gradient(145deg, #451a03, #1c1917);
+  color: #fde68a;
+}
+
 /* Icon đám mây trạng thái mạng trên header POS */
 .pos-cloud-ind {
   position: relative;

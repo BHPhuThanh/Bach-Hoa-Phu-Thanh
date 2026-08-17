@@ -2466,6 +2466,23 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [posPersistErrToast, setPosPersistErrToast] = useState(null)
   /** Toast xanh — lưu đơn offline thành công (mất kết nối). */
   const [posOfflineToast, setPosOfflineToast] = useState(null)
+  /** Toast vàng — in hóa đơn gặp sự cố (đơn ĐÃ lưu — không phải lỗi đồng bộ, tránh dùng màu đỏ gây hoang mang). */
+  const [posPrintWarnToast, setPosPrintWarnToast] = useState(null)
+  const posPrintWarnToastClearRef = useRef(null)
+  /** Khai báo sớm — `printReceiptCallbacks` (useMemo bên dưới) cần dùng ngay khi khởi tạo. */
+  const showPosPrintWarnToast = useCallback((text) => {
+    const t = String(text ?? '').trim()
+    if (!t) return
+    if (posPrintWarnToastClearRef.current != null) {
+      window.clearTimeout(posPrintWarnToastClearRef.current)
+      posPrintWarnToastClearRef.current = null
+    }
+    setPosPrintWarnToast(t)
+    posPrintWarnToastClearRef.current = window.setTimeout(() => {
+      setPosPrintWarnToast(null)
+      posPrintWarnToastClearRef.current = null
+    }, 5000)
+  }, [])
   /** Trạng thái mạng + số đơn offline đang chờ đồng bộ (cho icon đám mây). */
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
   const [offlinePendingCount, setOfflinePendingCount] = useState(0)
@@ -2559,6 +2576,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const toastMessageClearRef = useRef(null)
   const pendingHomeAfterPinRef = useRef(false)
   const pendingHomeNewTabAfterPinRef = useRef(false)
+  /** Tab AdminHub (Doanh thu/Hàng hóa) mà staff bấm khi chưa có quyền — kích hoạt lại sau khi PIN đúng. */
+  const pendingHubTabAfterPinRef = useRef(null)
+  const [pendingHubTabActivate, setPendingHubTabActivate] = useState(null)
+  /** Tăng khi staff hủy PIN giữa chừng — báo AdminHub ép tab về tab an toàn (Đơn hàng). */
+  const [hubTabAccessRevertKey, setHubTabAccessRevertKey] = useState(0)
   const [lowStockDetailModal, setLowStockDetailModal] = useState(null)
   const [pendingInboundLowStockPrefill, setPendingInboundLowStockPrefill] = useState(null)
   const [storedCustomers, setStoredCustomers] = useState(() => loadStoredCustomers())
@@ -2625,12 +2647,32 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [catalogFlushBusy, setCatalogFlushBusy] = useState(false)
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
+  /**
+   * Việc nặng (setProducts catalog, dọn giỏ) sau thanh toán — chờ đúng lúc hộp thoại in đóng
+   * (hoặc in lỗi) mới chạy, thay vì đoán bừa 1 mốc thời gian cố định (dễ chạy đè lên lúc máy in
+   * đang xử lý, gây kẹt; hoặc chờ oan khi in xong sớm). Xem `runPostPrintSettle` trong handleThanhToan.
+   */
+  const afterPrintSettleRef = useRef(null)
+  const runAfterPrintSettleOnce = useCallback(() => {
+    const fn = afterPrintSettleRef.current
+    afterPrintSettleRef.current = null
+    fn?.()
+  }, [])
   const printReceiptCallbacks = useMemo(
     () => ({
       onPrintDialogOpen: () => setIsPrintModalOpen(true),
-      onPrintDialogClose: () => setIsPrintModalOpen(false),
+      onPrintDialogClose: () => {
+        setIsPrintModalOpen(false)
+        runAfterPrintSettleOnce()
+      },
+      onPrintFailed: (err) => {
+        console.error('[App] In hóa đơn thất bại (đơn đã lưu, không ảnh hưởng dữ liệu)', err)
+        showPosPrintWarnToast('Đơn đã lưu thành công. In hóa đơn gặp sự cố — có thể in lại từ Doanh thu.')
+        setIsPrintModalOpen(false)
+        runAfterPrintSettleOnce()
+      },
     }),
-    []
+    [runAfterPrintSettleOnce, showPosPrintWarnToast]
   )
 
   const { receiptIframeRef, printReceiptHtml } = usePrintReceiptIframe(printReceiptCallbacks)
@@ -2795,13 +2837,34 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     return ts
   }, [])
 
+  /** AdminHub: staff bấm tab Doanh thu/Hàng hóa khi chưa có quyền — mở PIN, chờ xác thực xong mới kích hoạt tab. */
+  const requestAdminHubRestrictedTabAccess = useCallback((tabId) => {
+    pendingHomeAfterPinRef.current = false
+    pendingHomeNewTabAfterPinRef.current = false
+    pendingHubTabAfterPinRef.current = tabId
+    setAdminPinModalOpen(true)
+    setSellerMenuOpen(false)
+    return false
+  }, [])
+
+  const clearPendingHubTabActivate = useCallback(() => {
+    setPendingHubTabActivate(null)
+  }, [])
+
   const handleCancelAdminPinModal = useCallback(() => {
     if (pendingHomeAfterPinRef.current || pendingHomeNewTabAfterPinRef.current) {
       showToastMessage('Đã hủy xác thực Admin. Quay về màn Bán hàng.')
     }
+    const hadHubTabRequest = pendingHubTabAfterPinRef.current != null
     pendingHomeAfterPinRef.current = false
     pendingHomeNewTabAfterPinRef.current = false
+    pendingHubTabAfterPinRef.current = null
     setAdminPinModalOpen(false)
+    if (hadHubTabRequest) {
+      // Staff đang ở trong AdminHub (tab Đơn hàng) — hủy PIN thì ở lại đó, chỉ ép tab về an toàn.
+      setHubTabAccessRevertKey((k) => k + 1)
+      return
+    }
     setAdminHubDeepLink(null)
     setPendingHangHoaGoodsOpen(null)
     setActiveView('sell')
@@ -4278,6 +4341,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           setActiveView('dashboard')
           setSellerMenuOpen(false)
           navigate('/doanh-thu', { replace: true })
+        } else if (pendingHubTabAfterPinRef.current) {
+          setPendingHubTabActivate(pendingHubTabAfterPinRef.current)
+          pendingHubTabAfterPinRef.current = null
         }
       } finally {
         setAdminPinChecking(false)
@@ -5436,22 +5502,33 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
-      // Gọi lệnh in ngay khi giỏ hàng còn hiện, tách riêng lỗi in.
-      if (eInvoiceSettings.autoPrint) {
-        try {
-          void Promise.resolve(printReceiptHtml(html))
-        } catch (printError) {
-          console.error('[handleThanhToan] printReceiptHtml', printError)
-          showPosPersistErrorToast('Lưu đơn thành công, nhưng máy in bị kẹt!')
-        }
-      }
-
-      // Trì hoãn reset giỏ 1.5s để tránh race khi trình duyệt chốt lệnh in.
-      setTimeout(() => {
+      // Việc nặng (setProducts catalog đầy đủ) chạy SAU khi hộp thoại in đã đóng hẳn — tránh
+      // render nặng đè lên đúng lúc trình duyệt đang mở hộp thoại in (nguyên nhân gây kẹt/lỗi in
+      // ngẫu nhiên trước đây). Không còn đoán bừa 1 mốc thời gian cố định: nhanh thì chạy ngay khi
+      // in xong sớm, chậm thì có `runAfterPrintSettleOnce` (callback thật từ hook in) làm mốc.
+      let settled = false
+      const settleAfterPrint = () => {
+        if (settled) return
+        settled = true
         setProducts(nextProducts)
         finalizePaidSellOrder(paidOrderId)
         checkoutBusyOrderIdRef.current = null
-      }, 1500)
+      }
+
+      // Gọi lệnh in ngay khi giỏ hàng còn hiện, tách riêng lỗi in (đơn đã lưu Supabase xong ở
+      // bước 1 phía dưới — in lỗi/kẹt không bao giờ ảnh hưởng tới việc đơn đã được lưu).
+      if (eInvoiceSettings.autoPrint) {
+        afterPrintSettleRef.current = settleAfterPrint
+        // An toàn: nếu vì lý do gì đó không callback nào bắn (không nên xảy ra — hook in có
+        // fallback nội bộ ở mốc 4.5s), vẫn đảm bảo giỏ được dọn, không treo UI vĩnh viễn.
+        window.setTimeout(() => {
+          if (afterPrintSettleRef.current === settleAfterPrint) afterPrintSettleRef.current = null
+          settleAfterPrint()
+        }, 5200)
+        printReceiptHtml(html)
+      } else {
+        settleAfterPrint()
+      }
     }
 
     // 1) Lưu đơn có GIỚI HẠN THỜI GIAN 3s. Timeout/lỗi mạng -> chuyển luồng OFFLINE, tuyệt đối không treo UI.
@@ -6312,6 +6389,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           {posOfflineToast}
         </div>
       ) : null}
+      {posPrintWarnToast ? (
+        <div className="pos-scan-toast pos-scan-toast--print-warn" role="status" aria-live="polite">
+          {posPrintWarnToast}
+        </div>
+      ) : null}
       <iframe
         ref={receiptIframeRef}
         src="about:blank"
@@ -6900,6 +6982,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             inboundLowStockPrefillRequest={pendingInboundLowStockPrefill}
             onInboundLowStockPrefillConsumed={clearPendingInboundLowStockPrefill}
             onRevalidateCatalog={applyServerCatalogAfterPersist}
+            hasAdminHubAccess={activeSellerId === 'admin'}
+            onRequestRestrictedTabAccess={requestAdminHubRestrictedTabAccess}
+            pendingHubTabActivate={pendingHubTabActivate}
+            onPendingHubTabActivateConsumed={clearPendingHubTabActivate}
+            hubTabAccessRevertKey={hubTabAccessRevertKey}
           />
         )}
       </div>

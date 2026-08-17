@@ -13,7 +13,11 @@ function restorePosMainWindowFocus() {
 }
 
 /**
- * @param {{ onPrintDialogOpen?: () => void, onPrintDialogClose?: () => void }} [callbacks]
+ * @param {{
+ *   onPrintDialogOpen?: () => void,
+ *   onPrintDialogClose?: () => void,
+ *   onPrintFailed?: (error: unknown) => void,
+ * }} [callbacks]
  */
 export function usePrintReceiptIframe(callbacks) {
   const receiptIframeRef = useRef(null)
@@ -22,17 +26,25 @@ export function usePrintReceiptIframe(callbacks) {
     callbacksRef.current = callbacks
   }, [callbacks])
 
+  /**
+   * KHÔNG BAO GIỜ throw ra ngoài — đơn hàng đã lưu Supabase xong trước khi hàm này được gọi,
+   * lỗi in ở đây tuyệt đối không được coi là lỗi lưu đơn. Thất bại thật sự báo qua `onPrintFailed`
+   * (App hiển thị toast vàng riêng, khác với lỗi đồng bộ đỏ) thay vì throw / window.alert chặn luồng.
+   */
   const printReceiptHtml = useCallback((html) => {
     const frame = receiptIframeRef.current
     const win = frame?.contentWindow
-    if (!frame || !win) return
+    if (!frame || !win) {
+      callbacksRef.current?.onPrintFailed?.(new Error('Iframe in hóa đơn chưa sẵn sàng.'))
+      return
+    }
     const doc = frame.contentDocument || win.document
     try {
       doc.open()
       doc.write(html)
       doc.close()
-    } catch {
-      window.alert('Không ghi được nội dung hóa đơn vào iframe.')
+    } catch (e) {
+      callbacksRef.current?.onPrintFailed?.(e)
       return
     }
 
@@ -79,7 +91,7 @@ export function usePrintReceiptIframe(callbacks) {
       try {
         win.focus()
         win.print()
-      } catch {
+      } catch (e) {
         window.removeEventListener('focus', onWinFocus)
         try {
           win.removeEventListener('afterprint', onAfterPrintIframe)
@@ -87,6 +99,8 @@ export function usePrintReceiptIframe(callbacks) {
           /* ignore */
         }
         closeDialog()
+        callbacksRef.current?.onPrintFailed?.(e)
+        return
       }
       window.setTimeout(() => {
         window.removeEventListener('focus', onWinFocus)
@@ -95,6 +109,8 @@ export function usePrintReceiptIframe(callbacks) {
         } catch {
           /* ignore */
         }
+        // Không coi timeout này là thất bại — nhiều trình duyệt không bắn `afterprint` đều đặn
+        // khi in từ iframe dù lệnh in đã chạy bình thường (tránh báo nhầm "lỗi" cho thao tác đã ổn).
         if (!closed) closeDialog()
       }, 4000)
     }, 500)

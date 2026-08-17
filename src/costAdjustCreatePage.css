@@ -10,6 +10,20 @@
   color: #e2e8f0;
 }
 
+/*
+ * Vùng cuộn chính — mọi kích thước màn hình (PC lẫn mobile).
+ * .app (App.css) luôn height:100%/overflow:hidden — nếu .cac-page không tự cuộn thì nội dung
+ * dài hơn màn hình (vd. nhiều dòng kiểm hàng / điều chỉnh giá vốn) sẽ bị khóa cứng, không kéo
+ * xuống được. Trước đây chỉ set trong @media mobile ở stockCheckCreatePage.css nên PC bị khóa.
+ */
+.app.app--dark > .cac-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 .cac-page__title {
   margin: 0 0 1rem;
   font-size: 1.15rem;

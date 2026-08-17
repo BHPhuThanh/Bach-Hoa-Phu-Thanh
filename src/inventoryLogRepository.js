@@ -3,6 +3,7 @@
  */
 
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { withSupabaseRetry } from './supabaseRetry.js'
 import { readStoredSellerId } from './sellerRoleStorage.js'
 import { flattenDisplayCatalogToVariants } from './catalogRepository.js'
 import {
@@ -385,11 +386,13 @@ export async function insertInventoryLogRows(rows) {
     })
   if (!cleanedRows.length) return { ok: true, skipped: true }
   try {
-    const { error } = await sb.from(INVENTORY_LOG_TABLE).insert(cleanedRows)
-    if (error) {
-      console.error('Lỗi lưu lịch sử kho:', error.message, error.details, error.hint)
-      return { ok: false, error }
-    }
+    // Retry khi timeout/mạng chập chờn — chấp nhận rủi ro nhỏ trùng dòng lịch sử (hiếm, chỉ
+    // ảnh hưởng hiển thị) để đổi lấy việc không bao giờ mất hẳn dòng lịch sử kho.
+    await withSupabaseRetry(async () => {
+      const res = await sb.from(INVENTORY_LOG_TABLE).insert(cleanedRows)
+      if (res.error) throw res.error
+      return res
+    })
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(INVENTORY_LOG_UPDATED_EVENT))
     }

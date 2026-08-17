@@ -131,6 +131,13 @@ import {
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
 import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
+import {
+  AdminHubRestrictedFallback,
+  HUB_TAB_ORDERS,
+  isAdminRestrictedHubTab,
+  isStaffAllowedHubTabWithoutPin,
+  staffSafeHubTabId,
+} from './adminHubAccess.jsx'
 import AdminHubStockCheckPanel from './AdminHubStockCheckPanel.jsx'
 import AdminHubCostAdjustPanel from './AdminHubCostAdjustPanel.jsx'
 import {
@@ -1237,6 +1244,15 @@ export default function AdminHub({
   onInboundLowStockPrefillConsumed,
   /** App: sau tạo/sửa SP — `fetchProducts` / revalidate và cập nhật `products` cha. */
   onRevalidateCatalog,
+  /** App: `activeSellerId === 'admin'` — tab Doanh thu / Hàng hóa cần quyền này. */
+  hasAdminHubAccess = true,
+  /** App: mở PIN trước tab hạn chế; trả `false` → không đổi tab. */
+  onRequestRestrictedTabAccess,
+  /** App: sau PIN đúng — kích hoạt tab đang chờ. */
+  pendingHubTabActivate = null,
+  onPendingHubTabActivateConsumed,
+  /** App: tăng khi hủy PIN — ép tab Nhân viên về tab an toàn. */
+  hubTabAccessRevertKey = 0,
 }) {
   /** Ledger hoàn trả POS — nguồn chính Supabase (`pos_return_ledger`), không cache báo cáo localStorage. */
   const [returnDayLedger, setReturnDayLedger] = useState([])
@@ -1254,13 +1270,35 @@ export default function AdminHub({
     },
     [navigate]
   )
+  const revertStaffToSafeHubTab = useCallback(() => {
+    const safe = staffSafeHubTabId()
+    setActiveTab(safe)
+    setSelected(null)
+    syncHubUrlToMainTab(safe)
+  }, [syncHubUrlToMainTab])
+
   const onAdminHubNavItemActivate = useCallback(
     (tabId) => {
+      if (
+        !hasAdminHubAccess &&
+        isAdminRestrictedHubTab(tabId) &&
+        typeof onRequestRestrictedTabAccess === 'function'
+      ) {
+        const allowed = onRequestRestrictedTabAccess(tabId)
+        if (!allowed) {
+          revertStaffToSafeHubTab()
+          return
+        }
+      }
+      if (!hasAdminHubAccess && isAdminRestrictedHubTab(tabId)) {
+        revertStaffToSafeHubTab()
+        return
+      }
       setActiveTab(tabId)
       setSelected(null)
       syncHubUrlToMainTab(tabId)
     },
-    [syncHubUrlToMainTab]
+    [hasAdminHubAccess, onRequestRestrictedTabAccess, revertStaffToSafeHubTab, syncHubUrlToMainTab]
   )
   const parentCatalogSupplied = productsProp !== undefined && productsProp !== null
   const parentProducts = parentCatalogSupplied ? productsProp : EMPTY_CATALOG_LIST
@@ -6185,12 +6223,46 @@ export default function AdminHub({
     if (standaloneInboundCreate) return
     const tab = hubMainTabFromPathname(location.pathname)
     if (tab == null) return
+    if (!hasAdminHubAccess && isAdminRestrictedHubTab(tab)) {
+      revertStaffToSafeHubTab()
+      return
+    }
     setActiveTab((cur) => {
       if (isHubDetailSubTabId(cur)) return cur
       return tab
     })
     setSelected(null)
-  }, [location.pathname, standaloneInboundCreate])
+  }, [location.pathname, standaloneInboundCreate, hasAdminHubAccess, revertStaffToSafeHubTab])
+
+  useEffect(() => {
+    if (!pendingHubTabActivate) return
+    if (!hasAdminHubAccess && isAdminRestrictedHubTab(pendingHubTabActivate)) {
+      onPendingHubTabActivateConsumed?.()
+      return
+    }
+    setActiveTab(pendingHubTabActivate)
+    setSelected(null)
+    syncHubUrlToMainTab(pendingHubTabActivate)
+    onPendingHubTabActivateConsumed?.()
+  }, [
+    pendingHubTabActivate,
+    hasAdminHubAccess,
+    syncHubUrlToMainTab,
+    onPendingHubTabActivateConsumed,
+  ])
+
+  useEffect(() => {
+    if (hasAdminHubAccess) return
+    if (!hubTabAccessRevertKey) return
+    setActiveTab((cur) => {
+      if (isStaffAllowedHubTabWithoutPin(cur)) return cur
+      return staffSafeHubTabId()
+    })
+    const pathTab = hubMainTabFromPathname(location.pathname)
+    if (pathTab && isAdminRestrictedHubTab(pathTab)) {
+      syncHubUrlToMainTab(staffSafeHubTabId())
+    }
+  }, [hubTabAccessRevertKey, hasAdminHubAccess, location.pathname, syncHubUrlToMainTab])
 
   useEffect(() => {
     if (!hubDeepLink) {
@@ -7757,7 +7829,10 @@ export default function AdminHub({
               <AdminHubCostAdjustPanel vouchers={costAdjustVouchers} />
             )}
 
-            {activeTab === TAB_OVERVIEW && (
+            {activeTab === TAB_OVERVIEW &&
+              (!hasAdminHubAccess ? (
+                <AdminHubRestrictedFallback />
+              ) : (
               <AdminHubRevenuePanel
                 revenueReadOnly={revenueReadOnly}
                 orders={orders}
@@ -7786,9 +7861,12 @@ export default function AdminHub({
                 deletingOrderId={deletingOrderId}
                 isDeletingOrder={isDeletingOrder}
               />
-            )}
+              ))}
 
-            {activeTab === TAB_GOODS && (
+            {activeTab === TAB_GOODS &&
+              (!hasAdminHubAccess ? (
+                <AdminHubRestrictedFallback />
+              ) : (
           <section className="ah-goods-page" aria-labelledby="ah-goods-title">
             <input
               ref={standaloneImportRef}
@@ -8196,7 +8274,7 @@ export default function AdminHub({
               )}
             </div>
             </div>          </section>
-        )}
+              ))}
 
         {activeTab === TAB_INBOUND && (
           <section className="ah-inbound-page" aria-labelledby="ah-inbound-title">

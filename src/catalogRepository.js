@@ -23,6 +23,7 @@ import {
 } from './productUnits.js'
 import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
 import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
+import { withSupabaseRetry } from './supabaseRetry.js'
 import {
   CATALOG_PRODUCT_TYPE_COMBO,
   computeDefaultComboCost,
@@ -57,6 +58,31 @@ const PRODUCTS_FETCH_COLUMNS = [...CATALOG_PRODUCT_DB_COLUMNS, PRODUCTS_CREATED_
 const PRODUCTS_IN_QUERY_CHUNK = 200
 /** Khi một lần upsert toàn bộ lỗi — tách song song (Promise.all). */
 const PRODUCTS_UPSERT_FALLBACK_CHUNK = 1500
+
+/** Chỉ lấy dòng chưa xóa mềm — dùng khi load danh sách catalog (POS / Hàng hóa / Kiểm hàng). */
+function applyActiveProductsFilter(req) {
+  return req.neq('is_deleted', true)
+}
+
+/**
+ * Payload xóa mềm — giải phóng `ma_hang` / `ma_vach` gốc khỏi unique constraint.
+ * @param {string} maHang
+ * @param {string} [maVach]
+ */
+function buildSoftDeleteProductUpdate(maHang, maVach) {
+  const timestamp = Date.now()
+  const ma_hang_hien_tai = String(maHang ?? '').trim()
+  const ma_vach_hien_tai = String(maVach ?? '').trim()
+  return {
+    is_deleted: true,
+    ma_vach: ma_vach_hien_tai
+      ? `${ma_vach_hien_tai}_del_${timestamp}`
+      : `del_${ma_hang_hien_tai || 'row'}_${timestamp}`,
+    ma_hang: ma_hang_hien_tai
+      ? `${ma_hang_hien_tai}_del_${timestamp}`
+      : `del_ma_${timestamp}`,
+  }
+}
 
 /** `ma_hang` → payload đã finalize — chỉ upsert dòng thay đổi thật sự. */
 const productUpsertBaselineByMaHang = new Map()
@@ -911,7 +937,7 @@ function variantMarkedForDeletionIsCombo(gv) {
 }
 
 /**
- * `ma_hang` không trùng của các biến thể đang xóa khỏi catalog — dùng cho DELETE `public.products`.
+ * `ma_hang` không trùng của các biến thể đang xóa khỏi catalog — dùng cho xóa mềm `public.products`.
  * @param {Array<object>} products — catalog nhóm + groupVariants
  * @param {Array<string|number>} variantIds — `variant.id`
  */
@@ -1025,7 +1051,7 @@ export async function deleteProductsForRemovedVariants(products, variantIds) {
 }
 
 /**
- * Xóa dòng trên `public.products` theo `ma_hang` (legacy / khi chưa có UUID).
+ * Xóa mềm dòng trên `public.products` theo `ma_hang` — giải phóng mã gốc cho sản phẩm mới.
  * @param {Iterable<string>} maHangList
  * @returns {Promise<{ ok: boolean, skipped?: boolean, deleted?: number, error?: unknown }>}
  */
@@ -1042,30 +1068,54 @@ export async function deleteProductsFromSupabaseByMaHang(maHangList) {
   const uniq = [...new Set([...maHangList].map((x) => String(x ?? '').trim()).filter(Boolean))]
   if (uniq.length === 0) return { ok: true, deleted: 0 }
   try {
-    // Fallback khi chưa có UUID `id` (catalog cũ).
     // eslint-disable-next-line no-console
-    console.log('Payload xóa Supabase (products.delete theo ma_hang):', uniq)
-    const chunks = []
+    console.log('Payload xóa mềm Supabase (products.update theo ma_hang):', uniq)
+    const rowsByMaHang = new Map()
     for (let i = 0; i < uniq.length; i += PRODUCTS_IN_QUERY_CHUNK) {
-      chunks.push(uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK))
+      const chunk = uniq.slice(i, i + PRODUCTS_IN_QUERY_CHUNK)
+      const { data, error: fetchErr } = await applyActiveProductsFilter(
+        sb.from(PRODUCTS_TABLE).select(`${PRODUCT_PK_COLUMN}, ma_vach`).in(PRODUCT_PK_COLUMN, chunk)
+      )
+      if (fetchErr) {
+        const err = new Error(
+          describeCatalogPersistError(fetchErr) ||
+            `Đọc «products» trước xóa mềm: lỗi (${PRODUCT_PK_COLUMN}).`
+        )
+        err.cause = fetchErr
+        notifySupabasePersistFailure(err, fetchErr)
+        return { ok: false, error: fetchErr }
+      }
+      for (const row of data || []) {
+        const k = String(row?.[PRODUCT_PK_COLUMN] ?? '').trim()
+        if (k) rowsByMaHang.set(k, row)
+      }
     }
-    const results = await Promise.all(
-      chunks.map((chunk) => sb.from(PRODUCTS_TABLE).delete().in(PRODUCT_PK_COLUMN, chunk))
-    )
+
     let deleted = 0
-    for (const { error } of results) {
+    for (const ma_hang_hien_tai of uniq) {
+      const dbRow = rowsByMaHang.get(ma_hang_hien_tai)
+      if (!dbRow) continue
+      const updateData = buildSoftDeleteProductUpdate(
+        ma_hang_hien_tai,
+        String(dbRow.ma_vach ?? '').trim()
+      )
+      const { error } = await sb
+        .from(PRODUCTS_TABLE)
+        .update(updateData)
+        .eq(PRODUCT_PK_COLUMN, ma_hang_hien_tai)
       if (error) {
         const err = new Error(
           describeCatalogPersistError(error) ||
-            `Xóa bảng «products»: lỗi (${PRODUCT_PK_COLUMN}). Kiểm tra RLS policy DELETE.`
+            `Xóa mềm bảng «products»: lỗi (${PRODUCT_PK_COLUMN}="${ma_hang_hien_tai}"). Kiểm tra RLS policy UPDATE.`
         )
         err.cause = error
         notifySupabasePersistFailure(err, error)
         return { ok: false, error, deleted }
       }
+      deleted += 1
+      productUpsertBaselineByMaHang.delete(ma_hang_hien_tai)
     }
-    deleted = uniq.length
-    console.log(`[deleteProductsFromSupabaseByMaHang] Đã xóa ${deleted} dòng (${PRODUCT_PK_COLUMN}).`)
+    console.log(`[deleteProductsFromSupabaseByMaHang] Đã xóa mềm ${deleted} dòng (${PRODUCT_PK_COLUMN}).`)
     return { ok: true, deleted }
   } catch (error) {
     notifySupabasePersistFailure(error)
@@ -1294,12 +1344,13 @@ export async function updateSingleProductFromDisplayVariant(variant, options = {
   try {
     // eslint-disable-next-line no-console
     console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', fin)
-    const { data, error } = await sb
-      .from(PRODUCTS_TABLE)
-      .update(fin)
-      .eq(PRODUCT_PK_COLUMN, oldMaHang)
-      .select('*')
-    if (error) throw error
+    // UPDATE theo khóa chính là idempotent — retry an toàn khi timeout/mạng chập chờn
+    // (đơn nhập nhiều dòng gọi hàm này tuần tự, một lần chập chờn không nên làm hỏng cả phiếu).
+    const { data } = await withSupabaseRetry(async () => {
+      const res = await sb.from(PRODUCTS_TABLE).update(fin).eq(PRODUCT_PK_COLUMN, oldMaHang).select('*')
+      if (res.error) throw res.error
+      return res
+    })
     const rows = Array.isArray(data) ? data : []
     if (rows.length === 0) {
       return { ok: true, updated: false, rows: 0 }
@@ -1741,14 +1792,18 @@ async function fetchCatalogSnapshotFromSupabase() {
  */
 async function resolveSupabaseProductsOrderColumn(sb) {
   const pk = PRODUCT_PK_COLUMN
-  const probe = await sb
-    .from(PRODUCTS_TABLE)
-    .select(pk)
-    .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
-    .order(pk, { ascending: false })
-    .limit(1)
+  const probe = await applyActiveProductsFilter(
+    sb
+      .from(PRODUCTS_TABLE)
+      .select(pk)
+      .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
+      .order(pk, { ascending: false })
+      .limit(1)
+  )
   if (!probe.error) return PRODUCTS_CREATED_AT_COLUMN
-  const fb = await sb.from(PRODUCTS_TABLE).select(pk).order(pk, { ascending: false }).limit(1)
+  const fb = await applyActiveProductsFilter(
+    sb.from(PRODUCTS_TABLE).select(pk).order(pk, { ascending: false }).limit(1)
+  )
   if (!fb.error) return pk
   throw probe.error || fb.error || new Error('Không đọc được «products» (kiểm tra schema / RLS).')
 }
@@ -1774,7 +1829,7 @@ async function fetchAllProductRows(sb) {
   const all = []
   for (;;) {
     const to = from + pageSize - 1
-    let req = sb.from(PRODUCTS_TABLE).select(PRODUCTS_FETCH_COLUMNS)
+    let req = applyActiveProductsFilter(sb.from(PRODUCTS_TABLE).select(PRODUCTS_FETCH_COLUMNS))
     if (sortBy === PRODUCTS_CREATED_AT_COLUMN) {
       req = req
         .order(PRODUCTS_CREATED_AT_COLUMN, { ascending: false })
@@ -1899,10 +1954,12 @@ export async function fetchProductsCostAndStockByMaHang(maHangKeys) {
   if (!sb) return map
   for (let i = 0; i < uniq.length; i += MA_HANG_LOOKUP_CHUNK) {
     const part = uniq.slice(i, i + MA_HANG_LOOKUP_CHUNK)
-    const { data, error } = await sb
-      .from(PRODUCTS_TABLE)
-      .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi, ton_nho_nhat`)
-      .in(PRODUCT_PK_COLUMN, part)
+    const { data, error } = await applyActiveProductsFilter(
+      sb
+        .from(PRODUCTS_TABLE)
+        .select(`${PRODUCT_PK_COLUMN}, gia_von, ton_kho, quy_doi, ton_nho_nhat`)
+        .in(PRODUCT_PK_COLUMN, part)
+    )
     if (error) throw error
     for (const row of data || []) {
       const k = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
@@ -1933,6 +1990,7 @@ function parseQuyDoiFromProductsTableRow(row) {
  * @param {number} rowIndex
  */
 function supabaseProductRowToFlatCatalogRow(row, rowIndex) {
+  if (row?.is_deleted === true) return null
   const code = String(row[PRODUCT_PK_COLUMN] ?? '').trim()
   if (!code) return null
   const barcode = String(normalizeBarcodeValue(row.ma_vach ?? ''))
@@ -2459,6 +2517,11 @@ export function applyRealtimeProductChangeToCatalog(products, payload) {
 
   if (eventType === 'DELETE') {
     return removeByCode(oldRow?.[PRODUCT_PK_COLUMN])
+  }
+
+  if (eventType === 'UPDATE' && newRow?.is_deleted === true) {
+    const oldCode = String(oldRow?.[PRODUCT_PK_COLUMN] ?? '').trim()
+    if (oldCode) return removeByCode(oldCode)
   }
 
   if (!newRow) return products

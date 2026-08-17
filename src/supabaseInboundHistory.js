@@ -6,6 +6,7 @@
  */
 
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
+import { withSupabaseRetry } from './supabaseRetry.js'
 
 export const INBOUND_HISTORY_TABLE = 'inbound_history'
 export const INBOUND_SYNC_BUMP_EVENT = 'csv-preview-inbound-sync-bump-v1'
@@ -79,6 +80,28 @@ export function validateInboundHistoryPayload(order) {
 }
 
 /**
+ * Tìm phiếu đã ghi theo `payload->>id` (id sinh ở client, ổn định qua các lần thử) — dùng để
+ * kiểm tra "đã ghi thành công chưa" trước khi retry insert, tránh tạo trùng phiếu khi lần gọi
+ * trước thật ra đã thành công trên server nhưng phản hồi bị rớt mạng.
+ */
+async function findInboundHistoryEntryByOrderId(sb, orderId) {
+  const id = String(orderId ?? '').trim()
+  if (!id) return null
+  try {
+    const { data, error } = await sb
+      .from(INBOUND_HISTORY_TABLE)
+      .select('id, created_at, order_code, payload')
+      .eq('payload->>id', id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (error || !Array.isArray(data) || data.length === 0) return null
+    return data[0]
+  } catch {
+    return null
+  }
+}
+
+/**
  * Chèn một dòng sau khi đã cập nhật `products` thành công.
  * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, order?: object, dbRow?: object }>}
  */
@@ -103,16 +126,18 @@ export async function insertInboundHistoryEntry(order) {
   console.log('Payload chuẩn bị gửi:', insertPayload)
 
   try {
-    const { data: newOrder, error } = await sb
-      .from(INBOUND_HISTORY_TABLE)
-      .insert(insertPayload)
-      .select('id, created_at, order_code, payload')
-      .single()
-
-    if (error) {
-      console.error('Lỗi tạo phiếu nhập:', error)
-      return { ok: false, error }
-    }
+    const newOrder = await withSupabaseRetry(async () => {
+      const res = await sb
+        .from(INBOUND_HISTORY_TABLE)
+        .insert(insertPayload)
+        .select('id, created_at, order_code, payload')
+        .single()
+      if (!res.error) return res.data
+      // Trước khi retry: kiểm tra phiếu này đã tồn tại chưa (xem comment hàm tìm ở trên).
+      const existing = await findInboundHistoryEntryByOrderId(sb, payload.id)
+      if (existing) return existing
+      throw res.error
+    })
 
     const persisted =
       newOrder?.payload && typeof newOrder.payload === 'object'
