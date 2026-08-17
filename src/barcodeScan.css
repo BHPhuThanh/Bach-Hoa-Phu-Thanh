@@ -58,6 +58,7 @@
 }
 
 .barcode-scan-viewport-wrap {
+  position: relative;
   margin: 0.5rem 0.75rem;
   border-radius: 12px;
   overflow: hidden;
@@ -65,6 +66,20 @@
     box-shadow 0.15s ease,
     border-color 0.15s ease;
   border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.barcode-scan-refocus-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.55);
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .barcode-scan-viewport-wrap--flash {
@@ -98,7 +113,13 @@
 .barcode-scan-foot {
   padding: 0.5rem 0.75rem 0.85rem;
   display: flex;
+  gap: 0.5rem;
   justify-content: flex-end;
+}
+
+.barcode-scan-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .barcode-scan-btn {
