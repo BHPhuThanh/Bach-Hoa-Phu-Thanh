@@ -3843,9 +3843,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const onDraftClearedStorage = (e) => {
       if (e.storageArea !== localStorage) return
       if (e.key !== POS_DRAFT_LAST_CLEARED_KEY && e.key !== POS_DRAFT_CLEAR_BUMP_KEY) return
-      clearPosSessionDraft()
       const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
-      if (activeViewRef.current === 'sell' && hasLiveSellCart) return
+      if (activeViewRef.current === 'sell' && hasLiveSellCart) {
+        // Tín hiệu này bắn ra khi MỘT tab bất kỳ thanh toán xong — không nhất thiết là tab này.
+        // Tab này đang có đơn dở dang riêng (khác đơn vừa thanh toán) → đừng xóa nháp chung, tự
+        // ghi lại ngay đúng nháp của tab này để không bị tab kia đè mất (trước đây xóa vô điều
+        // kiện ở đây khiến đóng/mở lại tab này bị mất trắng đơn đang dở dù chưa hề thanh toán).
+        syncPosSessionDraftNow({
+          products: productsRef.current,
+          fileName: fileNameRef.current,
+          sellOrders: sellOrdersRef.current,
+          activeSellOrderId: activeSellOrderIdRef.current,
+        })
+        return
+      }
+      clearPosSessionDraft()
       suspendPosDraftPersistRef.current = true
       const fresh = createEmptySellOrder()
       sellOrdersRef.current = [fresh]
