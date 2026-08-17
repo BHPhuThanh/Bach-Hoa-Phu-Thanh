@@ -108,6 +108,26 @@ async function applyContinuousFocusSafe(h5) {
   }
 }
 
+/**
+ * Zoom hỗ trợ lấy nét — Safari (iPhone/iPad) không có API chỉnh `focusMode`, và camera của
+ * trình duyệt (khác app Camera gốc) lấy nét rất kém ở khoảng cách gần (macro). Zoom nhẹ để bù
+ * khung hình, cho phép cầm máy xa hơn — ra khỏi vùng mất nét gần — mà mã vạch vẫn đủ to để quét.
+ */
+async function applyAssistZoomSafe(h5) {
+  if (!h5?.getRunningTrackCapabilities || !h5?.applyVideoConstraints) return
+  try {
+    const caps = h5.getRunningTrackCapabilities()
+    const zoom = caps?.zoom
+    if (!zoom || typeof zoom.min !== 'number' || typeof zoom.max !== 'number' || zoom.max <= zoom.min) {
+      return
+    }
+    const target = Math.min(zoom.max, Math.max(zoom.min, 1.6))
+    await h5.applyVideoConstraints({ advanced: [{ zoom: target }] })
+  } catch {
+    /* Thiết bị/trình duyệt không hỗ trợ zoom qua web — bỏ qua êm. */
+  }
+}
+
 async function startPosScannerWithFallback(h5, readerId, onDecoded) {
   const noop = () => {}
 
@@ -252,6 +272,7 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
 
         await startPosScannerWithFallback(h5, readerId, onDecoded)
         setRefocusing(false)
+        void applyAssistZoomSafe(h5)
         /**
          * Lấy nét mềm định kỳ (không gián đoạn hình ảnh) — máy hỗ trợ `focusMode: continuous`
          * đôi khi bị "kẹt nét" sau ít giây, áp lại constraint giúp camera tự nét lại. Vô hại với
@@ -327,8 +348,9 @@ export default function PosBarcodeScanModal({ open, title = 'Quét mã vạch', 
           </button>
         </header>
         <p className="barcode-scan-hint">
-          Đưa mã vào khung vuông giữa màn hình — giữ thiết bị cách vừa phải để lấy nét. Ảnh mờ khó nét (hay gặp ở
-          máy đời cũ)? Chạm vào khung hình hoặc bấm «Lấy nét» bên dưới. Sau mỗi lần nhận có nghỉ ngắn.
+          Đưa mã vào khung vuông giữa màn hình. Ảnh mờ khó nét (hay gặp ở iPhone/iPad và máy đời cũ)? <b>Lùi máy ra
+          xa mã vạch hơn (khoảng 10–15cm, đừng để sát ống kính)</b> rồi chạm vào khung hình hoặc bấm «Lấy nét» bên
+          dưới. Sau mỗi lần nhận có nghỉ ngắn.
         </p>
         <div
           className={`barcode-scan-viewport-wrap${viewportFlash ? ' barcode-scan-viewport-wrap--flash' : ''}`}
