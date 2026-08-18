@@ -2242,14 +2242,33 @@ export async function fetchCatalogSnapshotFromPersistentStore() {
 /** Promise boot duy nhất / phiên — mọi `fetchProducts()` dùng chung, không gọi lại Supabase khi đổi tab. */
 let catalogBootFetchPromise = null
 
+/**
+ * 3 trang "tạo mới" mở tab riêng (Nhập hàng / Kiểm hàng / Điều chỉnh giá vốn) — chỉ cần tra cứu
+ * mã hàng / thêm dòng, không cần bảng `catalog_snapshots` (JSON toàn bộ danh mục, ~8MB) mà chỉ
+ * dùng để giữ đúng thứ tự/nhóm ĐVT hiển thị. Bảng `products` tự dựng lại đầy đủ catalog (đã là
+ * phương án dự phòng có sẵn khi snapshot trống) — nhẹ hơn nhiều lần, đủ dùng cho các trang này.
+ */
+function isLightweightStandaloneCatalogRoute() {
+  if (typeof window === 'undefined') return false
+  const path = String(window.location?.pathname ?? '').toLowerCase()
+  return (
+    path.endsWith('/nhap-hang/tao-moi') ||
+    path.endsWith('/kiem-hang/tao-moi') ||
+    path.endsWith('/dieu-chinh-gia/tao-moi')
+  )
+}
+
 async function fetchCatalogSnapshotFromPersistentStoreUncached() {
   if (isSupabaseConfigured()) {
+    const skipHeavySnapshot = isLightweightStandaloneCatalogRoute()
     let fromSnap = null
     let fromProducts = null
-    try {
-      fromSnap = await fetchCatalogSnapshotFromSupabase()
-    } catch (e) {
-      console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
+    if (!skipHeavySnapshot) {
+      try {
+        fromSnap = await fetchCatalogSnapshotFromSupabase()
+      } catch (e) {
+        console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
+      }
     }
     try {
       fromProducts = await fetchDisplayCatalogFromSupabaseProductsTable()
