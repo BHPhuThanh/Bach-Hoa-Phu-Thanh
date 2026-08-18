@@ -1436,22 +1436,43 @@ export async function updateProductDisplayVariantsSequential(flatVariants, optio
     return { ok: true, skipped: true, written: flatVariants.length }
   }
   let written = 0
+  /**
+   * KHÔNG dừng cả chuỗi ở sản phẩm lỗi đầu tiên — đơn nhập nhiều dòng gọi hàm này tuần tự, dừng
+   * sớm khiến MỌI sản phẩm đứng sau điểm lỗi (dù bản thân không có vấn đề gì) không hề được thử
+   * cập nhật — đúng hiện tượng "đơn càng nhiều sản phẩm càng dễ bị bỏ sót, mỗi lần khác nhau tùy
+   * lúc nào mạng chập chờn". Thử hết toàn bộ (mỗi dòng đã tự retry riêng — xem
+   * updateSingleProductFromDisplayVariant), gom đúng danh sách dòng lỗi để báo rõ ràng.
+   */
+  const failures = []
   for (const v of flatVariants) {
+    const maHangLabel = String(v?.persistMaHang ?? v?.code ?? '').trim()
     const r = await updateSingleProductFromDisplayVariant(v, {
       oldMaHang: String(v?.persistMaHang ?? '').trim(),
       allowCodeAsOldMaHang: options.allowCodeAsOldMaHang === true,
     })
-    if (!r.ok) return { ok: false, error: r.error, written }
+    if (!r.ok) {
+      failures.push({ maHang: maHangLabel, error: r.error })
+      continue
+    }
     if (r.updated === false) {
-      return {
-        ok: false,
-        error: new Error(
-          `Không tìm thấy dòng products (ma_hang="${String(v?.persistMaHang ?? v?.code ?? '').trim()}") để cập nhật — không tạo mới trong luồng sửa.`
-        ),
-        written,
-      }
+      failures.push({
+        maHang: maHangLabel,
+        error: new Error(`Không tìm thấy dòng products (ma_hang="${maHangLabel}") để cập nhật.`),
+      })
+      continue
     }
     written += 1
+  }
+  if (failures.length > 0) {
+    const names = failures.map((f) => f.maHang || '?').join(', ')
+    const error = new Error(
+      `${failures.length}/${flatVariants.length} sản phẩm không cập nhật được (${names}). ${
+        failures[0].error?.message || describeCatalogPersistError(failures[0].error) || ''
+      }`.trim()
+    )
+    error.cause = failures[0].error
+    error.failures = failures
+    return { ok: false, error, written, failures }
   }
   return { ok: true, written }
 }
