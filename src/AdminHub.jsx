@@ -1796,14 +1796,21 @@ export default function AdminHub({
           0
         )
       )
+      // Tiền vốn PHẢI trừ đúng phần đã trả (costSub trên phiếu hoàn) — trước đây bỏ qua hoàn
+      // toàn đơn TH, khiến Tiền vốn không giảm khi trả hàng dù Doanh thu/Lợi nhuận đã trừ đúng,
+      // làm vỡ đẳng thức Doanh thu = Tiền vốn + Lợi nhuận (rõ nhất ở dòng bán giá 0đ vẫn có vốn:
+      // trả hàng xong Tiền vốn vẫn còn nguyên, chỉ xóa hẳn đơn mới đúng số).
+      const returnsCostReversal = Math.round(
+        returnLedgerEntries.reduce((sum, e) => sum + Math.max(0, Number(e.costSub) || 0), 0)
+      )
 
-      // QUAN TRỌNG: Tiền vốn chỉ tính đơn bán HD, không cộng/trừ đơn TH.
-      const cost = Math.round(
+      const salesCost = Math.round(
         salesOrders.reduce(
           (sum, o) => Math.round(sum + Math.round(orderReportCostFromCatalog(o, catalogList))),
           0
         )
       )
+      const cost = Math.round(salesCost - returnsCostReversal)
       const salesProfit = Math.round(
         salesOrders.reduce((sum, o) => Math.round(sum + orderTotalProfit(o)), 0)
       )
@@ -6624,12 +6631,6 @@ export default function AdminHub({
         revenueSub += lineRefund
         costSub += lineCostReturn
         profitSub += lineProfitReversalRounded
-        console.error('--- DEBUG TRẢ HÀNG COMBO ---', {
-          line_profit: originalOrderLine.lineProfit ?? originalOrderLine.line_profit,
-          revenue: originalOrderLine.lineRevenue ?? originalOrderLine.line_revenue,
-          qty: orderQty,
-          profitSub_ket_qua: lineProfitReversalRounded,
-        })
         returnLines.push({
           code: String(it.code || '').trim(),
           name: String(it.name || '').trim(),
@@ -6696,12 +6697,6 @@ export default function AdminHub({
       const profitSubRounded = Math.round(profitSub)
       const revenueSubRounded = Math.round(revenueSub)
       const costSubRounded = Math.round(costSub)
-      console.error('--- DEBUG TRƯỚC INSERT LEDGER ---', {
-        revenueSub: revenueSubRounded,
-        costSub: costSubRounded,
-        profitSub: profitSubRounded,
-        profit_delta: -profitSubRounded,
-      })
       const ins = await insertPosReturnLedgerEntry({
         atMs: Date.now(),
         orderId: String(base.id || ''),
