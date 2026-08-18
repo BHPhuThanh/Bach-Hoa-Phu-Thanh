@@ -4127,13 +4127,12 @@ export default function AdminHub({
       hubCameraToastClearRef.current = null
     }, 2000)
   }, [])
-  /** Lỗi đồng bộ phiếu nhập chạy ngầm. */
+  /**
+   * Lỗi đồng bộ phiếu nhập chạy ngầm — KHÔNG tự ẩn: đơn nhập lớn xử lý mất vài chục giây đến cả
+   * phút, tự ẩn sau 8s gần như chắc chắn người dùng đã rời mắt khỏi màn hình lúc lỗi thật sự hiện
+   * ra. Đây là lỗi ảnh hưởng tiền/tồn kho — phải để người dùng chủ động đóng mới ẩn.
+   */
   const [inboundSyncErrMsg, setInboundSyncErrMsg] = useState('')
-  useEffect(() => {
-    if (!inboundSyncErrMsg) return undefined
-    const tid = window.setTimeout(() => setInboundSyncErrMsg(''), 8000)
-    return () => window.clearTimeout(tid)
-  }, [inboundSyncErrMsg])
   const openGoodsBrandSupplierModal = useCallback(() => {
     setSupplierModalOpen(true)
     return new Promise((resolve) => {
@@ -11745,7 +11744,15 @@ export default function AdminHub({
 
               {inboundSyncErrMsg ? (
                 <div className="ah-inbound-sync-err-toast" role="alert">
-                  Đồng bộ thất bại: {inboundSyncErrMsg}
+                  <span>Đồng bộ thất bại: {inboundSyncErrMsg}</span>
+                  <button
+                    type="button"
+                    className="ah-inbound-sync-err-toast__close"
+                    aria-label="Đóng thông báo lỗi"
+                    onClick={() => setInboundSyncErrMsg('')}
+                  >
+                    ×
+                  </button>
                 </div>
               ) : null}
 

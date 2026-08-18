@@ -4950,8 +4950,8 @@ a.ah-inbound-line-code-link:hover {
   left: calc(12px + env(safe-area-inset-left, 0px));
   right: auto;
   z-index: 200000 !important;
-  max-width: min(92vw, 24rem);
-  padding: 0.65rem 1rem;
+  max-width: min(92vw, 26rem);
+  padding: 0.65rem 0.75rem 0.65rem 1rem;
   border-radius: 10px;
   font-size: 0.86rem;
   line-height: 1.35;
@@ -4959,7 +4959,28 @@ a.ah-inbound-line-code-link:hover {
   background: linear-gradient(145deg, #450a0a, #1c1917);
   border: 1px solid rgba(248, 113, 113, 0.45);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
+  /* Không tự ẩn — người dùng bấm đóng mới mất, nên cần nhận click. */
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.ah-inbound-sync-err-toast__close {
+  flex: 0 0 auto;
+  min-width: 28px;
+  min-height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fecaca;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ah-inbound-sync-err-toast__close:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .ah-save-toast--supplier {
