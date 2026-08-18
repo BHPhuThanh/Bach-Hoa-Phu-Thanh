@@ -84,7 +84,16 @@ function newLedgerEntryId() {
     : `ret-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** `profit_delta` trên ledger (âm khi trả hàng). Bao dung bản ghi cũ — không throw, không log lặp. */
+/**
+ * `profit_delta` trên ledger — mức thay đổi Lợi nhuận do lần trả này (thường âm: trả hàng lãi
+ * thì Lợi nhuận giảm). Bao dung bản ghi cũ — không throw, không log lặp.
+ *
+ * KHÔNG được ép `profitSub` về không âm ở đây: khi bán nhầm giá 0đ (vẫn có giá vốn), dòng đó ghi
+ * nhận Lợi nhuận ÂM ngay lúc bán (lỗ đúng giá vốn) — trả hàng dòng đó phải HOÀN LẠI đúng khoản
+ * lỗ đó (Lợi nhuận tăng lên), tức `profitSub` ÂM và `profit_delta` DƯƠNG. Ép về không âm trước
+ * đây khiến Lợi nhuận không bao giờ được hoàn đúng cho các dòng bán lỗ — phải xóa hẳn đơn mới
+ * đúng số.
+ */
 export function ledgerProfitDeltaFromEntry(source) {
   if (source == null || typeof source !== 'object') return 0
   const rawDelta = source.profit_delta
@@ -92,17 +101,22 @@ export function ledgerProfitDeltaFromEntry(source) {
     return Math.round(Number(rawDelta))
   }
   const sub = Number(source.profitSub)
-  if (Number.isFinite(sub)) return -Math.max(0, Math.round(sub))
-  const rev = Math.max(0, Number(source.revenueSub) || 0)
-  const cost = Math.max(0, Number(source.costSub) || 0)
+  if (Number.isFinite(sub)) return -Math.round(sub)
+  const rev = Number(source.revenueSub) || 0
+  const cost = Number(source.costSub) || 0
   const legacy = Math.round(rev - cost) || 0
   if (legacy !== 0) warnMissingProfitDeltaOnce()
   return legacy
 }
 
-/** Độ lớn lợi nhuận hoàn (dương) — dùng cộng báo cáo; không phép trừ revenue − cost. */
+/**
+ * `profitSub` tương đương (GIỮ DẤU — có thể âm) — dùng trừ trực tiếp khỏi tổng Lợi nhuận báo
+ * cáo (`profit = salesProfit − sum(ledgerProfitSubFromParts(...))`). Trước đây lấy trị tuyệt đối
+ * nên trường hợp trả hàng dòng bán lỗ (profitSub âm) bị trừ ngược dấu, làm Lợi nhuận SAI thêm
+ * lần nữa thay vì được hoàn đúng.
+ */
 export function ledgerProfitSubFromParts(source) {
-  return Math.max(0, Math.abs(ledgerProfitDeltaFromEntry(source)))
+  return -ledgerProfitDeltaFromEntry(source)
 }
 
 function normalizeLedgerEntryFromPayload(row) {
@@ -117,7 +131,8 @@ function normalizeLedgerEntryFromPayload(row) {
   const revenueSub = Number(p.revenueSub)
   const costSub = Number(p.costSub)
   const profit_delta = ledgerProfitDeltaFromEntry(p)
-  const profitSub = Math.max(0, Math.abs(profit_delta))
+  /** Giữ dấu — xem comment {@link ledgerProfitSubFromParts}. */
+  const profitSub = -profit_delta
   if (!Number.isFinite(atMs) || !Number.isFinite(revenueSub) || !Number.isFinite(costSub)) {
     return null
   }
@@ -151,12 +166,13 @@ function normalizeLedgerEntryFromPayload(row) {
 export async function insertPosReturnLedgerEntry(entry) {
   const revenueSub = Math.max(0, Math.round(Number(entry.revenueSub) || 0))
   const costSub = Math.max(0, Math.round(Number(entry.costSub) || 0))
-  const profitSub = Math.max(0, Math.round(Number(entry.profitSub) || 0))
+  // KHÔNG ép về không âm — dòng bán lỗ (giá 0đ nhưng vẫn có giá vốn) hoàn lại phải có profitSub
+  // ÂM để Lợi nhuận báo cáo được cộng lại đúng khoản lỗ đã ghi nhận lúc bán. Xem comment
+  // {@link ledgerProfitDeltaFromEntry}.
+  const profitSub = Math.round(Number(entry.profitSub) || 0)
   const profit_delta = Number.isFinite(Number(entry.profit_delta))
     ? Math.round(Number(entry.profit_delta))
-    : profitSub > 0
-      ? -profitSub
-      : 0
+    : -profitSub
   const payload = stripUndefinedDeep({
     atMs: entry.atMs,
     orderId: String(entry.orderId || '').trim(),
@@ -181,13 +197,6 @@ export async function insertPosReturnLedgerEntry(entry) {
 
   const id = String(entry.id || '').trim() || newLedgerEntryId()
   const fullEntry = { ...payload, id }
-  console.error('--- DEBUG INSERT pos_return_ledger ---', {
-    id,
-    revenueSub: payload.revenueSub,
-    costSub: payload.costSub,
-    profitSub: payload.profitSub,
-    profit_delta: payload.profit_delta,
-  })
 
   if (!isSupabaseConfigured()) {
     const next = [...loadPosReturnDayLedger(), fullEntry]
