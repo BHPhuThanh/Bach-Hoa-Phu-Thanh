@@ -16,13 +16,15 @@ import {
   BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
 } from './kiotProductSchema.js'
 import {
-  POS_SESSION_DRAFT_VERSION,
   buildCatalogFingerprint,
-  clearPosSessionDraft,
-  loadPosSessionDraft,
-  savePosSessionDraft,
+  buildPosDraftFingerprint,
+  claimAbandonedTabDraft,
+  clearTabDraft,
+  getOrCreatePosTabId,
+  loadTabDraft,
   sellOrdersHaveAnyCartLines,
-  syncPosSessionDraftNow,
+  syncTabDraftNow,
+  touchTabDraftHeartbeat,
 } from './posSessionDraft.js'
 import {
   E_INVOICE_TEMPLATE_CODE,
@@ -54,8 +56,6 @@ import {
 import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
 
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
-const POS_DRAFT_LAST_CLEARED_KEY = 'pos_draft_last_cleared'
-const POS_DRAFT_CLEAR_BUMP_KEY = 'pos_draft_clear_bump'
 import { getAllOrders, getRecentOrders, saveOrderWithTimeout } from './ordersDb.js'
 import {
   enqueueOfflineOrder,
@@ -2712,6 +2712,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const freezePosDraftHydrateRef = useRef(false)
   const suspendPosDraftPersistRef = useRef(false)
   const skipNextDraftHydrateRef = useRef(false)
+  /** Mã tab riêng cho nháp POS — mỗi tab 1 ô lưu, không dùng chung với tab khác. */
+  const posTabIdRef = useRef(null)
+  if (posTabIdRef.current === null) posTabIdRef.current = getOrCreatePosTabId()
 
   const codeSalesMapRef = useRef({})
   codeSalesMapRef.current = codeSalesMap
@@ -2814,27 +2817,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const clearPendingInboundLowStockPrefill = useCallback(() => {
     setPendingInboundLowStockPrefill(null)
-  }, [])
-
-  const readPosDraftLastClearedAt = useCallback(() => {
-    try {
-      const raw = localStorage.getItem(POS_DRAFT_LAST_CLEARED_KEY)
-      const ms = Number(raw)
-      return Number.isFinite(ms) && ms > 0 ? ms : 0
-    } catch {
-      return 0
-    }
-  }, [])
-
-  const markPosDraftClearedGlobal = useCallback((reason = 'unknown') => {
-    const ts = Date.now()
-    try {
-      localStorage.setItem(POS_DRAFT_LAST_CLEARED_KEY, String(ts))
-      localStorage.setItem(POS_DRAFT_CLEAR_BUMP_KEY, `${ts}:${reason}`)
-    } catch {
-      /* ignore */
-    }
-    return ts
   }, [])
 
   /** AdminHub: staff bấm tab Doanh thu/Hàng hóa khi chưa có quyền — mở PIN, chờ xác thực xong mới kích hoạt tab. */
@@ -3839,26 +3821,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   /** Danh mục: chỉ CatalogProvider (boot 1 lần) + Realtime — không refetch khi đổi tab. */
 
+  /**
+   * Báo "tab này còn sống" định kỳ vào đúng ô nháp của tab — độc lập với việc giỏ hàng có đổi
+   * hay không (cashier bỏ đó không đụng vào vẫn phải tính là còn mở). Tab khác dựa vào mốc này
+   * để biết ô nháp nào đã thực sự bị bỏ lại (tab đã đóng) mới được nhận lại.
+   */
   useEffect(() => {
-    const onDraftClearedStorage = (e) => {
-      if (e.storageArea !== localStorage) return
-      if (e.key !== POS_DRAFT_LAST_CLEARED_KEY && e.key !== POS_DRAFT_CLEAR_BUMP_KEY) return
-      clearPosSessionDraft()
-      const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
-      if (activeViewRef.current === 'sell' && hasLiveSellCart) return
-      suspendPosDraftPersistRef.current = true
-      const fresh = createEmptySellOrder()
-      sellOrdersRef.current = [fresh]
-      activeSellOrderIdRef.current = fresh.id
-      cartRef.current = []
-      setSellOrders([fresh])
-      setActiveSellOrderId(fresh.id)
-      queueMicrotask(() => {
-        suspendPosDraftPersistRef.current = false
-      })
-    }
-    window.addEventListener('storage', onDraftClearedStorage)
-    return () => window.removeEventListener('storage', onDraftClearedStorage)
+    const id = window.setInterval(() => {
+      touchTabDraftHeartbeat(posTabIdRef.current)
+    }, 4000)
+    return () => window.clearInterval(id)
   }, [])
 
   const focusHeaderSearchSelect = useCallback(() => {
@@ -4006,7 +3978,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const fresh = createEmptySellOrder()
     setSellOrders([fresh])
     setActiveSellOrderId(fresh.id)
-    clearPosSessionDraft()
+    clearTabDraft(posTabIdRef.current)
     e.target.value = ''
 
     if (!file) return
@@ -4156,24 +4128,19 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       skipNextDraftHydrateRef.current = false
       if (sellOrdersHaveAnyCartLines(sellOrdersRef.current)) return
     }
-    const fp = buildCatalogFingerprint(products, fileName)
+    const fp = buildPosDraftFingerprint(products, fileName)
     if (lastCatalogFingerprintRef.current === fp) return
     lastCatalogFingerprintRef.current = fp
 
-    const parsed = loadPosSessionDraft()
-    if (!parsed || parsed.fingerprint !== fp) {
-      clearPosSessionDraft()
-      posDraftHydratingRef.current = false
-      return
+    const tabId = posTabIdRef.current
+    // Ưu tiên ô nháp CỦA CHÍNH TAB NÀY (vd. F5) — chỉ nhận nháp "bỏ lại" của một tab khác đã
+    // thực sự đóng (hết báo sống) khi tab này chưa từng có nháp riêng (mới mở).
+    let parsed = loadTabDraft(tabId)
+    if (!parsed) {
+      parsed = claimAbandonedTabDraft(tabId)
     }
-    const lastClearedAt = readPosDraftLastClearedAt()
-    const draftSavedAt = Date.parse(String(parsed.savedAt ?? ''))
-    if (
-      lastClearedAt > 0 &&
-      (!Number.isFinite(draftSavedAt) || draftSavedAt <= lastClearedAt)
-    ) {
-      console.log('[POS sync] Nháp cũ hơn dấu mốc xóa, hủy hydrate và dọn nháp.')
-      clearPosSessionDraft()
+    if (!parsed || parsed.fingerprint !== fp) {
+      clearTabDraft(tabId)
       posDraftHydratingRef.current = false
       return
     }
@@ -4192,7 +4159,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       activeOrderId: savedAid,
     })
     if (!re) {
-      clearPosSessionDraft()
+      clearTabDraft(tabId)
       const fresh = createEmptySellOrder()
       setSellOrders([fresh])
       setActiveSellOrderId(fresh.id)
@@ -4208,14 +4175,13 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     queueMicrotask(() => {
       posDraftHydratingRef.current = false
     })
-  }, [products, fileName, readPosDraftLastClearedAt])
+  }, [products, fileName])
 
   useEffect(() => {
     if (!products.length) return
     if (posDraftHydratingRef.current) return
     if (suspendPosDraftPersistRef.current) return
 
-    const fp = buildCatalogFingerprint(products, fileName)
     if (posSessionPersistTimerRef.current != null) {
       window.clearTimeout(posSessionPersistTimerRef.current)
     }
@@ -4223,19 +4189,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       posSessionPersistTimerRef.current = null
       if (suspendPosDraftPersistRef.current) return
       if (posDraftHydratingRef.current) return
-      const orders = sellOrdersRef.current
-      const activeId = activeSellOrderIdRef.current
-      if (!sellOrdersHaveAnyCartLines(orders)) {
-        clearPosSessionDraft()
-        return
-      }
-      savePosSessionDraft({
-        v: POS_SESSION_DRAFT_VERSION,
-        fingerprint: fp,
-        fileName,
-        sellOrders: orders,
-        activeSellOrderId: activeId,
-        savedAt: new Date().toISOString(),
+      syncTabDraftNow(posTabIdRef.current, {
+        products: productsRef.current,
+        fileName: fileNameRef.current,
+        sellOrders: sellOrdersRef.current,
+        activeSellOrderId: activeSellOrderIdRef.current,
       })
     }, 420)
     return () => {
@@ -4494,8 +4452,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     setSellOrders(nextOrders)
     setActiveSellOrderId(nextActiveId)
 
-    clearPosSessionDraft()
-    syncPosSessionDraftNow({
+    clearTabDraft(posTabIdRef.current)
+    syncTabDraftNow(posTabIdRef.current, {
       products: productsRef.current,
       fileName: fileNameRef.current,
       sellOrders: nextOrders,
@@ -4530,7 +4488,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       sellOrdersRef.current = remainingOrders
       activeSellOrderIdRef.current = nextActiveId
       setSellOrders(remainingOrders)
-      syncPosSessionDraftNow({
+      syncTabDraftNow(posTabIdRef.current, {
         products: productsRef.current,
         fileName: fileNameRef.current,
         sellOrders: remainingOrders,
@@ -5491,14 +5449,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         (o) => o.id === activeSellOrderIdRef.current
       )
       cartRef.current = draftActiveOrder?.cart ? [...draftActiveOrder.cart] : []
-      clearPosSessionDraft()
-      syncPosSessionDraftNow({
+      // Chỉ đụng tới ô nháp CỦA TAB NÀY — mỗi tab có ô riêng nên không còn ảnh hưởng gì tới đơn
+      // dở dang ở tab khác (trước đây dùng chung 1 ô, thanh toán ở tab này từng xóa/ghi đè mất
+      // nháp của tab khác đang mở song song).
+      syncTabDraftNow(posTabIdRef.current, {
         products: productsRef.current,
         fileName: fileNameRef.current,
         sellOrders: snapshotOrdersNoPaidDraft,
         activeSellOrderId: activeSellOrderIdRef.current,
       })
-      markPosDraftClearedGlobal('checkout_success')
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
 
@@ -5617,7 +5576,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     showPosPersistErrorToast,
     showPosOfflineToast,
     finalizePaidSellOrder,
-    markPosDraftClearedGlobal,
   ])
 
   handleThanhToanRef.current = handleThanhToan
