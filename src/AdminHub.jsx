@@ -147,7 +147,11 @@ import {
   saveStockCheckVouchers,
   stockQtyMeaningfullyChanged,
 } from './stockCheckStorage.js'
-import { formatInboundTonLabelVi } from './displayStockQty.js'
+import {
+  baseTonKhoFromDisplayNumber,
+  displayTonKhoNumber,
+  formatInboundTonLabelVi,
+} from './displayStockQty.js'
 import {
   COST_ADJUST_SYNC_BUMP_KEY,
   appendCompletedCostAdjustFromGoods,
@@ -438,8 +442,13 @@ function buildGoodsDetailDraft(v) {
     name: String(v.name ?? ''),
     code: String(v.code ?? ''),
     barcode: String(v.barcode ?? ''),
-    stockQty:
-      v.stockQty != null && Number.isFinite(Number(v.stockQty)) ? String(v.stockQty) : '',
+    // Chia theo quy đổi (quy_doi) — khớp đúng số hiển thị ở bảng Hàng hóa (formatDisplayTonKhoVi).
+    // Trước đây lấy thẳng ton_kho gốc (đơn vị cơ bản, chưa chia) nên ô sửa nhanh hiện SAI số với
+    // sản phẩm nhiều đơn vị tính (vd. "Thùng" hiện nguyên số tồn theo "Cái").
+    stockQty: (() => {
+      const n = displayTonKhoNumber(v.stockQty, v)
+      return n != null ? String(n) : ''
+    })(),
     ton_nho_nhat: (() => {
       const n = v.ton_nho_nhat ?? v.raw?.ton_nho_nhat ?? v.stockNormMin
       return n != null && n !== '' && Number.isFinite(Number(n)) ? String(n) : ''
@@ -2692,7 +2701,13 @@ export default function AdminHub({
         price: parseMoneyDraftVi(draft.price),
         wholesalePrice: parseMoneyDraftVi(draft.wholesalePrice ?? '0'),
         cost: parseMoneyDraftVi(draft.cost),
-        stockQty: parseAdminStockNullable(draft.stockQty),
+        // draft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem buildGoodsDetailDraft) — nhân
+        // lại quy đổi trước khi lưu để ra đúng ton_kho GỐC (đơn vị cơ bản). Thiếu bước này thì lưu
+        // thẳng số hiển thị làm tồn kho gốc, sai ngay với sản phẩm nhiều đơn vị tính.
+        stockQty: (() => {
+          const displayVal = parseAdminStockNullable(draft.stockQty)
+          return displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, variant)
+        })(),
         ton_nho_nhat: Number(parseAdminStockNullable(draft.ton_nho_nhat) || 0),
         stockNormMax:
           variant.stockNormMax != null && Number.isFinite(Number(variant.stockNormMax))

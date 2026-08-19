@@ -64,6 +64,26 @@ export function formatDisplayTonKhoVi(tonKhoRaw, quyDoiOrVariant) {
   return formatStockQtyDisplayVi(n)
 }
 
+/**
+ * Ngược lại {@link displayTonKhoNumber} — từ số tồn kho ĐANG HIỂN THỊ (đã chia quy đổi, đúng như
+ * người dùng nhìn thấy) ra lại `ton_kho` GỐC (đơn vị cơ bản) để lưu đúng xuống DB. Dùng khi người
+ * dùng sửa trực tiếp ô tồn kho đang hiển thị (vd. sửa nhanh sản phẩm) — nếu lưu thẳng số đang
+ * hiển thị làm `ton_kho` gốc (không nhân lại quy đổi) thì tồn kho SAI ngay khi có nhiều ĐVT.
+ * @param {unknown} displayNumber — số tồn kho đang hiển thị (đã chia quy đổi)
+ * @param {unknown} quyDoiOrVariant — số quy_doi hoặc object biến thể có conversion / conversionValue
+ * @returns {number | null}
+ */
+export function baseTonKhoFromDisplayNumber(displayNumber, quyDoiOrVariant) {
+  const n = Number(displayNumber)
+  if (!Number.isFinite(n)) return null
+  const denom =
+    quyDoiOrVariant != null && typeof quyDoiOrVariant === 'object'
+      ? quyDoiDenominatorForDisplay(quyDoiOrVariant)
+      : effectiveQuyDoiScalar(quyDoiOrVariant)
+  const d = Number.isFinite(Number(denom)) && Number(denom) > 0 ? Number(denom) : 1
+  return parseFloat((n * d).toFixed(4))
+}
+
 /** Nhãn gợi ý phiếu nhập: "Tồn: …" theo ton_kho / quy_doi. */
 export function formatInboundTonLabelVi(stockQty, variant) {
   const n = displayTonKhoNumber(stockQty, variant ?? {})
