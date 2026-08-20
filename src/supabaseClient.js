@@ -10,7 +10,25 @@ const supabaseReady =
   typeof supabaseAnonKey === 'string' &&
   supabaseAnonKey.trim().length > 0
 
-export const supabase = supabaseReady ? createClient(supabaseUrl, supabaseAnonKey) : null
+/**
+ * `auth` tắt hẳn — app chỉ dùng anon key công khai (RLS cho phép `anon`), không có ai đăng nhập
+ * qua supabase.auth.* (không 1 chỗ nào trong repo gọi tới). Mặc định supabase-js vẫn tự bật
+ * persistSession/autoRefreshToken dù không dùng, và dùng Web Locks API (navigator.locks) để
+ * đồng bộ refresh token giữa nhiều tab — cơ chế này hoàn toàn thừa với app này nhưng thỉnh
+ * thoảng "steal" khóa của 1 request khác đang chạy dở (đặc biệt khi mở nhiều tab, đúng cách
+ * dùng thực tế của cửa hàng), làm request đó bị hủy giữa chừng (AbortError: Lock broken…) —
+ * đây là nguyên nhân của nhiều lần "lỗi đồng bộ ngẫu nhiên khi nhập hàng lớn" trước đây. Tắt hẳn
+ * ở đây loại bỏ toàn bộ cơ chế khóa không cần thiết này.
+ */
+export const supabase = supabaseReady
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    })
+  : null
 
 export const getSupabaseClient = () => supabase
 export const isSupabaseConfigured = () => supabaseReady
