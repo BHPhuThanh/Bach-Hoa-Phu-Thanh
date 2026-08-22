@@ -2248,12 +2248,14 @@ export function buildCatalogSnapshotSupabaseRow(products, fileName) {
  * @param {Array} products
  * @param {string} fileName
  */
+/** @returns {Promise<object|undefined>} snapshot đã ghi (payload gốc, chưa qua JSON round-trip) — dùng lại để cache, khỏi build lần 2. */
 async function saveCatalogSnapshotToSupabase(products, fileName) {
   const sb = getSupabaseClient()
-  if (!sb) return
+  if (!sb) return undefined
   const row = buildCatalogSnapshotSupabaseRow(products, fileName)
   const { error } = await sb.from(CATALOG_SNAPSHOT_TABLE).upsert([row], { onConflict: 'id' })
   if (error) throw error
+  return row.snapshot
 }
 
 /**
@@ -2438,10 +2440,11 @@ async function saveCatalogSnapshotInner(products, fileName) {
   if (dedupeKey === saveCatalogSnapshotLastOkKey) return
 
   if (isSupabaseConfigured()) {
-    await saveCatalogSnapshotToSupabase(products, normalizedFileName)
-    // Vừa ghi xong đúng nội dung này lên catalog_snapshots — cache lại luôn, khỏi phải tải lại từ
-    // mạng ở lần revalidateCatalogFromStore() kế tiếp (thường chạy ngay sau khi lưu).
-    cacheSnapshotForRevalidate(snapshotFromPayload(buildCatalogSnapshotPayload(products, normalizedFileName)))
+    const writtenSnapshot = await saveCatalogSnapshotToSupabase(products, normalizedFileName)
+    // Vừa ghi xong đúng nội dung này lên catalog_snapshots — cache lại luôn (tái dùng payload đã
+    // build cho lần ghi, khỏi build lại lần 2), khỏi phải tải lại từ mạng ở lần
+    // revalidateCatalogFromStore() kế tiếp (thường chạy ngay sau khi lưu).
+    cacheSnapshotForRevalidate(snapshotFromPayload(writtenSnapshot))
     try {
       localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
     } catch {
