@@ -170,7 +170,7 @@ export async function updateProductThuongHieuByMaHang(maHang, brandUi) {
       .from(PRODUCTS_TABLE)
       .update(payload)
       .eq(PRODUCT_PK_COLUMN, code)
-      .select('*')
+      .select(PRODUCTS_FETCH_COLUMNS)
     if (error) throw error
     const rows = Array.isArray(data) ? data : []
     if (rows.length === 0) {
@@ -679,7 +679,7 @@ async function upsertProductChunkResilient(sb, part) {
   const { data: upsertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
-    .select('*')
+    .select(PRODUCTS_FETCH_COLUMNS)
   if (bulkError) {
     const err = new Error(describeCatalogPersistError(bulkError))
     err.cause = bulkError
@@ -714,7 +714,7 @@ async function insertProductChunkResilient(sb, part) {
   const { data: insertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .insert(part)
-    .select('*')
+    .select(PRODUCTS_FETCH_COLUMNS)
   if (bulkError) {
     console.error('[saveProductsToSupabase] Insert lỗi:', formatSupabaseWriteError(bulkError))
     return { written: 0, skipped: part.length, lastError: bulkError, returnedRows: [] }
@@ -1347,7 +1347,11 @@ export async function updateSingleProductFromDisplayVariant(variant, options = {
     // UPDATE theo khóa chính là idempotent — retry an toàn khi timeout/mạng chập chờn
     // (đơn nhập nhiều dòng gọi hàm này tuần tự, một lần chập chờn không nên làm hỏng cả phiếu).
     const { data } = await withSupabaseRetry(async () => {
-      const res = await sb.from(PRODUCTS_TABLE).update(fin).eq(PRODUCT_PK_COLUMN, oldMaHang).select('*')
+      const res = await sb
+        .from(PRODUCTS_TABLE)
+        .update(fin)
+        .eq(PRODUCT_PK_COLUMN, oldMaHang)
+        .select(PRODUCTS_FETCH_COLUMNS)
       if (res.error) throw res.error
       return res
     })
@@ -1399,7 +1403,10 @@ export async function insertSingleProductFromDisplayVariant(variant) {
   // eslint-disable-next-line no-console
   console.log('Bắt đầu gửi lên Supabase...', insertRows)
   try {
-    const { data, error } = await sb.from(PRODUCTS_TABLE).insert(insertRows).select('*')
+    const { data, error } = await sb
+      .from(PRODUCTS_TABLE)
+      .insert(insertRows)
+      .select(PRODUCTS_FETCH_COLUMNS)
     if (error) {
       console.error('Lỗi Insert Supabase:', error)
       throw error
@@ -2279,16 +2286,47 @@ function isLightweightStandaloneCatalogRoute() {
   )
 }
 
-async function fetchCatalogSnapshotFromPersistentStoreUncached() {
+/**
+ * Cache trong bộ nhớ (mỗi tab) phần `catalog_snapshots` (~8MB) dùng cho `revalidateCatalogFromStore()`.
+ * `revalidateCatalogFromStore()` chạy sau MỌI lần lưu 1 sản phẩm (sửa giá/tồn/thương hiệu…) — cấu trúc
+ * nhóm/ĐVT/combo trong snapshot gần như không đổi giữa các lần sửa liên tiếp, nên không cần tải lại
+ * ~8MB từ mạng mỗi lần; chỉ bảng `products` (giá/tồn — luôn cần tươi) mới tải mới mỗi lần.
+ * Hết hạn sau `SNAPSHOT_REVALIDATE_CACHE_TTL_MS` để bắt kịp thay đổi cấu trúc từ tab/thiết bị khác
+ * (bulk import CSV, xóa hàng loạt…) mà không phụ thuộc F5.
+ */
+let cachedSnapshotForRevalidate = null
+const SNAPSHOT_REVALIDATE_CACHE_TTL_MS = 3 * 60 * 1000
+
+/** @param {{ products: Array, fileName: string, csvRowCount: number } | null} snap */
+function cacheSnapshotForRevalidate(snap) {
+  if (snap?.products?.length) {
+    cachedSnapshotForRevalidate = { snapshot: snap, fetchedAtMs: Date.now() }
+  }
+}
+
+function readCachedSnapshotForRevalidate() {
+  if (!cachedSnapshotForRevalidate) return null
+  if (Date.now() - cachedSnapshotForRevalidate.fetchedAtMs > SNAPSHOT_REVALIDATE_CACHE_TTL_MS) {
+    return null
+  }
+  return cachedSnapshotForRevalidate.snapshot
+}
+
+async function fetchCatalogSnapshotFromPersistentStoreUncached(opts = {}) {
   if (isSupabaseConfigured()) {
     const skipHeavySnapshot = isLightweightStandaloneCatalogRoute()
+    const preferCachedSnapshot = opts.preferCachedSnapshot === true
     let fromSnap = null
     let fromProducts = null
     if (!skipHeavySnapshot) {
-      try {
-        fromSnap = await fetchCatalogSnapshotFromSupabase()
-      } catch (e) {
-        console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
+      fromSnap = preferCachedSnapshot ? readCachedSnapshotForRevalidate() : null
+      if (!fromSnap) {
+        try {
+          fromSnap = await fetchCatalogSnapshotFromSupabase()
+          cacheSnapshotForRevalidate(fromSnap)
+        } catch (e) {
+          console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
+        }
       }
     }
     try {
@@ -2381,10 +2419,12 @@ export async function fetchProducts() {
 
 /**
  * Tải lại danh mục từ nguồn bền — chỉ sau thao tác ghi DB (insert/update/xóa), không dùng khi đổi tab.
+ * Tái dùng cache `catalog_snapshots` trong bộ nhớ (≤3 phút) thay vì tải lại ~8MB mỗi lần — chỉ bảng
+ * `products` (giá/tồn) mới luôn tải mới. Xem {@link cacheSnapshotForRevalidate}.
  * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
  */
 export async function revalidateCatalogFromStore() {
-  const r = await fetchCatalogSnapshotFromPersistentStoreUncached()
+  const r = await fetchCatalogSnapshotFromPersistentStoreUncached({ preferCachedSnapshot: true })
   if (r?.products?.length) seedProductUpsertBaselineFromDisplayCatalog(r.products)
   return r
 }
@@ -2399,6 +2439,9 @@ async function saveCatalogSnapshotInner(products, fileName) {
 
   if (isSupabaseConfigured()) {
     await saveCatalogSnapshotToSupabase(products, normalizedFileName)
+    // Vừa ghi xong đúng nội dung này lên catalog_snapshots — cache lại luôn, khỏi phải tải lại từ
+    // mạng ở lần revalidateCatalogFromStore() kế tiếp (thường chạy ngay sau khi lưu).
+    cacheSnapshotForRevalidate(snapshotFromPayload(buildCatalogSnapshotPayload(products, normalizedFileName)))
     try {
       localStorage.removeItem(CATALOG_SNAPSHOT_STORAGE_KEY)
     } catch {
