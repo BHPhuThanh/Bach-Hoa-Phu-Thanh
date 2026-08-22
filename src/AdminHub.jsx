@@ -4024,16 +4024,28 @@ export default function AdminHub({
     return () => window.removeEventListener(INBOUND_SYNC_BUMP_EVENT, onBump)
   }, [refreshInboundInvoices])
 
+  /**
+   * `inboundOrders` là cache cục bộ dùng chung (tạo/sửa/xóa/import phiếu, VÀ báo cáo "Đơn nhập kho"
+   * ở tab Đơn hàng — có date picker riêng, cần xem được khoảng ngày bất kỳ) nên KHÔNG bị xóa bớt
+   * theo cửa sổ — nó chỉ lớn dần khi tải thêm (merge), không mất dữ liệu đã tải. Trang "Nhập hàng"
+   * chỉ HIỂN THỊ đúng cửa sổ `inboundHistoryWindowDays` (đỡ rối vì cache cũ có thể còn nhiều hơn cửa
+   * sổ đang tải — vd đã dùng app từ trước, hoặc vừa "Tải thêm").
+   */
+  const inboundOrdersInWindow = useMemo(() => {
+    const windowStartMs = Date.now() - inboundHistoryWindowDays * 24 * 60 * 60 * 1000
+    return inboundOrders.filter((r) => Number(r.createdAtMs) >= windowStartMs)
+  }, [inboundOrders, inboundHistoryWindowDays])
+
   const inboundRowsFiltered = useMemo(() => {
     const q = inboundDebounced.trim().toLowerCase()
-    if (!q) return inboundOrders
-    return inboundOrders.filter(
+    if (!q) return inboundOrdersInWindow
+    return inboundOrdersInWindow.filter(
       (r) =>
         String(r.code).toLowerCase().includes(q) ||
         String(r.supplier).toLowerCase().includes(q) ||
         inboundStatusLabel(r.status).toLowerCase().includes(q)
     )
-  }, [inboundOrders, inboundDebounced])
+  }, [inboundOrdersInWindow, inboundDebounced])
 
   const inboundSelectedIds = useMemo(
     () => new Set(Object.keys(inboundSelected).filter((k) => inboundSelected[k])),
@@ -7066,17 +7078,19 @@ export default function AdminHub({
   }, [inboundFormEditOrderId, inboundOrders])
 
   const handleInboundExportAll = useCallback(() => {
-    if (inboundOrders.length === 0) {
+    // Khớp đúng phần đang hiển thị (theo cửa sổ ngày) — không lấy inboundOrders (có thể có thêm
+    // dữ liệu ngoài cửa sổ do "Đơn hàng → Đơn nhập kho" tải riêng theo khoảng ngày khác).
+    if (inboundOrdersInWindow.length === 0) {
       alert('Chưa có phiếu để xuất.')
       return
     }
     try {
-      exportInboundRowsToCsvFile(inboundOrders)
+      exportInboundRowsToCsvFile(inboundOrdersInWindow)
     } catch (err) {
       console.error(err)
       alert('Không xuất được file.')
     }
-  }, [inboundOrders])
+  }, [inboundOrdersInWindow])
 
   const handleInboundListImport = useCallback(
     (e) => {
