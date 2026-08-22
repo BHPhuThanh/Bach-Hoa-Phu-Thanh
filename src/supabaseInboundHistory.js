@@ -122,8 +122,6 @@ export async function insertInboundHistoryEntry(order) {
 
   const { payload, order_code } = validated
   const insertPayload = stripUndefinedDeep({ order_code, payload })
-  // eslint-disable-next-line no-console -- xác minh payload trước khi gửi Supabase
-  console.log('Payload chuẩn bị gửi:', insertPayload)
 
   try {
     const newOrder = await withSupabaseRetry(async () => {

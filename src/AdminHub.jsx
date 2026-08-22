@@ -158,7 +158,6 @@ import {
   loadCostAdjustVouchersFromStore,
   saveCostAdjustVouchersToStore,
 } from './costAdjustStorage.js'
-import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
 import {
   fetchInventoryLogsByProductId,
   INVENTORY_LOG_UPDATED_EVENT,
@@ -6431,33 +6430,6 @@ export default function AdminHub({
     requestOpenInboundOrderDetail,
     openPosReturnDetailTab,
     syncHubUrlToMainTab,
-  ])
-
-  const soloStockLedgerRows = useMemo(() => {
-    if (!isSoloProductTabId(activeTab)) return []
-    if (!soloActiveVariantId || !soloGoodsVariant) return []
-    if (!Array.isArray(returnDayLedger)) return []
-    try {
-      return buildVariantStockLedgerRows({
-        variantId: soloActiveVariantId,
-        catalogList,
-        currentStockQty: soloGoodsVariant.stockQty,
-        orders,
-        inboundOrders,
-        returnDayLedger,
-      })
-    } catch (e) {
-      console.warn('[AdminHub soloStockLedgerRows]', e)
-      return []
-    }
-  }, [
-    activeTab,
-    soloActiveVariantId,
-    soloGoodsVariant,
-    catalogList,
-    orders,
-    inboundOrders,
-    returnDayLedger,
   ])
 
   useEffect(() => {

@@ -164,8 +164,6 @@ export async function updateProductThuongHieuByMaHang(maHang, brandUi) {
   const fin = finalizeProductRowForSupabase({ thuong_hieu: String(brandUi ?? '') }, allow)
   try {
     const payload = { thuong_hieu: fin.thuong_hieu }
-    // eslint-disable-next-line no-console
-    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload)
     const { data, error } = await sb
       .from(PRODUCTS_TABLE)
       .update(payload)
@@ -674,8 +672,6 @@ async function upsertProductChunkResilient(sb, part) {
     )
     return { written: 0, skipped: part.length, lastError: err, returnedRows: [] }
   }
-  // eslint-disable-next-line no-console
-  console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', part)
   const { data: upsertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .upsert(part, { onConflict: PRODUCT_PK_COLUMN })
@@ -709,8 +705,6 @@ async function insertProductChunkResilient(sb, part) {
     )
     return { written: 0, skipped: part.length, lastError: err, returnedRows: [] }
   }
-  // eslint-disable-next-line no-console
-  console.log('Bulk insert products (một request):', part)
   const { data: insertedRows, error: bulkError } = await sb
     .from(PRODUCTS_TABLE)
     .insert(part)
@@ -997,8 +991,6 @@ export async function clearComboProductLinksOnSupabase(maHangList) {
         is_combo: false,
         loai_san_pham: '',
       }
-      // eslint-disable-next-line no-console
-      console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload, 'ma_hang in', chunk)
       const { error } = await sb
         .from(PRODUCTS_TABLE)
         .update(payload)
@@ -1342,8 +1334,6 @@ export async function updateSingleProductFromDisplayVariant(variant, options = {
   }
   const fin = finalizeDisplayVariantForDbWrite(variant, { omitMaHang: false })
   try {
-    // eslint-disable-next-line no-console
-    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', fin)
     // UPDATE theo khóa chính là idempotent — retry an toàn khi timeout/mạng chập chờn
     // (đơn nhập nhiều dòng gọi hàm này tuần tự, một lần chập chờn không nên làm hỏng cả phiếu).
     const { data } = await withSupabaseRetry(async () => {

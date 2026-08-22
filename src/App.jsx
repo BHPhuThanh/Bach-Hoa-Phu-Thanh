@@ -3429,8 +3429,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             }
             const cleanMaHang = cleanMaHangKey(eqMaHang)
             const payload = { ma_hang: rowNewCode, ...rowPayload }
-            // eslint-disable-next-line no-console
-            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload)
             const { data, error } = await sb
               .from('products')
               .update(payload)
@@ -3456,8 +3454,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
           if (oldCode && newCode && oldCode !== newCode) {
             const childPayload = { ma_hh_lien_quan: newCode }
-            // eslint-disable-next-line no-console
-            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', childPayload)
             const { error: childUpdateErr } = await sb
               .from('products')
               .update(childPayload)
@@ -3593,7 +3589,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const payloadPatchTonKho = Array.isArray(item.tonKhoOnlyVariants)
             ? item.tonKhoOnlyVariants
             : []
-          console.log('📦 PAYLOAD TỒN KHO OFFLINE GỬI LÊN:', payloadPatchTonKho)
           for (const row of payloadPatchTonKho) {
             const ma = String(row?.ma_hang ?? row?.code ?? '').trim()
             if (!ma) continue
