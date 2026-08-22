@@ -21,6 +21,10 @@ import { normalizeCatalogUnitLabel } from './productUnits.js'
 export const INVENTORY_LOG_TABLE = 'inventory_log'
 export const INVENTORY_LOG_UPDATED_EVENT = 'inventory-log-updated'
 
+/** Đúng các cột `insertInventoryLogRows()` ghi (+ id/created_at server sinh) — khớp select khi đọc lại, đỡ egress. */
+const INVENTORY_LOG_FETCH_COLUMNS =
+  'id,created_at,staff_name,transaction_type,change_qty,stock_after,document_code,ma_hang,ten_hang,product_id,variant_id,txn_qty,txn_unit_label,base_unit_label'
+
 /** Tên nhân viên đang thao tác POS/Hub (không có auth SSO — mặc định chủ cửa hàng). */
 export function staffNameForInventoryLog() {
   const id = readStoredSellerId()
@@ -636,7 +640,7 @@ export async function fetchInventoryLogsByProductId(
       const inList = maCodes.map((c) => `"${String(c).replace(/"/g, '\\"')}"`).join(',')
       orParts.push(`ma_hang.in.(${inList})`)
     }
-    let q = sb.from(INVENTORY_LOG_TABLE).select('*').or(orParts.join(','))
+    let q = sb.from(INVENTORY_LOG_TABLE).select(INVENTORY_LOG_FETCH_COLUMNS).or(orParts.join(','))
     q = applyInventoryLogFetchFilters(q, { dateFromStr, dateToStr, documentSearch })
     const { data, error } = await q.order('created_at', { ascending: false }).limit(limit)
 
@@ -674,7 +678,7 @@ export async function fetchInventoryLogsByMaHang(maHangRaw, limitOrOpts = 200) {
   if (!sb) return { ok: false, rows: [], skipped: true }
 
   try {
-    let q = sb.from(INVENTORY_LOG_TABLE).select('*').eq('ma_hang', ma)
+    let q = sb.from(INVENTORY_LOG_TABLE).select(INVENTORY_LOG_FETCH_COLUMNS).eq('ma_hang', ma)
     q = applyInventoryLogFetchFilters(q, { dateFromStr, dateToStr, documentSearch })
     const { data, error } = await q.order('created_at', { ascending: false }).limit(limit)
 

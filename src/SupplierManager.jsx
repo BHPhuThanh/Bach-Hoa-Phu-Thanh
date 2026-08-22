@@ -53,7 +53,8 @@ export default function SupplierManager({
         }
         return
       }
-      const { data, error } = await supabase.from('suppliers').select('*')
+      // Chỉ lấy đúng cột normalizeSupplierRow() dùng tới — đỡ egress.
+      const { data, error } = await supabase.from('suppliers').select('id,name,phone,address,cccd,mail')
       if (cancelled) return
       if (error) {
         console.error('[SupplierManager] fetch suppliers', error)

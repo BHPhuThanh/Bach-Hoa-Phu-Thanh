@@ -3,6 +3,9 @@
  */
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient.js'
 
+/** Đúng các cột normalizePersonRow() dùng tới — khớp select khi đọc/ghi, đỡ egress. */
+const PERSON_FETCH_COLUMNS = 'id,name,phone,address,cccd,mail,created_at'
+
 function normalizePersonRow(row) {
   if (!row) return null
   return {
@@ -52,7 +55,7 @@ async function insertPerson(table, payload) {
     return { ok: false, error: new Error('Thiếu tên') }
   }
   try {
-    const { data, error } = await sb.from(table).insert(row).select('*').single()
+    const { data, error } = await sb.from(table).insert(row).select(PERSON_FETCH_COLUMNS).single()
     if (error) {
       return { ok: false, error, code: error.code, message: error.message }
     }
@@ -72,7 +75,10 @@ async function insertPerson(table, payload) {
 export async function fetchPersonTable(table) {
   const sb = getSupabaseClient()
   if (!sb || !isSupabaseConfigured()) return []
-  const { data, error } = await sb.from(table).select('*').order('created_at', { ascending: false })
+  const { data, error } = await sb
+    .from(table)
+    .select(PERSON_FETCH_COLUMNS)
+    .order('created_at', { ascending: false })
   if (error) {
     console.warn(`[entityContactsRepository] fetch ${table}`, error.message)
     return []
@@ -133,7 +139,12 @@ async function updatePerson(table, id, payload) {
     return { ok: false, error: new Error('Thiếu tên') }
   }
   try {
-    const { data, error } = await sb.from(table).update(row).eq('id', idStr).select('*').single()
+    const { data, error } = await sb
+      .from(table)
+      .update(row)
+      .eq('id', idStr)
+      .select(PERSON_FETCH_COLUMNS)
+      .single()
     if (error) {
       return { ok: false, error, code: error.code, message: error.message }
     }

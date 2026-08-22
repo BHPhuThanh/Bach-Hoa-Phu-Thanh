@@ -154,18 +154,26 @@ export async function insertInboundHistoryEntry(order) {
 
 /**
  * Đọc danh sách phiếu nhập trực tiếp từ Supabase.
+ * Mặc định (không truyền gì) tải toàn bộ tới `limit` dòng — chỉ dùng khi thật sự cần (vd export).
+ * Trang "Nhập hàng" dùng `sinceMs`/`beforeMs` để giới hạn theo ngày (xem `refreshInboundInvoices`
+ * / `loadOlderInboundInvoices` ở AdminHub.jsx) — tránh kéo cả lịch sử mỗi lần tải/làm mới.
+ * @param {{ sinceMs?: number, beforeMs?: number, limit?: number }} [opts]
  * @returns {Promise<{ ok: boolean, rows?: Array<object>, skipped?: boolean, error?: unknown }>}
  */
-export async function fetchInboundInvoices() {
+export async function fetchInboundInvoices(opts = {}) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true, rows: [] }
   const sb = getSupabaseClient()
   if (!sb) return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  const { sinceMs, beforeMs, limit = 2000 } = opts || {}
   try {
-    const { data, error } = await sb
+    let q = sb
       .from(INBOUND_HISTORY_TABLE)
       .select('payload, created_at')
       .order('created_at', { ascending: false })
-      .limit(2000)
+      .limit(limit)
+    if (Number.isFinite(sinceMs)) q = q.gte('created_at', new Date(sinceMs).toISOString())
+    if (Number.isFinite(beforeMs)) q = q.lt('created_at', new Date(beforeMs).toISOString())
+    const { data, error } = await q
     if (error) return { ok: false, error }
     const rows = (data || [])
       .map((r) => (r && typeof r.payload === 'object' ? r.payload : null))
