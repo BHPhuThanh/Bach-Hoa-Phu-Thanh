@@ -325,6 +325,36 @@ export async function fetchPosReturnLedgerEntries() {
 }
 
 /**
+ * Đọc một phiếu hoàn trả theo UUID — dùng khi mở tab chi tiết (click từ bảng Doanh thu / deep-link
+ * / khôi phục tab sau F5) mà chưa có sẵn trong state. Chỉ 1 dòng — không tải cả bảng
+ * (xem {@link fetchPosReturnLedgerEntries}, trước đây bị gọi lại mỗi lần mở tab chi tiết).
+ * @param {string} ledgerIdRaw
+ * @returns {Promise<object | null>}
+ */
+export async function getPosReturnLedgerEntryById(ledgerIdRaw) {
+  const ledgerId = String(ledgerIdRaw ?? '').trim()
+  if (!ledgerId) return null
+  if (!isSupabaseConfigured()) {
+    const local = loadPosReturnDayLedger().find((e) => String(e?.id) === ledgerId)
+    return local ?? null
+  }
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from(POS_RETURN_LEDGER_TABLE)
+      .select('id, created_at, order_id, payload')
+      .eq('id', ledgerId)
+      .maybeSingle()
+    if (error) throw error
+    return normalizeLedgerEntryFromPayload(data)
+  } catch (e) {
+    console.warn('[posReturnLedger] getPosReturnLedgerEntryById', ledgerId, e)
+    return null
+  }
+}
+
+/**
  * Xóa một phiếu hoàn trả theo UUID (`pos_return_ledger.id`).
  * @param {string} ledgerIdRaw
  */

@@ -121,8 +121,8 @@ import {
 import { clearPosReturnDayLedger } from './posReturnDayLedger.js'
 import {
   deletePosReturnLedgerByOrderId,
-  fetchPosReturnLedgerEntries,
   fetchPosReturnLedgerEntriesForReportRange,
+  getPosReturnLedgerEntryById,
   insertPosReturnLedgerEntry,
   ledgerProfitSubFromParts,
   migrateLocalPosReturnLedgerToSupabaseOnce,
@@ -158,7 +158,6 @@ import {
   loadCostAdjustVouchersFromStore,
   saveCostAdjustVouchersToStore,
 } from './costAdjustStorage.js'
-import { buildVariantStockLedgerRows } from './stockLedgerForVariant.js'
 import {
   fetchInventoryLogsByProductId,
   INVENTORY_LOG_UPDATED_EVENT,
@@ -596,6 +595,9 @@ function isPosOrderDetailTabId(tab) {
 /** Tab chi tiết giao dịch hoàn trả (ledger): `pos_return_detail:<encodeURIComponent(ledgerEntryId)>`. */
 const POS_RETURN_DETAIL_TAB_PREFIX = 'pos_return_detail:'
 const MAX_OPEN_POS_RETURN_DETAIL_TABS = 8
+
+/** Mặc định trang "Nhập hàng" chỉ tải N ngày gần nhất — "Tải thêm" nới ra từng bước này (đỡ egress). */
+const INBOUND_HISTORY_WINDOW_STEP_DAYS = 30
 
 function toPosReturnDetailTabId(ledgerEntryId) {
   return `${POS_RETURN_DETAIL_TAB_PREFIX}${encodeURIComponent(String(ledgerEntryId))}`
@@ -1367,25 +1369,42 @@ export default function AdminHub({
     []
   )
 
-  const refreshPosReturnLedger = useCallback(async () => {
+  /** Đọc mới nhất trong closure các callback ổn định (effect/handler) mà không cần đưa vào deps. */
+  const returnDayLedgerRef = useRef(returnDayLedger)
+  returnDayLedgerRef.current = returnDayLedger
+
+  /**
+   * Đảm bảo có sẵn 1 phiếu hoàn trả cụ thể trong `returnDayLedger` (mở tab chi tiết / deep-link /
+   * khôi phục tab sau F5) — KHÔNG tải cả bảng `pos_return_ledger`: đã có thì bỏ qua, thiếu thì
+   * query đúng 1 dòng theo id rồi merge vào (giữ nguyên các dòng khác đã có, không ghi đè).
+   * Trước đây gọi `fetchPosReturnLedgerEntries()` (tới 5000 dòng, mỗi dòng có `payload` đầy đủ)
+   * mỗi lần mở tab chi tiết — tốn egress đáng kể.
+   */
+  const ensurePosReturnLedgerEntryLoaded = useCallback(async (ledgerIdRaw) => {
+    const ledgerId = String(ledgerIdRaw ?? '').trim()
+    if (!ledgerId) return false
     if (!isSupabaseConfigured()) {
       try {
         const { loadPosReturnDayLedger } = await import('./posReturnDayLedger.js')
         const v = loadPosReturnDayLedger()
         setReturnDayLedger(Array.isArray(v) ? v : [])
+        return (Array.isArray(v) ? v : []).some((e) => String(e?.id) === ledgerId)
       } catch {
-        setReturnDayLedger([])
+        return false
       }
-      return
     }
+    if (returnDayLedgerRef.current.some((e) => String(e?.id) === ledgerId)) return true
     setReturnLedgerRemoteLoading(true)
     try {
-      const r = await fetchPosReturnLedgerEntries()
-      if (!r.ok) {
-        console.error('[AdminHub] Không tải pos_return_ledger', r.error)
-        return
-      }
-      setReturnDayLedger(Array.isArray(r.entries) ? r.entries : [])
+      const entry = await getPosReturnLedgerEntryById(ledgerId)
+      if (!entry) return false
+      setReturnDayLedger((prev) =>
+        prev.some((e) => String(e?.id) === ledgerId) ? prev : [...prev, entry]
+      )
+      return true
+    } catch (e) {
+      console.error('[AdminHub] Không tải phiếu hoàn trả', ledgerId, e)
+      return false
     } finally {
       setReturnLedgerRemoteLoading(false)
     }
@@ -1397,11 +1416,12 @@ export default function AdminHub({
     void migrateLocalPosReturnLedgerToSupabaseOnce()
   }, [])
 
-  /** Tab chi tiết hoàn trả — tải ledger đầy đủ chỉ khi mở tab đó (không chạy mỗi lần đổi Doanh thu). */
+  /** Tab chi tiết hoàn trả — chỉ tải đúng 1 phiếu (theo id trong tab) khi mở tab đó. */
   useEffect(() => {
-    if (!isPosReturnDetailTabId(activeTab)) return
-    void refreshPosReturnLedger()
-  }, [activeTab, refreshPosReturnLedger])
+    const lid = parsePosReturnDetailTabId(activeTab)
+    if (!lid) return
+    void ensurePosReturnLedgerEntryLoaded(lid)
+  }, [activeTab, ensurePosReturnLedgerEntryLoaded])
 
   /* —— Tổng quan —— */
   const [ovRange, setOvRange] = useState(RANGE_TODAY)
@@ -3896,6 +3916,14 @@ export default function AdminHub({
   const [inboundQ, setInboundQ] = useState('')
   const inboundDebounced = useDebounced(inboundQ)
   const [inboundSelected, setInboundSelected] = useState(() => ({}))
+  const [inboundHistoryWindowDays, setInboundHistoryWindowDays] = useState(
+    INBOUND_HISTORY_WINDOW_STEP_DAYS
+  )
+  const inboundHistoryWindowDaysRef = useRef(inboundHistoryWindowDays)
+  inboundHistoryWindowDaysRef.current = inboundHistoryWindowDays
+  const [inboundHistoryLoadingMore, setInboundHistoryLoadingMore] = useState(false)
+  const inboundHistoryLoadingMoreRef = useRef(false)
+  const [inboundHistoryFullyLoaded, setInboundHistoryFullyLoaded] = useState(false)
 
   useEffect(() => {
     if (activeTab !== TAB_INBOUND && activeTab !== TAB_ORDERS) {
@@ -3919,7 +3947,9 @@ export default function AdminHub({
     }
     if (!quiet) setInboundRemoteLoading(true)
     try {
-      const r = await fetchInboundInvoices()
+      const r = await fetchInboundInvoices({
+        sinceMs: Date.now() - inboundHistoryWindowDaysRef.current * 24 * 60 * 60 * 1000,
+      })
       if (!r.ok) {
         console.warn('[AdminHub] Không tải được inbound_history', r.error)
         return
@@ -3936,6 +3966,43 @@ export default function AdminHub({
       })
     } finally {
       if (!quiet) setInboundRemoteLoading(false)
+    }
+  }, [])
+
+  /**
+   * "Tải thêm" phiếu nhập cũ hơn — chỉ query đúng lát cắt [cửa sổ mới, cửa sổ cũ) rồi merge vào,
+   * không tải lại các dòng đã có trong cửa sổ hiện tại.
+   */
+  const loadOlderInboundInvoices = useCallback(async () => {
+    if (!isSupabaseConfigured() || inboundHistoryLoadingMoreRef.current) return
+    const oldDays = inboundHistoryWindowDaysRef.current
+    const newDays = oldDays + INBOUND_HISTORY_WINDOW_STEP_DAYS
+    inboundHistoryLoadingMoreRef.current = true
+    setInboundHistoryLoadingMore(true)
+    try {
+      const now = Date.now()
+      const r = await fetchInboundInvoices({
+        sinceMs: now - newDays * 24 * 60 * 60 * 1000,
+        beforeMs: now - oldDays * 24 * 60 * 60 * 1000,
+      })
+      if (!r.ok) {
+        console.warn('[AdminHub] Không tải thêm được inbound_history', r.error)
+        return
+      }
+      const older = Array.isArray(r.rows)
+        ? r.rows.map((x) => normalizeInboundRow(x)).filter((x) => x.id && x.code)
+        : []
+      if (older.length === 0) setInboundHistoryFullyLoaded(true)
+      setInboundOrders((prev) => {
+        const byId = new Map(prev.map((row) => [row.id, row]))
+        for (const row of older) byId.set(row.id, row)
+        return [...byId.values()].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
+      })
+      inboundHistoryWindowDaysRef.current = newDays
+      setInboundHistoryWindowDays(newDays)
+    } finally {
+      inboundHistoryLoadingMoreRef.current = false
+      setInboundHistoryLoadingMore(false)
     }
   }, [])
 
@@ -3956,16 +4023,28 @@ export default function AdminHub({
     return () => window.removeEventListener(INBOUND_SYNC_BUMP_EVENT, onBump)
   }, [refreshInboundInvoices])
 
+  /**
+   * `inboundOrders` là cache cục bộ dùng chung (tạo/sửa/xóa/import phiếu, VÀ báo cáo "Đơn nhập kho"
+   * ở tab Đơn hàng — có date picker riêng, cần xem được khoảng ngày bất kỳ) nên KHÔNG bị xóa bớt
+   * theo cửa sổ — nó chỉ lớn dần khi tải thêm (merge), không mất dữ liệu đã tải. Trang "Nhập hàng"
+   * chỉ HIỂN THỊ đúng cửa sổ `inboundHistoryWindowDays` (đỡ rối vì cache cũ có thể còn nhiều hơn cửa
+   * sổ đang tải — vd đã dùng app từ trước, hoặc vừa "Tải thêm").
+   */
+  const inboundOrdersInWindow = useMemo(() => {
+    const windowStartMs = Date.now() - inboundHistoryWindowDays * 24 * 60 * 60 * 1000
+    return inboundOrders.filter((r) => Number(r.createdAtMs) >= windowStartMs)
+  }, [inboundOrders, inboundHistoryWindowDays])
+
   const inboundRowsFiltered = useMemo(() => {
     const q = inboundDebounced.trim().toLowerCase()
-    if (!q) return inboundOrders
-    return inboundOrders.filter(
+    if (!q) return inboundOrdersInWindow
+    return inboundOrdersInWindow.filter(
       (r) =>
         String(r.code).toLowerCase().includes(q) ||
         String(r.supplier).toLowerCase().includes(q) ||
         inboundStatusLabel(r.status).toLowerCase().includes(q)
     )
-  }, [inboundOrders, inboundDebounced])
+  }, [inboundOrdersInWindow, inboundDebounced])
 
   const inboundSelectedIds = useMemo(
     () => new Set(Object.keys(inboundSelected).filter((k) => inboundSelected[k])),
@@ -6330,9 +6409,15 @@ export default function AdminHub({
     }
 
     if (posReturnLedgerId) {
-      const ok = (returnDayLedger || []).some((e) => String(e.id) === String(posReturnLedgerId))
-      if (ok) openPosReturnDetailTab(posReturnLedgerId)
-      else window.alert('Không tìm thấy phiếu hoàn trả.')
+      // Không còn tải cả bảng pos_return_ledger để "biết trước" — thử tải đúng 1 dòng theo id
+      // (đã có sẵn trong state thì trả về ngay, không có mới đi query mạng).
+      void (async () => {
+        const ok = await ensurePosReturnLedgerEntryLoaded(posReturnLedgerId)
+        if (ok) openPosReturnDetailTab(posReturnLedgerId)
+        else window.alert('Không tìm thấy phiếu hoàn trả.')
+        hubDeepLinkConsumeRef.current?.()
+      })()
+      return
     }
     hubDeepLinkConsumeRef.current?.()
   }, [
@@ -6340,38 +6425,11 @@ export default function AdminHub({
     loading,
     orders,
     inboundOrders,
-    returnDayLedger,
+    ensurePosReturnLedgerEntryLoaded,
     requestOpenPosOrderDetail,
     requestOpenInboundOrderDetail,
     openPosReturnDetailTab,
     syncHubUrlToMainTab,
-  ])
-
-  const soloStockLedgerRows = useMemo(() => {
-    if (!isSoloProductTabId(activeTab)) return []
-    if (!soloActiveVariantId || !soloGoodsVariant) return []
-    if (!Array.isArray(returnDayLedger)) return []
-    try {
-      return buildVariantStockLedgerRows({
-        variantId: soloActiveVariantId,
-        catalogList,
-        currentStockQty: soloGoodsVariant.stockQty,
-        orders,
-        inboundOrders,
-        returnDayLedger,
-      })
-    } catch (e) {
-      console.warn('[AdminHub soloStockLedgerRows]', e)
-      return []
-    }
-  }, [
-    activeTab,
-    soloActiveVariantId,
-    soloGoodsVariant,
-    catalogList,
-    orders,
-    inboundOrders,
-    returnDayLedger,
   ])
 
   useEffect(() => {
@@ -6727,7 +6785,14 @@ export default function AdminHub({
             'Đơn và tồn kho đã cập nhật nhưng không ghi được phiếu trả hàng lên Supabase.'
         )
       }
-      await refreshPosReturnLedger()
+      // Vừa nhận lại đúng phiếu vừa ghi — thêm thẳng vào state, khỏi tải lại cả bảng
+      // pos_return_ledger (trước đây gọi refreshPosReturnLedger() ở đây, tốn egress không cần thiết).
+      if (ins.entry) {
+        const insertedId = String(ins.entry.id)
+        setReturnDayLedger((prev) =>
+          prev.some((e) => String(e?.id) === insertedId) ? prev : [...prev, ins.entry]
+        )
+      }
       setPosReturnModal(null)
       setPosReturnQtyDraft({})
       setPosDetailEditDrafts((prev) => {
@@ -6753,7 +6818,6 @@ export default function AdminHub({
     parentCatalogSupplied,
     onBulkPatchCatalogVariants,
     persistPosOrderAndReload,
-    refreshPosReturnLedger,
     revenueReadOnly,
     showHubCameraToast,
   ])
@@ -6986,17 +7050,19 @@ export default function AdminHub({
   }, [inboundFormEditOrderId, inboundOrders])
 
   const handleInboundExportAll = useCallback(() => {
-    if (inboundOrders.length === 0) {
+    // Khớp đúng phần đang hiển thị (theo cửa sổ ngày) — không lấy inboundOrders (có thể có thêm
+    // dữ liệu ngoài cửa sổ do "Đơn hàng → Đơn nhập kho" tải riêng theo khoảng ngày khác).
+    if (inboundOrdersInWindow.length === 0) {
       alert('Chưa có phiếu để xuất.')
       return
     }
     try {
-      exportInboundRowsToCsvFile(inboundOrders)
+      exportInboundRowsToCsvFile(inboundOrdersInWindow)
     } catch (err) {
       console.error(err)
       alert('Không xuất được file.')
     }
-  }, [inboundOrders])
+  }, [inboundOrdersInWindow])
 
   const handleInboundListImport = useCallback(
     (e) => {
@@ -8482,6 +8548,27 @@ export default function AdminHub({
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="ah-inbound-load-more-row">
+              {inboundHistoryFullyLoaded ? (
+                <span className="admin-hub-muted">Đã tải toàn bộ lịch sử phiếu nhập.</span>
+              ) : (
+                <>
+                  <span className="admin-hub-muted">
+                    Đang xem {inboundHistoryWindowDays} ngày gần nhất.
+                  </span>
+                  <button
+                    type="button"
+                    className="ah-goods-io-btn"
+                    onClick={() => void loadOlderInboundInvoices()}
+                    disabled={inboundHistoryLoadingMore}
+                  >
+                    {inboundHistoryLoadingMore
+                      ? 'Đang tải…'
+                      : `Tải thêm ${INBOUND_HISTORY_WINDOW_STEP_DAYS} ngày trước`}
+                  </button>
+                </>
+              )}
             </div>
           </section>
         )}
@@ -10256,6 +10343,10 @@ export default function AdminHub({
                   </table>
                 </div>
               </>
+            ) : returnLedgerRemoteLoading ? (
+              <div className="ah-inbound-detail-missing">
+                <p className="admin-hub-muted">Đang tải…</p>
+              </div>
             ) : (
               <div className="ah-inbound-detail-missing">
                 <p className="admin-hub-muted">Không tìm thấy giao dịch hoàn trả (có thể đã bị xóa).</p>

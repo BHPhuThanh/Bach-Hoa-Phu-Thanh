@@ -50,12 +50,10 @@ export async function updateProductDvtFieldsSequential(items) {
     }
 
     const upsertRow = { ma_hang, ...payload }
-    // eslint-disable-next-line no-console
-    console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', upsertRow)
+    // Không .select() — response không được dùng ở đâu (PostgREST trả return=minimal, đỡ egress).
     const { error } = await sb
       .from('products')
       .upsert(upsertRow, { onConflict: 'ma_hang' })
-      .select('ma_hang, ma_hh_lien_quan, dvt, quy_doi, gia_ban, gia_von')
 
     if (error) {
       console.error('LỖI UPDATE ĐVT:', error.message)

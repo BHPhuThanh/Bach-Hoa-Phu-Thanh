@@ -56,7 +56,8 @@ import {
 import { hubMainTabFromPathname, pathnameOpensHubStandaloneDashboard } from './adminHubPathSync.js'
 
 const HANG_HOA_PENDING_SS_KEY = 'csv-preview-pending-hang-hoa-open-v1'
-import { getAllOrders, getRecentOrders, saveOrderWithTimeout } from './ordersDb.js'
+import { getOrdersForReportRange, getRecentOrders, saveOrderWithTimeout } from './ordersDb.js'
+import { RANGE_LAST_30 } from './reportUtils.js'
 import {
   enqueueOfflineOrder,
   getPendingOfflineOrders,
@@ -3428,8 +3429,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
             }
             const cleanMaHang = cleanMaHangKey(eqMaHang)
             const payload = { ma_hang: rowNewCode, ...rowPayload }
-            // eslint-disable-next-line no-console
-            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', payload)
             const { data, error } = await sb
               .from('products')
               .update(payload)
@@ -3455,8 +3454,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
           if (oldCode && newCode && oldCode !== newCode) {
             const childPayload = { ma_hh_lien_quan: newCode }
-            // eslint-disable-next-line no-console
-            console.log('🚀 PAYLOAD GỬI LÊN SUPABASE:', childPayload)
             const { error: childUpdateErr } = await sb
               .from('products')
               .update(childPayload)
@@ -3592,7 +3589,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           const payloadPatchTonKho = Array.isArray(item.tonKhoOnlyVariants)
             ? item.tonKhoOnlyVariants
             : []
-          console.log('📦 PAYLOAD TỒN KHO OFFLINE GỬI LÊN:', payloadPatchTonKho)
           for (const row of payloadPatchTonKho) {
             const ma = String(row?.ma_hang ?? row?.code ?? '').trim()
             if (!ma) continue
@@ -4579,8 +4575,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [headerHighlightIndex, headerSuggestOpen, posHeaderSuggestTotalRows])
 
   useEffect(() => {
+    // Chỉ dùng để xếp hạng "bán chạy" cho gợi ý tìm kiếm POS — không cần TOÀN BỘ lịch sử đơn
+    // (bảng sales chỉ tăng, kéo hết mỗi lần bump salesRefresh rất tốn egress). 30 ngày gần nhất là đủ tín hiệu.
     let cancelled = false
-    getAllOrders()
+    getOrdersForReportRange(RANGE_LAST_30)
       .then((orders) => {
         if (!cancelled) setCodeSalesMap(aggregateCodeQtyFromOrders(orders))
       })
