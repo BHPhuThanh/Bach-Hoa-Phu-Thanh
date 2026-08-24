@@ -1602,6 +1602,9 @@ export default function AdminHub({
       discount: Number(order.discount) || 0,
       ...(order.customerName ? { customerName: order.customerName } : {}),
       ...(order.customerPhone ? { customerPhone: order.customerPhone } : {}),
+      // Đơn cũ (trước khi lưu cashGiven) không có field này — buildK80ReceiptHtml tự fallback
+      // về đúng tổng tiền (thối 0đ) như hành vi trước đây.
+      ...(Number(order.cashGiven) > 0 ? { cashGiven: Number(order.cashGiven) } : {}),
       ...(einv.qrLookup ? { eInvoice: { showQrLookup: true } } : {}),
     })
     printReceiptHtml(html)
@@ -9978,6 +9981,20 @@ export default function AdminHub({
                         </>
                       ) : null}
                     </p>
+                    {Number(posDetailNorm.cashGiven) > 0 ? (
+                      <p className="admin-hub-muted ah-inbound-detail-meta">
+                        Khách đưa:{' '}
+                        <strong>{Number(posDetailNorm.cashGiven).toLocaleString('vi-VN')} đ</strong>
+                        {' · '}Thối lại:{' '}
+                        <strong>
+                          {Math.max(
+                            0,
+                            Number(posDetailNorm.cashGiven) - Number(posDetailNorm.total)
+                          ).toLocaleString('vi-VN')}{' '}
+                          đ
+                        </strong>
+                      </p>
+                    ) : null}
                     <div className="flex items-center gap-4">
                       <span
                         className={`ah-inbound-status ah-inbound-status--${
@@ -10794,6 +10811,18 @@ export default function AdminHub({
             <p className="dash-detail-meta">
               {new Date(selected.createdAt).toLocaleString('vi-VN')}
             </p>
+            {Number(selected.cashGiven) > 0 && (
+              <p className="dash-detail-meta">
+                Khách đưa: <strong>{Number(selected.cashGiven).toLocaleString('vi-VN')} đ</strong>
+                {' · '}Thối lại:{' '}
+                <strong>
+                  {Math.max(0, Number(selected.cashGiven) - Number(selected.total)).toLocaleString(
+                    'vi-VN'
+                  )}{' '}
+                  đ
+                </strong>
+              </p>
+            )}
             <ul className="dash-detail-lines">
               {(selected.items || []).map((it, i) => {
                 const rev = orderLineRevenue(it)
