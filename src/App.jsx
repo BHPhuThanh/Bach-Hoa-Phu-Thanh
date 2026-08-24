@@ -5365,6 +5365,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       ...(custName ? { customerName: custName } : {}),
       ...(custPhone ? { customerPhone: custPhone } : {}),
       ...(noteStr ? { note: noteStr } : {}),
+      // Tiền khách đưa lúc thanh toán — lưu lại để xem/in lại đúng số tiền thối, không phải
+      // luôn suy ra bằng finalTotal (0 đồng thối) như trước đây.
+      ...(snapshotCashGivenNum > 0 ? { cashGiven: snapshotCashGivenNum } : {}),
       sellWholesaleMode: checkoutWholesale,
     }
     const cartForStock = snapshotCart.map((l) => ({
