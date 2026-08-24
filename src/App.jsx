@@ -2971,9 +2971,31 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [activeSellerId, location.pathname, location.search, navigate])
 
-  /** Sau ghi Supabase: đọc lại DB (revalidate) để UI/POS khớp server — tránh cache client. */
-  const applyServerCatalogAfterPersist = useCallback(async () => {
+  /**
+   * Sau ghi Supabase: đọc lại DB (revalidate) để UI/POS khớp server — tránh cache client.
+   * @param {{ skipRevalidate?: boolean, nextProducts?: Array }} [opts] — `skipRevalidate: true` +
+   * `nextProducts` khi caller ĐÃ tính sẵn state kế tiếp khớp đúng dữ liệu vừa ghi lên Supabase
+   * (optimistic update dùng chính patch vừa gửi đi) — bỏ qua việc tải lại toàn bộ bảng `products`
+   * (~280KB/lần với ~3900 dòng, gọi sau MỌI lần sửa 1 sản phẩm thì cộng dồn rất tốn egress) chỉ để
+   * lấy lại đúng dữ liệu đã có sẵn trong tay. PHẢI truyền `nextProducts` tường minh (không đọc
+   * `productsRef.current` ở đây) — `setProducts` có thể chưa commit (đặc biệt trong
+   * `startTransition`) nên đọc ref ngay sau đó dễ bị dữ liệu cũ.
+   * Chỉ dùng khi chắc chắn state cục bộ đã khớp — các luồng có thể lệch (lỗi giữa chừng, xóa/đổi
+   * cấu trúc phức tạp, ghi lại nguyên state hiện có) vẫn phải gọi không kèm opts để tải lại cho chắc.
+   */
+  const applyServerCatalogAfterPersist = useCallback(async (opts) => {
     if (!isSupabaseConfigured()) return null
+    if (opts?.skipRevalidate === true && Array.isArray(opts.nextProducts)) {
+      const next = opts.nextProducts
+      productsRef.current = next
+      setSalesRefresh((x) => x + 1)
+      bumpOrdersSync()
+      return {
+        products: next,
+        fileName: catalogFileNameRef.current,
+        csvRowCount: next.length,
+      }
+    }
     const fresh = await revalidateCatalogFromStore()
     if (!fresh?.products?.length) {
       console.warn('[App] revalidateCatalogFromStore: không có sản phẩm sau khi đồng bộ.')
@@ -3085,8 +3107,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           }
           if (r.catalogNext) {
             startTransition(() => setProducts(r.catalogNext))
+            // r.catalogNext đã phản ánh đúng kết quả xóa vừa ghi lên Supabase — khỏi tải lại.
+            await applyServerCatalogAfterPersist({
+              skipRevalidate: true,
+              nextProducts: r.catalogNext,
+            })
+          } else {
+            await applyServerCatalogAfterPersist()
           }
-          await applyServerCatalogAfterPersist()
         } catch (err) {
           showPosPersistErrorToast(describeCatalogPersistError(err))
           await applyServerCatalogAfterPersist()
@@ -3209,15 +3237,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           return { ok: false, error: err }
         }
         // Nạp ngay biến thể đã được DB trả về vào global `products` để POS thấy tức thì (không chờ F5).
-        startTransition(() => {
-          setProducts((prev) =>
-            applyProductDataToCatalog(prev, {
-              type: 'append_flat_variants',
-              variants: prepared,
-            })
-          )
+        const next = applyProductDataToCatalog(productsRef.current, {
+          type: 'append_flat_variants',
+          variants: prepared,
         })
-        const fresh = await applyServerCatalogAfterPersist()
+        startTransition(() => setProducts(next))
+        // `next` đã gồm đúng dữ liệu DB vừa trả về (prepared) — khỏi tải lại cả bảng products.
+        const fresh = await applyServerCatalogAfterPersist({
+          skipRevalidate: true,
+          nextProducts: next,
+        })
         if (!fresh?.products?.length) {
           const err = new Error(
             'Đã ghi Supabase nhưng không tải lại được danh mục — không cập nhật giao diện (tránh mã ảo). F5 và kiểm tra bảng products.'
@@ -3274,15 +3303,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return { ok: false, error: err }
       }
       // POS đọc từ `products` (global App state) — append ngay dữ liệu DB trả về để render tức thì.
-      startTransition(() => {
-        setProducts((prev) =>
-          applyProductDataToCatalog(prev, {
-            type: 'append_flat_variants',
-            variants: prepared,
-          })
-        )
+      const next = applyProductDataToCatalog(productsRef.current, {
+        type: 'append_flat_variants',
+        variants: prepared,
       })
-      const fresh = await applyServerCatalogAfterPersist()
+      startTransition(() => setProducts(next))
+      const fresh = await applyServerCatalogAfterPersist({
+        skipRevalidate: true,
+        nextProducts: next,
+      })
       if (!fresh?.products?.length) {
         const err = new Error(
           'Đã ghi Supabase nhưng không tải lại được danh mục — không cập nhật giao diện (tránh mã ảo).'
@@ -3462,7 +3491,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           }
 
           startTransition(() => setProducts(next))
-          await applyServerCatalogAfterPersist()
+          // Đổi mã hàng (rename) còn cập nhật ma_hh_lien_quan trên các dòng con liên kết ở server
+          // (childPayload phía trên) — local `next` không phản ánh việc đó, phải tải lại cho đúng.
+          // Chỉ sửa tại chỗ (giá/tồn/thương hiệu…, không đổi mã) mới an toàn để bỏ qua tải lại.
+          if (oldCode && newCode && oldCode !== newCode) {
+            await applyServerCatalogAfterPersist()
+          } else {
+            await applyServerCatalogAfterPersist({ skipRevalidate: true, nextProducts: next })
+          }
           if (inventoryLogMeta) {
             try {
               const rows = buildStockAdjustInventoryLogRows(
@@ -3789,7 +3825,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
               inboundOrderId: row.id,
             },
           })
-          await applyServerCatalogAfterPersist()
+          // `next` đã áp đúng patch tồn/giá vốn của mọi dòng trong phiếu — khỏi tải lại cả bảng.
+          await applyServerCatalogAfterPersist({ skipRevalidate: true, nextProducts: next })
           if (syncRes.returnedDisplayVariants?.length) {
             try {
               inboundCatalogUpsertReconcileRef.current?.({
