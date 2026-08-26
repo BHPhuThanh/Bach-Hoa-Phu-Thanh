@@ -13,7 +13,6 @@ import {
   persistCatalogSnapshotAndProducts,
   updateProductDisplayVariantsSequential,
   describeCatalogPersistError,
-  revalidateCatalogFromStore,
 } from './catalogRepository.js'
 import {
   appendCostAdjustVoucher,
@@ -343,12 +342,11 @@ export default function CostAdjustCreatePage() {
         /**
          * Đồng bộ `products`/`gia_von` thực hiện trong persistCatalogSnapshotAndProducts → saveProductsToSupabaseUpsertOnly,
          * tương đương: `await supabase.from('products').upsert(..., { onConflict: 'ma_hang' })` (PK của bảng trong dự án, không phải cột `id` UUID).
+         * `nextProducts` đã áp đúng giá vốn mới cho từng dòng vừa ghi (patch giống hệt payload gửi
+         * lên Supabase) — dùng thẳng thay vì revalidateCatalogFromStore() (tải lại cả bảng products
+         * chỉ để lấy lại đúng dữ liệu đã có sẵn).
          */
-        const fresh = await revalidateCatalogFromStore()
-        if (fresh?.products?.length) {
-          setProducts(fresh.products)
-          setFileName(fresh.fileName || fileName)
-        }
+        setProducts(nextProducts)
       } else {
         persistResult = await persistCatalogSnapshotAndProducts(nextProducts, fileName)
         if (!persistResult.ok) {
