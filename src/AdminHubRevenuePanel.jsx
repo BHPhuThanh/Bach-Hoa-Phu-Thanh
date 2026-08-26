@@ -222,7 +222,6 @@ export default function AdminHubRevenuePanel({
   rangePresets,
   rangeLabels,
   onExport,
-  onClearAll,
   onOpenPosReturnDetail,
   onOpenOrderInNewTab,
   onDeleteOrder,
@@ -284,8 +283,7 @@ export default function AdminHubRevenuePanel({
         {revenueReadOnly && (
           <div className="ah-doanh-thu-readonly-banner" role="status">
             Bạn đang xem với quyền <strong>Nhân viên</strong> — báo cáo vẫn hiển thị (0 đ nếu chưa có đơn). Xuất
-            Excel và xóa toàn bộ lịch sử chỉ dùng được khi đăng nhập <strong>Admin</strong> trên màn Bán hàng rồi
-            mở lại trang này.
+            Excel chỉ dùng được khi đăng nhập <strong>Admin</strong> trên màn Bán hàng rồi mở lại trang này.
           </div>
         )}
         <p className="admin-hub-muted ah-revenue-lead">
@@ -297,14 +295,6 @@ export default function AdminHubRevenuePanel({
         <div className="dash-toolbar ah-revenue-toolbar">
           <button type="button" className="btn-dash btn-dash-primary" onClick={onExport} disabled={revenueReadOnly}>
             Xuất báo cáo Excel
-          </button>
-          <button
-            type="button"
-            className="btn-dash btn-dash-danger"
-            onClick={onClearAll}
-            disabled={orders.length === 0 || revenueReadOnly}
-          >
-            Xóa toàn bộ lịch sử
           </button>
           {!loading && (orders.length > 0 || returnRowCount > 0) && (
             <span className="dash-toolbar-meta">

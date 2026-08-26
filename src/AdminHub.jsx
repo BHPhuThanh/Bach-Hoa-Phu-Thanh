@@ -32,7 +32,7 @@ import {
 } from './inboundFormUnitHelpers.js'
 import { getDoanhThuAbsUrl, getInboundCreateAbsUrl, readStoredSellerId } from './sellerRoleStorage.js'
 import { loadEInvoiceSettings } from './eInvoiceSettings.js'
-import { clearAllOrders, deleteOrderById, getOrderById, getOrderByInvoiceNo, getOrdersForReportRange, saveOrder } from './ordersDb.js'
+import { deleteOrderById, getOrderById, getOrderByInvoiceNo, getOrdersForReportRange, saveOrder } from './ordersDb.js'
 import { exportOrdersToExcel } from './exportOrdersExcel.js'
 import { exportGoodsRowsToKiotCsv } from './exportProductsExcel.js'
 import { mergeFlatCatalogRowsBySmartUomGroups, normalizeBarcodeValue } from './catalogCsv.js'
@@ -118,7 +118,6 @@ import {
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
-import { clearPosReturnDayLedger } from './posReturnDayLedger.js'
 import {
   deletePosReturnLedgerByOrderId,
   fetchPosReturnLedgerEntriesForReportRange,
@@ -1560,34 +1559,6 @@ export default function AdminHub({
     } catch (e) {
       console.error(e)
       alert('Không xuất được file Excel.')
-    }
-  }
-
-  const handleClearAll = async () => {
-    if (revenueReadOnly) {
-      alert('Chỉ Admin mới xóa được toàn bộ lịch sử đơn.')
-      return
-    }
-    if (
-      !window.confirm(
-        'Xóa toàn bộ lịch sử đơn hàng trên trình duyệt này? Thao tác không thể hoàn tác.'
-      )
-    ) {
-      return
-    }
-    try {
-      clearPosReturnDayLedger()
-      setReturnDayLedger([])
-      setOpenPosReturnDetailLedgerIds([])
-      await clearAllOrders()
-      setSelected(null)
-      setOrders([])
-      ordersLoadedFetchKeyRef.current = ''
-      const cacheKey = `${ovRange}|${ovFrom}|${ovTo}`
-      await fetchOrdersForReportWindow(ovRange, ovFrom, ovTo, { cacheKey, force: true })
-    } catch (e) {
-      console.error(e)
-      alert('Không xóa được dữ liệu.')
     }
   }
 
@@ -7932,7 +7903,6 @@ export default function AdminHub({
                 rangePresets={RANGE_PRESETS}
                 rangeLabels={RANGE_LABELS}
                 onExport={handleExport}
-                onClearAll={handleClearAll}
                 onOpenPosReturnDetail={openPosReturnDetailTab}
                 onOpenOrderInNewTab={openRevenueOrderInNewTab}
                 onDeleteOrder={handleDeleteOrder}
