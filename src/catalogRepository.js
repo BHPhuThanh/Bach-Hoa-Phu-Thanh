@@ -21,7 +21,12 @@ import {
   normalizeGroupRoot,
   parseConversionRatio,
 } from './productUnits.js'
-import { idbGetCatalogSnapshot, idbPutCatalogSnapshot } from './catalogIndexedDb.js'
+import {
+  idbGetCatalogSnapshot,
+  idbPutCatalogSnapshot,
+  idbGetCatalogSnapshotCache,
+  idbPutCatalogSnapshotCache,
+} from './catalogIndexedDb.js'
 import { CATALOG_PRODUCT_DB_COLUMNS, PRODUCT_PK_COLUMN } from './kiotProductSchema.js'
 import { withSupabaseRetry } from './supabaseRetry.js'
 import {
@@ -1806,6 +1811,42 @@ async function fetchCatalogSnapshotFromSupabase() {
 }
 
 /**
+ * Như {@link fetchCatalogSnapshotFromSupabase} nhưng kiểm tra `updated_at` (vài chục byte) trước —
+ * nếu khớp với bản đã lưu IndexedDB từ lần tải trước (mọi phiên, kể cả sau F5/mở tab mới) thì dùng
+ * thẳng bản cache, khỏi tải lại ~600KB JSON. Cấu trúc danh mục (nhóm/ĐVT/combo) chỉ đổi khi import
+ * CSV / xóa hàng loạt / sửa combo — hiếm hơn nhiều so với sửa giá/tồn thường ngày.
+ * @returns {Promise<{ products: Array, fileName: string, csvRowCount: number } | null>}
+ */
+async function fetchCatalogSnapshotFromSupabaseSmart() {
+  const sb = getSupabaseClient()
+  if (!sb) return null
+  let serverUpdatedAt = null
+  try {
+    const { data: meta, error: metaErr } = await sb
+      .from(CATALOG_SNAPSHOT_TABLE)
+      .select('updated_at')
+      .eq('id', CATALOG_SUPABASE_ROW_ID)
+      .maybeSingle()
+    if (metaErr) throw metaErr
+    serverUpdatedAt = meta?.updated_at ?? null
+    if (serverUpdatedAt) {
+      const cached = await idbGetCatalogSnapshotCache()
+      if (cached?.updatedAt === serverUpdatedAt && cached.snapshot?.products?.length) {
+        return cached.snapshot
+      }
+    }
+  } catch (e) {
+    console.warn('[catalogRepository] kiểm tra updated_at catalog_snapshots', e)
+    // Kiểm tra lỗi thì vẫn thử tải đầy đủ như bình thường bên dưới — không chặn boot.
+  }
+  const fresh = await fetchCatalogSnapshotFromSupabase()
+  if (fresh?.products?.length && serverUpdatedAt) {
+    idbPutCatalogSnapshotCache({ updatedAt: serverUpdatedAt, snapshot: fresh }).catch(() => {})
+  }
+  return fresh
+}
+
+/**
  * Có cột `created_at` trong schema PostgREST → sắp mới nhất trước; không → sắp theo khóa chính `ma_hang` giảm dần.
  */
 async function resolveSupabaseProductsOrderColumn(sb) {
@@ -2314,7 +2355,7 @@ async function fetchCatalogSnapshotFromPersistentStoreUncached(opts = {}) {
       fromSnap = preferCachedSnapshot ? readCachedSnapshotForRevalidate() : null
       if (!fromSnap) {
         try {
-          fromSnap = await fetchCatalogSnapshotFromSupabase()
+          fromSnap = await fetchCatalogSnapshotFromSupabaseSmart()
           cacheSnapshotForRevalidate(fromSnap)
         } catch (e) {
           console.warn('[catalogRepository] catalog_snapshots lỗi, fallback products', e)
