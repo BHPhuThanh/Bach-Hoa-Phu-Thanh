@@ -114,7 +114,6 @@ import {
   orderLineCostTotal,
   orderLineProfit,
   orderLineRevenue,
-  orderReportCostFromCatalog,
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
@@ -1800,19 +1799,22 @@ export default function AdminHub({
           0
         )
       )
-      // Tiền vốn PHẢI trừ đúng phần đã trả (costSub trên phiếu hoàn) — trước đây bỏ qua hoàn
-      // toàn đơn TH, khiến Tiền vốn không giảm khi trả hàng dù Doanh thu/Lợi nhuận đã trừ đúng,
-      // làm vỡ đẳng thức Doanh thu = Tiền vốn + Lợi nhuận (rõ nhất ở dòng bán giá 0đ vẫn có vốn:
-      // trả hàng xong Tiền vốn vẫn còn nguyên, chỉ xóa hẳn đơn mới đúng số).
+      // Tiền vốn PHẢI trừ đúng phần đã trả (costSub trên phiếu hoàn — giá vốn TẠI LÚC BÁN, cùng
+      // đơn giá đã dùng để tính Lợi nhuận của chính đơn đó) — trước đây bỏ qua hoàn toàn đơn TH,
+      // khiến Tiền vốn không giảm khi trả hàng dù Doanh thu/Lợi nhuận đã trừ đúng.
       const returnsCostReversal = Math.round(
         returnLedgerEntries.reduce((sum, e) => sum + Math.max(0, Number(e.costSub) || 0), 0)
       )
 
+      // Tiền vốn PHẢI cùng cơ sở tính với Lợi nhuận (giá vốn TẠI LÚC BÁN, lưu sẵn trên đơn) — trước
+      // đây dùng orderReportCostFromCatalog() tính lại theo giá vốn HIỆN TẠI trong danh mục, trong
+      // khi Lợi nhuận vẫn giữ nguyên giá vốn lúc bán. Hai bên lệch cơ sở ngay khi giá vốn 1 mặt
+      // hàng bất kỳ đổi sau lúc bán (vd. dùng "Điều chỉnh giá vốn") — càng nhiều đơn/thời gian trôi
+      // qua càng lệch nhiều, vỡ hẳn đẳng thức Doanh thu = Tiền vốn + Lợi nhuận (rõ nhất khi có trả
+      // hàng vì phần hoàn luôn tính theo giá vốn lúc bán, lộ rõ chỗ lệch). orderTotalCost() dùng
+      // đúng totalCost đã lưu trên đơn — cùng cơ sở với orderTotalProfit() bên dưới.
       const salesCost = Math.round(
-        salesOrders.reduce(
-          (sum, o) => Math.round(sum + Math.round(orderReportCostFromCatalog(o, catalogList))),
-          0
-        )
+        salesOrders.reduce((sum, o) => Math.round(sum + orderTotalCost(o)), 0)
       )
       const cost = Math.round(salesCost - returnsCostReversal)
       const salesProfit = Math.round(
