@@ -1733,6 +1733,21 @@ function formatPosSidebarClock(d) {
   return `${t} - ${date}`
 }
 
+/**
+ * Đồng hồ sidebar POS — tách riêng để tick mỗi giây chỉ re-render đúng component nhỏ này,
+ * không kéo theo re-render toàn bộ App (trước đây `nowTick` nằm ở state App, tick 1s/lần suốt
+ * cả ngày mở POS khiến App — component ~8000 dòng — chạy lại mỗi giây, đúng kiểu Chrome hay cảnh
+ * báo "trang này đang làm chậm trình duyệt" với tab để mở lâu).
+ */
+function PosSidebarClock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  return formatPosSidebarClock(now)
+}
+
 const POS_SELLER_ACCOUNTS = [
   { id: 'admin', label: 'Admin — Chủ cửa hàng' },
   { id: 'staff', label: 'Nhân viên bán hàng' },
@@ -2564,7 +2579,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [eInvoiceSettings, setEInvoiceSettings] = useState(() => loadEInvoiceSettings())
   const [eInvoiceModalOpen, setEInvoiceModalOpen] = useState(false)
   const [eInvoiceModalDraft, setEInvoiceModalDraft] = useState(() => loadEInvoiceSettings())
-  const [nowTick, setNowTick] = useState(() => new Date())
   const { sellerId: activeSellerId, setSellerId: setActiveSellerId } = useRoleStore()
   const [sellerMenuOpen, setSellerMenuOpen] = useState(false)
   const [adminPinModalOpen, setAdminPinModalOpen] = useState(false)
@@ -4264,11 +4278,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       return changed ? next : orders
     })
   }, [products, fileName])
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNowTick(new Date()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
 
   const requestSellerSwitch = useCallback(
     (accId) => {
@@ -6314,7 +6323,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
     const clockBlock = (
       <div className="pos-sidebar-clock pos-sidebar-clock--blue-rail" aria-live="polite" key="clock">
-        {formatPosSidebarClock(nowTick)}
+        <PosSidebarClock />
       </div>
     )
 
