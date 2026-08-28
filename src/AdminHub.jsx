@@ -128,7 +128,7 @@ import {
   POS_RETURN_LEDGER_BUMP_EVENT,
 } from './posReturnLedgerRepository.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
-import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
+import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import {
   AdminHubRestrictedFallback,
@@ -361,21 +361,22 @@ function formatPosOrderCustomerDisplay(order) {
   return name || phone || '—'
 }
 
-function renderInboundLineCodeLink(ln) {
+function renderInboundLineCodeLink(ln, onOpenQuickEdit, catalogList) {
   const code = ln.code || '—'
-  const ma_hang = String(ln.ma_hang ?? ln.code ?? '').trim()
-  const url = ln.variantId ? buildOpenHangHoaGoodsAbsUrl(ln.variantId, ma_hang) : ''
-  if (!url) return code
+  const vid = resolveVariantIdForInboundLine(ln, catalogList)
+  if (!vid || typeof onOpenQuickEdit !== 'function') return code
   return (
-    <a
-      className="ah-inbound-line-code-link"
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Mở chi tiết sản phẩm (tab mới)"
+    <button
+      type="button"
+      className="ah-inbound-line-code-link ah-inbound-product-name-btn--clickable"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpenQuickEdit(vid)
+      }}
+      title="Sửa nhanh sản phẩm"
     >
       {code}
-    </a>
+    </button>
   )
 }
 
@@ -9789,7 +9790,9 @@ export default function AdminHub({
                                 data-inbound-line-id={ln.lineId}
                               >
                                 <td className="ah-inbound-ln-stt ah-inbound-detail-line-stt">{idx + 1}</td>
-                                <td data-label="Mã hàng">{renderInboundLineCodeLink(ln)}</td>
+                                <td data-label="Mã hàng">
+                                  {renderInboundLineCodeLink(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                </td>
                                 <td className="ah-inbound-detail-line-name" data-label="Tên hàng">
                                   {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
                                 </td>
@@ -10102,19 +10105,20 @@ export default function AdminHub({
                               <td data-label="Mã hàng">{it.code || '—'}</td>
                               <td className="ah-pos-order-line-name" data-label="Tên hàng">
                                 {(() => {
-                                  const ma_hang = String(it.ma_hang ?? it.code ?? '').trim()
-                                  const url = buildOpenHangHoaGoodsAbsUrl(it.variantId, ma_hang)
-                                  if (!url) return it.name || '—'
+                                  const vid = resolveVariantIdForInboundLine(it, catalogList)
+                                  if (!vid) return it.name || '—'
                                   return (
-                                    <a
-                                      className="ah-inbound-detail-name-link"
-                                      href={url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      title="Mở sản phẩm trên tab Hàng hóa"
+                                    <button
+                                      type="button"
+                                      className="ah-inbound-detail-name-link ah-inbound-product-name-btn--clickable"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openProductDetailTab(vid)
+                                      }}
+                                      title="Xem chi tiết sản phẩm — bấm tab Đơn hàng để quay lại đơn này"
                                     >
                                       {it.name || '—'}
-                                    </a>
+                                    </button>
                                   )
                                 })()}
                               </td>
