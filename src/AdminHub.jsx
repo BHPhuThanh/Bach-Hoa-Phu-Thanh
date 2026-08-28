@@ -367,7 +367,7 @@ function renderInboundLineCodeLink(ln, onOpenQuickEdit, catalogList) {
   return (
     <button
       type="button"
-      className="ah-inbound-line-code-link ah-inbound-product-name-btn--clickable"
+      className="ah-inbound-product-name-btn ah-inbound-line-code-link ah-inbound-product-name-btn--clickable"
       onClick={(e) => {
         e.stopPropagation()
         onOpenQuickEdit(vid)
@@ -10112,7 +10112,7 @@ export default function AdminHub({
                                   return (
                                     <button
                                       type="button"
-                                      className="ah-inbound-detail-name-link ah-inbound-product-name-btn--clickable"
+                                      className="ah-inbound-product-name-btn ah-inbound-detail-name-link ah-inbound-product-name-btn--clickable"
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         openProductDetailTab(vid)
