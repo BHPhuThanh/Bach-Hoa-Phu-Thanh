@@ -607,13 +607,13 @@
   }
 }
 
-.ah-revenue-lead {
-  margin: 0;
-  max-width: 52rem;
-}
-
 .ah-revenue-toolbar {
   flex-wrap: wrap;
+}
+
+/* Gộp chung hàng với nút "Xuất báo cáo Excel" — bỏ margin-bottom riêng của .admin-hub-chip-row. */
+.ah-revenue-chips--inline {
+  margin-bottom: 0;
 }
 
 .ah-revenue-kpis {

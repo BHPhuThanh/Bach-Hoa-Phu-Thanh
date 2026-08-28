@@ -290,6 +290,18 @@ export default function AdminHubRevenuePanel({
           <button type="button" className="btn-dash btn-dash-primary" onClick={onExport} disabled={revenueReadOnly}>
             Xuất báo cáo Excel
           </button>
+          <div className="admin-hub-chip-row ah-revenue-chips ah-revenue-chips--inline" role="group" aria-label="Khoảng thời gian">
+            {rangePresets.map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`admin-hub-chip${ovRange === k ? ' is-active' : ''}`}
+                onClick={() => setOvRange(k)}
+              >
+                {rangeLabels[k]}
+              </button>
+            ))}
+          </div>
           {!loading && (orders.length > 0 || returnRowCount > 0) && (
             <span className="dash-toolbar-meta">
               Hiển thị: {rowsSafe.length} dòng
@@ -297,19 +309,6 @@ export default function AdminHubRevenuePanel({
               {orders.length > 0 ? ` · ${orders.length} đơn trong khoảng đang chọn` : ''}
             </span>
           )}
-        </div>
-
-        <div className="admin-hub-chip-row ah-revenue-chips" role="group" aria-label="Khoảng thời gian">
-          {rangePresets.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className={`admin-hub-chip${ovRange === k ? ' is-active' : ''}`}
-              onClick={() => setOvRange(k)}
-            >
-              {rangeLabels[k]}
-            </button>
-          ))}
         </div>
         {showCustomDateRange && (
           <div className="admin-hub-date-row ah-revenue-date-row">
