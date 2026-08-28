@@ -118,14 +118,27 @@ export async function getOrdersForReportRange(rangeKey, customFromYmd, customToY
   if (isSupabaseConfigured()) {
     const sb = getSupabaseClient()
     if (!sb) throw new Error('Supabase chưa khởi tạo')
-    const { data, error } = await sb
-      .from(SALES_TABLE)
-      .select('payload, created_at')
-      .gte('created_at', w.start.toISOString())
-      .lte('created_at', w.end.toISOString())
-      .order('created_at', { ascending: false })
-    if (error) throw error
-    const list = (data || [])
+    // PostgREST giới hạn mặc định 1000 dòng/request nếu không .range() — khoảng ngày rộng (Tháng
+    // này…) trên cửa hàng bán nhiều dễ vượt 1000 đơn, âm thầm THIẾU đơn (báo cáo sai) mà không có
+    // lỗi gì báo ra. Phân trang lấy hết, không dừng sớm.
+    const pageSize = 1000
+    let from = 0
+    const rows = []
+    for (;;) {
+      const { data, error } = await sb
+        .from(SALES_TABLE)
+        .select('payload, created_at')
+        .gte('created_at', w.start.toISOString())
+        .lte('created_at', w.end.toISOString())
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      const chunk = data || []
+      rows.push(...chunk)
+      if (chunk.length < pageSize) break
+      from += pageSize
+    }
+    const list = rows
       .map((row) => {
         const p = row.payload
         return p && typeof p === 'object' ? p : null

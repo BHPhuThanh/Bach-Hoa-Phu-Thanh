@@ -114,7 +114,6 @@ import {
   orderLineCostTotal,
   orderLineProfit,
   orderLineRevenue,
-  orderReportCostFromCatalog,
   orderTotalCost,
   orderTotalProfit,
 } from './reportUtils.js'
@@ -128,7 +127,7 @@ import {
   POS_RETURN_LEDGER_BUMP_EVENT,
 } from './posReturnLedgerRepository.js'
 import { appendInboundCostChangeNotifications } from './appNotificationsStorage.js'
-import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl, buildOpenHangHoaGoodsAbsUrl } from './adminHubDeepLink.js'
+import { buildAdminHubOrderDetailHref, buildAdminOrdersDetailAbsUrl } from './adminHubDeepLink.js'
 import { hubMainTabFromPathname, pathForMainNavTab } from './adminHubPathSync.js'
 import {
   AdminHubRestrictedFallback,
@@ -361,21 +360,22 @@ function formatPosOrderCustomerDisplay(order) {
   return name || phone || '—'
 }
 
-function renderInboundLineCodeLink(ln) {
+function renderInboundLineCodeLink(ln, onOpenQuickEdit, catalogList) {
   const code = ln.code || '—'
-  const ma_hang = String(ln.ma_hang ?? ln.code ?? '').trim()
-  const url = ln.variantId ? buildOpenHangHoaGoodsAbsUrl(ln.variantId, ma_hang) : ''
-  if (!url) return code
+  const vid = resolveVariantIdForInboundLine(ln, catalogList)
+  if (!vid || typeof onOpenQuickEdit !== 'function') return code
   return (
-    <a
-      className="ah-inbound-line-code-link"
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Mở chi tiết sản phẩm (tab mới)"
+    <button
+      type="button"
+      className="ah-inbound-product-name-btn ah-inbound-line-code-link ah-inbound-product-name-btn--clickable"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpenQuickEdit(vid)
+      }}
+      title="Sửa nhanh sản phẩm"
     >
       {code}
-    </a>
+    </button>
   )
 }
 
@@ -1799,19 +1799,22 @@ export default function AdminHub({
           0
         )
       )
-      // Tiền vốn PHẢI trừ đúng phần đã trả (costSub trên phiếu hoàn) — trước đây bỏ qua hoàn
-      // toàn đơn TH, khiến Tiền vốn không giảm khi trả hàng dù Doanh thu/Lợi nhuận đã trừ đúng,
-      // làm vỡ đẳng thức Doanh thu = Tiền vốn + Lợi nhuận (rõ nhất ở dòng bán giá 0đ vẫn có vốn:
-      // trả hàng xong Tiền vốn vẫn còn nguyên, chỉ xóa hẳn đơn mới đúng số).
+      // Tiền vốn PHẢI trừ đúng phần đã trả (costSub trên phiếu hoàn — giá vốn TẠI LÚC BÁN, cùng
+      // đơn giá đã dùng để tính Lợi nhuận của chính đơn đó) — trước đây bỏ qua hoàn toàn đơn TH,
+      // khiến Tiền vốn không giảm khi trả hàng dù Doanh thu/Lợi nhuận đã trừ đúng.
       const returnsCostReversal = Math.round(
         returnLedgerEntries.reduce((sum, e) => sum + Math.max(0, Number(e.costSub) || 0), 0)
       )
 
+      // Tiền vốn PHẢI cùng cơ sở tính với Lợi nhuận (giá vốn TẠI LÚC BÁN, lưu sẵn trên đơn) — trước
+      // đây dùng orderReportCostFromCatalog() tính lại theo giá vốn HIỆN TẠI trong danh mục, trong
+      // khi Lợi nhuận vẫn giữ nguyên giá vốn lúc bán. Hai bên lệch cơ sở ngay khi giá vốn 1 mặt
+      // hàng bất kỳ đổi sau lúc bán (vd. dùng "Điều chỉnh giá vốn") — càng nhiều đơn/thời gian trôi
+      // qua càng lệch nhiều, vỡ hẳn đẳng thức Doanh thu = Tiền vốn + Lợi nhuận (rõ nhất khi có trả
+      // hàng vì phần hoàn luôn tính theo giá vốn lúc bán, lộ rõ chỗ lệch). orderTotalCost() dùng
+      // đúng totalCost đã lưu trên đơn — cùng cơ sở với orderTotalProfit() bên dưới.
       const salesCost = Math.round(
-        salesOrders.reduce(
-          (sum, o) => Math.round(sum + Math.round(orderReportCostFromCatalog(o, catalogList))),
-          0
-        )
+        salesOrders.reduce((sum, o) => Math.round(sum + orderTotalCost(o)), 0)
       )
       const cost = Math.round(salesCost - returnsCostReversal)
       const salesProfit = Math.round(
@@ -9789,7 +9792,9 @@ export default function AdminHub({
                                 data-inbound-line-id={ln.lineId}
                               >
                                 <td className="ah-inbound-ln-stt ah-inbound-detail-line-stt">{idx + 1}</td>
-                                <td data-label="Mã hàng">{renderInboundLineCodeLink(ln)}</td>
+                                <td data-label="Mã hàng">
+                                  {renderInboundLineCodeLink(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                </td>
                                 <td className="ah-inbound-detail-line-name" data-label="Tên hàng">
                                   {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
                                 </td>
@@ -10102,19 +10107,20 @@ export default function AdminHub({
                               <td data-label="Mã hàng">{it.code || '—'}</td>
                               <td className="ah-pos-order-line-name" data-label="Tên hàng">
                                 {(() => {
-                                  const ma_hang = String(it.ma_hang ?? it.code ?? '').trim()
-                                  const url = buildOpenHangHoaGoodsAbsUrl(it.variantId, ma_hang)
-                                  if (!url) return it.name || '—'
+                                  const vid = resolveVariantIdForInboundLine(it, catalogList)
+                                  if (!vid) return it.name || '—'
                                   return (
-                                    <a
-                                      className="ah-inbound-detail-name-link"
-                                      href={url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      title="Mở sản phẩm trên tab Hàng hóa"
+                                    <button
+                                      type="button"
+                                      className="ah-inbound-product-name-btn ah-inbound-detail-name-link ah-inbound-product-name-btn--clickable"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        openProductDetailTab(vid)
+                                      }}
+                                      title="Xem chi tiết sản phẩm — bấm tab Đơn hàng để quay lại đơn này"
                                     >
                                       {it.name || '—'}
-                                    </a>
+                                    </button>
                                   )
                                 })()}
                               </td>

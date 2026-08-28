@@ -286,16 +286,22 @@ export default function AdminHubRevenuePanel({
             Excel chỉ dùng được khi đăng nhập <strong>Admin</strong> trên màn Bán hàng rồi mở lại trang này.
           </div>
         )}
-        <p className="admin-hub-muted ah-revenue-lead">
-          Báo cáo theo khoảng thời gian — đơn lưu cục bộ. <strong>Tiền vốn</strong> trên mỗi dòng bán = cột{' '}
-          <strong>Giá vốn</strong> của mặt hàng trong danh mục (file KiotViet / CSV import) tại thời điểm thanh
-          toán, nhân số lượng — đối chiếu được với file danh mục đã nạp. Các dòng mã <strong>TH-…</strong> là hoàn
-          trả trong khoảng thời gian (đã trừ vào tổng phía trên).
-        </p>
         <div className="dash-toolbar ah-revenue-toolbar">
           <button type="button" className="btn-dash btn-dash-primary" onClick={onExport} disabled={revenueReadOnly}>
             Xuất báo cáo Excel
           </button>
+          <div className="admin-hub-chip-row ah-revenue-chips ah-revenue-chips--inline" role="group" aria-label="Khoảng thời gian">
+            {rangePresets.map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={`admin-hub-chip${ovRange === k ? ' is-active' : ''}`}
+                onClick={() => setOvRange(k)}
+              >
+                {rangeLabels[k]}
+              </button>
+            ))}
+          </div>
           {!loading && (orders.length > 0 || returnRowCount > 0) && (
             <span className="dash-toolbar-meta">
               Hiển thị: {rowsSafe.length} dòng
@@ -303,19 +309,6 @@ export default function AdminHubRevenuePanel({
               {orders.length > 0 ? ` · ${orders.length} đơn trong khoảng đang chọn` : ''}
             </span>
           )}
-        </div>
-
-        <div className="admin-hub-chip-row ah-revenue-chips" role="group" aria-label="Khoảng thời gian">
-          {rangePresets.map((k) => (
-            <button
-              key={k}
-              type="button"
-              className={`admin-hub-chip${ovRange === k ? ' is-active' : ''}`}
-              onClick={() => setOvRange(k)}
-            >
-              {rangeLabels[k]}
-            </button>
-          ))}
         </div>
         {showCustomDateRange && (
           <div className="admin-hub-date-row ah-revenue-date-row">
@@ -345,21 +338,16 @@ export default function AdminHubRevenuePanel({
         <article className="ah-revenue-card ah-revenue-card--revenue">
           <span className="ah-revenue-card__label">Doanh thu</span>
           <strong className="ah-revenue-card__value">{formatVndSafe(revenue)}</strong>
-          <span className="ah-revenue-card__hint">Đơn bán trong khoảng trừ hoàn trả ghi nhận cùng khoảng</span>
         </article>
         <article className="ah-revenue-card ah-revenue-card--cost">
           <span className="ah-revenue-card__label">Tiền vốn</span>
           <strong className="ah-revenue-card__value">{formatVndSafe(cost)}</strong>
-          <span className="ah-revenue-card__hint">
-            Tổng (Giá vốn KiotViet/CSV × SL) theo từng dòng đơn lúc thanh toán, đã trừ vốn hoàn trả
-          </span>
         </article>
         <article className="ah-revenue-card ah-revenue-card--profit">
           <span className="ah-revenue-card__label">Lợi nhuận</span>
           <strong className="ah-revenue-card__value ah-revenue-card__value--profit">
             {formatVndSafe(profit)}
           </strong>
-          <span className="ah-revenue-card__hint">Doanh thu − Tiền vốn (đã gồm tác động hoàn trả)</span>
         </article>
       </section>
       {loading && (
