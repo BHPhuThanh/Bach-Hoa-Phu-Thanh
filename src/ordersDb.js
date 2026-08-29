@@ -162,7 +162,11 @@ export async function getOrderById(orderIdRaw) {
   if (isSupabaseConfigured()) {
     const sb = getSupabaseClient()
     if (!sb) throw new Error('Supabase chưa khởi tạo')
-    const { data, error } = await sb.from(SALES_TABLE).select('*').eq('id', orderId).maybeSingle()
+    const { data, error } = await sb
+      .from(SALES_TABLE)
+      .select('payload')
+      .eq('id', orderId)
+      .maybeSingle()
     if (error) throw error
     const p = data?.payload
     return p && typeof p === 'object' ? p : null

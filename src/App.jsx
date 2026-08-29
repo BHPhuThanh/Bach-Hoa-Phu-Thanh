@@ -4620,21 +4620,46 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       ?.scrollIntoView({ block: 'nearest' })
   }, [headerHighlightIndex, headerSuggestOpen, posHeaderSuggestTotalRows])
 
+  /**
+   * Chỉ dùng để xếp hạng "bán chạy" cho gợi ý tìm kiếm POS — không cần realtime tuyệt đối, 30 ngày
+   * gần nhất là đủ tín hiệu. TRƯỚC ĐÂY effect này chạy lại mỗi lần bump `salesRefresh` (tức mỗi lần
+   * thanh toán 1 đơn HOẶC sửa/thêm/xóa 1 sản phẩm HOẶC đồng bộ hàng chờ offline) — kéo lại TOÀN BỘ
+   * payload đơn 30 ngày mỗi lần, ở cửa hàng bán nhiều là hàng nghìn đơn/lần, lặp lại hàng trăm
+   * lần/ngày → chính là nguyên nhân egress tăng vọt 170MB → 600MB+/ngày (28/8/2026). Nay: CHỈ tải 1
+   * lần lúc mở app/tab (KHÔNG lặp lại theo interval — chính vòng lặp mới là thứ tốn egress). Đơn
+   * vừa bán ở tab này thì cộng dồn thẳng vào state cục bộ (xem `bumpCodeSalesMapFromItems`), không
+   * hỏi lại server. Đánh đổi: bán ở tab/máy KHÁC trong cùng ca sẽ không phản ánh ngay ở tab này —
+   * chấp nhận được vì đây chỉ là tín hiệu sắp xếp gợi ý tìm kiếm, không phải số liệu tồn kho/tiền.
+   */
   useEffect(() => {
-    // Chỉ dùng để xếp hạng "bán chạy" cho gợi ý tìm kiếm POS — không cần TOÀN BỘ lịch sử đơn
-    // (bảng sales chỉ tăng, kéo hết mỗi lần bump salesRefresh rất tốn egress). 30 ngày gần nhất là đủ tín hiệu.
     let cancelled = false
     getOrdersForReportRange(RANGE_LAST_30)
       .then((orders) => {
         if (!cancelled) setCodeSalesMap(aggregateCodeQtyFromOrders(orders))
       })
       .catch(() => {
-        if (!cancelled) setCodeSalesMap({})
+        /* giữ nguyên map hiện có (rỗng lúc đầu) nếu tải lỗi */
       })
     return () => {
       cancelled = true
     }
-  }, [salesRefresh])
+  }, [])
+
+  /** Cộng dồn số lượng đơn VỪA bán ở tab này vào bảng xếp hạng "bán chạy" — khỏi hỏi lại server. */
+  const bumpCodeSalesMapFromItems = useCallback((items) => {
+    if (!Array.isArray(items) || items.length === 0) return
+    setCodeSalesMap((prev) => {
+      const next = { ...prev }
+      for (const it of items) {
+        const c = String(it?.code ?? '').trim()
+        if (!c) continue
+        const q = Number(it?.qty) || 0
+        if (!q) continue
+        next[c] = (next[c] || 0) + q
+      }
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     if (activeView !== 'sell') {
@@ -5507,6 +5532,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       })
       setSalesRefresh((k) => k + 1)
       bumpOrdersSync()
+      // Cộng thẳng đơn vừa bán vào bảng "bán chạy" cục bộ — khỏi phải hỏi lại server (xem effect
+      // tải codeSalesMap phía trên để biết lý do đổi cách này).
+      bumpCodeSalesMapFromItems(order.items)
 
       // Việc nặng (setProducts catalog đầy đủ) chạy SAU khi hộp thoại in đã đóng hẳn — tránh
       // render nặng đè lên đúng lúc trình duyệt đang mở hộp thoại in (nguyên nhân gây kẹt/lỗi in
