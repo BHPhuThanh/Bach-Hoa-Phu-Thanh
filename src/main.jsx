@@ -10,6 +10,7 @@ import { clearCatalogBrowserCacheOnBoot } from './catalogCachePurgeBoot.js'
 import { CatalogProvider } from './CatalogProvider.jsx'
 import { NotificationsProvider } from './NotificationsProvider.jsx'
 import { registerPwaServiceWorker } from './pwaRegister.js'
+import { startEgressMonitorFlushing } from './egressMonitor.js'
 
 /** Lớp 1: chặn Chrome Help — chỉ preventDefault, không stopPropagation (React vẫn nhận F1). */
 if (typeof window !== 'undefined') {
@@ -33,6 +34,7 @@ function appRouterBasename() {
 async function boot() {
   await clearCatalogBrowserCacheOnBoot()
   registerPwaServiceWorker()
+  startEgressMonitorFlushing()
   const el = document.getElementById('root')
   if (!el) return
   createRoot(el).render(

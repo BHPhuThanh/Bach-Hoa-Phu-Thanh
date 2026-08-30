@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { createEgressTrackingFetch } from './egressMonitor.js'
 
 // Lấy trực tiếp từ Vite, không qua trung gian
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -27,6 +28,9 @@ export const supabase = supabaseReady
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
+      // Đo egress ngay trong trình duyệt (không qua báo cáo Supabase, vốn chỉ theo ngày) — xem
+      // egressMonitor.js. Không đổi hành vi fetch, chỉ đo dung lượng response rồi ghi log định kỳ.
+      global: { fetch: createEgressTrackingFetch() },
     })
   : null
 

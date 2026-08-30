@@ -1,5 +1,6 @@
 import { buildAdminOrdersDetailAbsUrl } from './adminHubDeepLink.js'
 import { orderTotalProfit } from './reportUtils.js'
+import EgressStatsPanel from './EgressStatsPanel.jsx'
 
 function safeMoney(n) {
   const x = Number(n)
@@ -350,6 +351,7 @@ export default function AdminHubRevenuePanel({
           </strong>
         </article>
       </section>
+      {!revenueReadOnly && <EgressStatsPanel />}
       {loading && (
         <p className="dash-muted ah-revenue-loading" aria-live="polite">
           Đang tải dữ liệu đơn… Các ô trên hiển thị 0 đ cho đến khi tải xong.

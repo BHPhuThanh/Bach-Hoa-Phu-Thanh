@@ -10564,3 +10564,92 @@ li.ah-inbound-suggest-empty {
     background-color: #0a0c0f;
   }
 }
+
+/* Panel "Egress đo trong app" — xem EgressStatsPanel.jsx / egressMonitor.js */
+.ah-egress-panel {
+  margin-top: 0.75rem;
+  border: 1px solid #2d3542;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #161b22 0%, #12161c 100%);
+  overflow: hidden;
+}
+
+.ah-egress-panel__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.9rem;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ah-egress-panel__toggle:hover {
+  color: #cbd5e1;
+}
+
+.ah-egress-panel__caret {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  color: #64748b;
+}
+
+.ah-egress-panel__caret.is-open {
+  transform: rotate(90deg);
+}
+
+.ah-egress-panel__body {
+  padding: 0 0.9rem 0.9rem;
+}
+
+.ah-egress-panel__hint {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin: 0 0 0.65rem;
+  line-height: 1.4;
+}
+
+.ah-egress-panel__error {
+  font-size: 0.8rem;
+  color: #fca5a5;
+}
+
+.ah-egress-panel__error code {
+  background: rgba(148, 163, 184, 0.15);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+.ah-egress-panel__table {
+  width: 100%;
+}
+
+.ah-egress-panel__by-table {
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+
+.ah-egress-panel__refresh {
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #2d3542;
+  background: #1a2029;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.ah-egress-panel__refresh:hover {
+  background: #232a35;
+}
+
+.ah-egress-panel__refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

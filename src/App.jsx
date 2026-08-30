@@ -11,6 +11,8 @@ import { createPortal } from 'react-dom'
 import debounce from 'lodash/debounce'
 import { useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
+import AppUpdateBanner from './AppUpdateBanner.jsx'
+import { useAppUpdateAvailable } from './appUpdateCheck.js'
 import {
   BHPHUTHANH_SEMICOLON_CSV_DVT_INDEX,
   BHPHUTHANH_SEMICOLON_CSV_QUY_DOI_INDEX,
@@ -2501,6 +2503,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   }, [])
   /** Trạng thái mạng + số đơn offline đang chờ đồng bộ (cho icon đám mây). */
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const appUpdateAvailable = useAppUpdateAvailable()
   const [offlinePendingCount, setOfflinePendingCount] = useState(0)
   const offlineSyncingRef = useRef(false)
   const posOfflineToastClearRef = useRef(null)
@@ -6395,6 +6398,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   return (
     <div className={`app app--dark${isPosMode ? ' app--pos' : ''}`}>
+      <AppUpdateBanner
+        visible={appUpdateAvailable}
+        onReload={() => window.location.reload()}
+      />
       {toastMessage && (
         <div className="fixed top-10 left-1/2 -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded shadow-lg z-[99999] transition-all">
           {toastMessage}
