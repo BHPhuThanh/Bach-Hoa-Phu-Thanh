@@ -2080,8 +2080,11 @@
 }
 
 .pos-header-scanner {
+  /* Ẩn hẳn icon "(Alt+F11)" trên header PC theo yêu cầu — mobile đã ẩn từ trước (media 768px bên
+     dưới ẩn cả cụm .pos-header-barcode-scanner-group). Phím tắt Alt+F11 vẫn còn trong code, chỉ
+     không còn nút bấm/icon để mở popover bằng chuột nữa. */
+  display: none !important;
   position: relative;
-  display: flex;
   align-items: center;
   margin-left: 0.35rem;
   padding-left: 0.35rem;
