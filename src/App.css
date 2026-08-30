@@ -6217,3 +6217,68 @@
     box-sizing: border-box;
   }
 }
+
+/* Banner "có bản cập nhật mới" — xem appUpdateCheck.js. Góc dưới trái (khác phía .pos-scan-toast ở
+   dưới phải) để không đè lên toast quét mã / offline; safe-area cho notch & thanh cử chỉ iOS. */
+.app-update-banner {
+  position: fixed;
+  left: 1rem;
+  right: auto;
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  z-index: 200020;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: #ecfdf5;
+  background: linear-gradient(145deg, #064e3b, #022c22);
+  border: 1px solid rgba(16, 185, 129, 0.55);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.app-update-banner-text {
+  flex: 1 1 12rem;
+}
+
+.app-update-banner-btn {
+  flex: 0 0 auto;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  border: none;
+  background: #10b981;
+  color: #022c22;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app-update-banner-btn:hover {
+  background: #34d399;
+}
+
+.app-update-banner-btn:active {
+  transform: translateY(1px);
+}
+
+@media (max-width: 480px) {
+  .app-update-banner {
+    left: 0.6rem;
+    bottom: max(0.6rem, env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 1.2rem);
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .app-update-banner-btn {
+    width: 100%;
+  }
+}
