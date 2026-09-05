@@ -3382,7 +3382,29 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         !!target &&
         Number.isFinite(stockNum) &&
         (!Number.isFinite(targetStockNum) || Math.abs(targetStockNum - stockNum) > 0.0005)
-      const shouldSyncSiblingStock = stockMeaningfullyChanged
+      let shouldSyncSiblingStock = stockMeaningfullyChanged
+
+      // Lưới an toàn: 3 lần liền (tháng 8-9/2026) một bug KHÁC nhau mỗi lần (nhầm đơn vị, nhân đôi
+      // quy đổi, nháp cũ không nạp lại...) đều dẫn tới đúng 1 hậu quả — cascade này âm thầm ghi
+      // tồn kho sai lệch RẤT LỚN (chục → chục nghìn/triệu) cho CẢ NHÓM đơn vị tính, kể cả những dòng
+      // người dùng còn chẳng nhìn thấy trên form. Dù đã vá từng nguyên nhân cụ thể, không dám chắc
+      // đã hết — chặn thêm 1 lớp ở ĐÂY, chỗ DUY NHẤT thực sự ghi cascade xuống server, để lần sau
+      // (nếu có) chỉ dừng lại hỏi thay vì âm thầm phá dữ liệu thật.
+      if (shouldSyncSiblingStock) {
+        const oldAbs = Number.isFinite(targetStockNum) ? Math.abs(targetStockNum) : 0
+        const newAbs = Math.abs(stockNum)
+        const suspiciousJump = newAbs >= 50 && (oldAbs < 1 || newAbs / Math.max(oldAbs, 1) >= 15)
+        if (suspiciousJump && typeof window !== 'undefined') {
+          const ok = window.confirm(
+            `Tồn kho "${target.name || target.code || ''}" sắp đổi từ ${oldAbs.toLocaleString('vi-VN')} thành ${newAbs.toLocaleString('vi-VN')} — chênh lệch rất lớn bất thường, có thể do lỗi đồng bộ chứ không phải số bạn thật sự muốn nhập.\n\nBấm OK nếu ĐÚNG bạn muốn đổi tồn kho thành số này (vd. vừa kiểm kê lại). Bấm Hủy để KHÔNG đổi tồn kho — các thay đổi khác (tên, giá...) vẫn được lưu bình thường, bạn sửa lại đúng số tồn rồi lưu lại sau.`
+          )
+          if (!ok) {
+            shouldSyncSiblingStock = false
+            patch = { ...patch }
+            delete patch.stockQty
+          }
+        }
+      }
 
       /** @type {string[]} */
       let affectedIdsForLog = []
