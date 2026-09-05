@@ -165,7 +165,11 @@ import {
   salableComboPackCount,
   variantQuyDoiNumber,
 } from './comboCatalog.js'
-import { displayTonKhoNumber, formatRoundedStockQtyVi } from './displayStockQty.js'
+import {
+  baseTonKhoFromDisplayNumber,
+  displayTonKhoNumber,
+  formatRoundedStockQtyVi,
+} from './displayStockQty.js'
 
 /**
  * Tách một dòng CSV/delimited, hỗ trợ dấu ngoặc kép và ký tự phân cách tùy chọn (, hoặc ;).
@@ -3360,13 +3364,32 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       let next = prev
-      const stockRaw = patch?.stockQty
+      // `patch.stockQty` tới từ form "Sửa nhanh sản phẩm" LÀ SỐ ĐANG HIỂN THỊ (đã chia quy đổi —
+      // xem buildGoodsDetailDraft/displayTonKhoNumber ở AdminHub.jsx), KHÔNG PHẢI ton_kho gốc (đơn
+      // vị cơ bản) như target.stockQty/cột ton_kho trên Supabase. Quy về base UNIT NGAY TỪ ĐẦU,
+      // dùng thống nhất cho mọi nhánh phía dưới — trước đây patch giữ nguyên số hiển thị nên: (1)
+      // so sánh "có đổi tồn không" so nhầm 2 đơn vị khác nhau, với sản phẩm nhiều ĐVT (thùng/lóc…)
+      // gần như LUÔN bị coi là "tồn kho đổi" dù người dùng chỉ sửa giá, kích hoạt nhầm việc đồng bộ
+      // lại tồn kho CẢ NHÓM bằng số sai (đúng hiện tượng "sửa giá xong tồn kho tự cộng dồn sai"
+      // gặp phải); (2) ở nhánh KHÔNG kích hoạt đồng bộ nhóm, patch.stockQty (số hiển thị, nhỏ hơn
+      // số gốc) bị ghi thẳng làm ton_kho gốc — âm thầm ghi sai tồn kho ngay cả khi coi là "không
+      // đổi gì".
+      if (stockTouched && target) {
+        const converted = baseTonKhoFromDisplayNumber(patch.stockQty, target)
+        if (converted != null) patch = { ...patch, stockQty: converted }
+      }
+      const stockRaw = patch?.stockQty // đã là base-unit (nếu stockTouched), khớp target.stockQty
       const stockNum = Number(stockRaw)
+      const targetStockNum = Number(target?.stockQty)
+      // So bằng dung sai nhỏ (không dùng stockQtyMeaningfullyChanged/!== thẳng) — quy đổi qua lại
+      // display/base đều làm tròn .toFixed(4), quy đổi lẻ (không phải số nguyên) dễ lệch vài phần
+      // vạn do làm tròn dù người dùng không đổi gì; so bằng == tuyệt đối vẫn dính false-positive.
       const stockMeaningfullyChanged =
         stockTouched &&
         !!target &&
-        stockQtyMeaningfullyChanged(target?.stockQty, stockRaw)
-      const shouldSyncSiblingStock = stockMeaningfullyChanged && Number.isFinite(stockNum)
+        Number.isFinite(stockNum) &&
+        (!Number.isFinite(targetStockNum) || Math.abs(targetStockNum - stockNum) > 0.0005)
+      const shouldSyncSiblingStock = stockMeaningfullyChanged
 
       /** @type {string[]} */
       let affectedIdsForLog = []
@@ -3376,8 +3399,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           String(target.code ?? ''),
           String(target.linkedMasterCode ?? '')
         )
-        const convTarget = Math.max(1e-9, Number(effectiveConversionForVariant(target)) || 1)
-        const baseStock = stockNum * convTarget
+        const baseStock = stockNum
         const group = flat.filter(
           (v) =>
             normalizeGroupRoot(String(v?.code ?? ''), String(v?.linkedMasterCode ?? '')) === root
@@ -3399,6 +3421,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         affectedIdsForLog = [...patchById.keys()].map((id) => String(id))
       } else {
+        // patch.stockQty (nếu có) đã quy về base-unit ở trên — ghi thẳng an toàn, không còn lẫn
+        // đơn vị hiển thị vào ton_kho gốc.
         next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
         affectedIdsForLog = [String(variantId)]
       }
