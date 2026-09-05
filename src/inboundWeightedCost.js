@@ -179,7 +179,8 @@ function parseGroupServerSnapshot(primaryMember, members, serverByMaHang) {
     if (!srv) continue
     const { ton, giaVon } = parseServerTonAndCost(srv)
     const conv = conversionToBaseForVariant(member, srv)
-    const qtyAtThisUnit = Math.max(0, Number(ton) || 0)
+    // Không clamp tồn về 0 ở đây nữa — xem lý do trong parseServerTonAndCost.
+    const qtyAtThisUnit = Number(ton) || 0
     const costAtThisUnit = Math.max(0, Number(giaVon) || 0)
     return {
       hasServer: true,
@@ -277,7 +278,10 @@ function aggregateInboundReturnByGroupRoot(lines, returnQtyByLineId, byVid, serv
 export function parseServerTonAndCost(row) {
   if (!row || typeof row !== 'object') return { ton: 0, giaVon: 0 }
   const tonRaw = parseStockQty(row.ton_kho)
-  const ton = tonRaw != null && Number.isFinite(Number(tonRaw)) ? Math.max(0, Number(tonRaw)) : 0
+  // KHÔNG clamp về 0 — tồn kho ÂM (lỡ bán quá tồn trước khi kịp nhập) vẫn phải cộng dồn đúng khi
+  // nhập hàng về (vd. tồn -1, nhập 12 → phải ra 11, không phải 12 — clamp mất luôn phần âm làm
+  // nhập hàng "quên" khoản đã bán thiếu, tồn kho bị cộng dư).
+  const ton = tonRaw != null && Number.isFinite(Number(tonRaw)) ? Number(tonRaw) : 0
   const giaVon = Math.max(0, parsePrice(row.gia_von))
   return { ton, giaVon }
 }
@@ -369,9 +373,11 @@ export function computeInboundFulfillmentPlan(
     if (deltaQ === 0 && Math.abs(moneyDelta) < 1e-6) continue
 
     const srvGroup = parseGroupServerSnapshot(rep, members, serverByMaHang)
+    // Không loại tồn ÂM ở fallback nữa — xem lý do trong parseServerTonAndCost (lỡ bán quá tồn
+    // trước khi kịp nhập vẫn phải cộng dồn đúng, không được "quên" khoản âm đó).
     const fallbackBaseTon = members.reduce((acc, v) => {
       const n = Number(v?.stockQty)
-      if (!Number.isFinite(n) || n < 0) return acc
+      if (!Number.isFinite(n)) return acc
       const conv = conversionToBaseForVariant(v, null)
       return Math.max(acc, n * conv)
     }, 0)
@@ -488,9 +494,11 @@ export function computeInboundReturnFulfillmentPlan(
     if (returnBaseQty <= 0) continue
 
     const srvGroup = parseGroupServerSnapshot(rep, members, serverByMaHang)
+    // Không loại tồn ÂM ở fallback nữa — xem lý do trong parseServerTonAndCost (lỡ bán quá tồn
+    // trước khi kịp nhập vẫn phải cộng dồn đúng, không được "quên" khoản âm đó).
     const fallbackBaseTon = members.reduce((acc, v) => {
       const n = Number(v?.stockQty)
-      if (!Number.isFinite(n) || n < 0) return acc
+      if (!Number.isFinite(n)) return acc
       const conv = conversionToBaseForVariant(v, null)
       return Math.max(acc, n * conv)
     }, 0)
