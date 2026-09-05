@@ -459,6 +459,34 @@ function buildGoodsDetailDraft(v) {
   }
 }
 
+/**
+ * Khoá "nội dung" của 1 biến thể — dùng để biết nháp sửa nhanh (soloGoodsDraft*, inboundQuickEdit*)
+ * có đang khớp dữ liệu MỚI NHẤT hay không, để tự nạp lại khi lệch (vd. Realtime báo tồn/giá đổi
+ * trong lúc panel đang mở). Đổi 1 trong 2 chỗ dùng key này mà quên đổi chỗ kia từng gây bug thật
+ * (panel sửa nhanh nạp 1 lần rồi đứng yên, Lưu lúc đang lệch dữ liệu dẫn tới ghi sai tồn kho) —
+ * gộp về 1 hàm để không lặp lại lần nữa.
+ */
+const GOODS_DETAIL_SEED_KEY_SEP = String.fromCharCode(31) // unit separator — không lẫn với dữ liệu thật
+const GOODS_DETAIL_SEED_KEY_ID_SEP = String.fromCharCode(0)
+
+function goodsDetailSeedKey(variantId, v) {
+  const fp = [
+    v?.id,
+    v?.code,
+    v?.barcode,
+    v?.name,
+    v?.price,
+    v?.wholesalePrice,
+    v?.cost,
+    v?.stockQty,
+    v?.stockNormMin,
+    v?.stockNormMax,
+    v?.brand,
+    v?.weightRaw,
+  ].join(GOODS_DETAIL_SEED_KEY_SEP)
+  return `${variantId}${GOODS_DETAIL_SEED_KEY_ID_SEP}${fp}`
+}
+
 const TAB_OVERVIEW = 'overview'
 const TAB_GOODS = 'goods'
 const TAB_STOCK_CHECK = 'stock_check'
@@ -2326,8 +2354,14 @@ export default function AdminHub({
     }
     const nextVid = String(inboundQuickEditSelectedVid ?? '')
     if (!nextVid || !inboundQuickEditVariant) return
-    if (inboundQuickEditDraftSeedVariantIdRef.current === nextVid) return
-    inboundQuickEditDraftSeedVariantIdRef.current = nextVid
+    // Khoá theo NỘI DUNG (không chỉ id) — panel này có thể mở rất lâu (đang xem/sửa), nếu chỉ khoá
+    // theo id thì đổi giá/tồn ở nơi khác (bán hàng, nhập hàng khác, Realtime) trong lúc đang mở sẽ
+    // KHÔNG nạp lại nháp — Lưu tiếp theo mang theo tồn kho CŨ trong nháp, bị hiểu nhầm là "người
+    // dùng vừa đổi tồn", ghi sai tồn kho cả nhóm ĐVT (đúng hiện tượng "lúc bị lúc không" gặp phải,
+    // tuỳ lúc đang mở panel có ai đổi tồn sản phẩm này ở chỗ khác hay không).
+    const seedKey = goodsDetailSeedKey(nextVid, inboundQuickEditVariant)
+    if (inboundQuickEditDraftSeedVariantIdRef.current === seedKey) return
+    inboundQuickEditDraftSeedVariantIdRef.current = seedKey
     const preserve = inboundQuickEditPreserveRef.current
     inboundQuickEditPreserveRef.current = null
     const seeded = buildGoodsDetailDraft(inboundQuickEditVariant)
@@ -2359,7 +2393,9 @@ export default function AdminHub({
     const preserve = pending.preserve || {}
     const seeded = buildGoodsDetailDraft(hit)
     const hitId = String(hit.id)
-    inboundQuickEditDraftSeedVariantIdRef.current = hitId
+    // Cùng định dạng khoá với effect seed phía trên — khớp key thì effect đó mới không nạp lại lần
+    // nữa ngay sau (tránh đè mất preserve.name/brand/weightRaw vừa gộp ở trên).
+    inboundQuickEditDraftSeedVariantIdRef.current = goodsDetailSeedKey(hitId, hit)
     setInboundQuickEditExpandId(hitId)
     setInboundQuickEditSelectedVid(hitId)
     setInboundQuickEditDraft({
