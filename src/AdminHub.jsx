@@ -3211,7 +3211,15 @@ export default function AdminHub({
       price: parseMoneyDraftVi(soloGoodsDraft.price),
       wholesalePrice: parseMoneyDraftVi(soloGoodsDraft.wholesalePrice ?? '0'),
       cost: parseMoneyDraftVi(soloGoodsDraft.cost),
-      stockQty: parseAdminStockNullable(soloGoodsDraft.stockQty),
+      // soloGoodsDraft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem buildGoodsDetailDraft) —
+      // nhân lại quy đổi trước khi gửi đi, khớp đúng đơn vị `target.stockQty` mà
+      // handleUpdateCatalogVariant (App.jsx) kỳ vọng — cùng cách saveProductDetailFromDraft (tab
+      // Hàng hóa) đã làm. Gửi thẳng số hiển thị (chưa quy đổi) khiến hàm dùng chung ở App.jsx hiểu
+      // nhầm là tồn kho vừa đổi, tự đồng bộ sai tồn cả nhóm ĐVT dù chỉ sửa giá bán.
+      stockQty: (() => {
+        const displayVal = parseAdminStockNullable(soloGoodsDraft.stockQty)
+        return displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, soloGoodsVariant)
+      })(),
       ton_nho_nhat: Number(parseAdminStockNullable(soloGoodsDraft.ton_nho_nhat) || 0),
       stockNormMax:
         soloGoodsVariant.stockNormMax != null &&
