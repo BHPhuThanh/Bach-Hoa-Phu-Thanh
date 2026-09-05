@@ -391,8 +391,12 @@ export function computeInboundFulfillmentPlan(
 
     const oldBaseQty = srvGroup.hasServer ? srvGroup.baseQty : fallbackBaseTon
     const oldBaseCost = srvGroup.hasServer ? srvGroup.baseCost : fallbackBaseCost
-    const newBaseQty = Math.max(0, oldBaseQty + deltaQ)
-    if (newBaseQty <= 0) continue
+    // KHÔNG clamp/bỏ qua khi kết quả vẫn ≤ 0 — nhập hàng CHƯA bù đủ phần tồn âm trước đó (vd. tồn
+    // -20, nhập 5) vẫn phải ghi nhận đúng còn -15, không được đứng yên ở tồn cũ (trước đây `continue`
+    // ở đây khiến 5 sản phẩm vừa nhập "biến mất" — không patch gì cả — vì coi cả nhóm là "không có
+    // gì để cập nhật" chỉ vì tổng vẫn âm/bằng 0).
+    const newBaseQty = oldBaseQty + deltaQ
+    if (!Number.isFinite(newBaseQty)) continue
 
     const inboundBaseUnitCost = deltaQ !== 0 ? moneyDelta / deltaQ : 0
     const newBaseCost = calculateWeightedAverage(
@@ -512,7 +516,10 @@ export function computeInboundReturnFulfillmentPlan(
 
     const oldBaseQty = srvGroup.hasServer ? srvGroup.baseQty : fallbackBaseTon
     const oldBaseCost = srvGroup.hasServer ? srvGroup.baseCost : fallbackBaseCost
-    const newBaseQty = Math.max(0, oldBaseQty - returnBaseQty)
+    // KHÔNG clamp về 0 — trả hết nguyên phiếu nhập của 1 sản phẩm đang tồn ÂM trước khi nhập (vd.
+    // tồn -1, nhập +12 thành 11, trả lại nguyên 12) phải về ĐÚNG lại -1 như trước khi nhập, không
+    // phải 0 (clamp ở đây sẽ "xoá" luôn phần âm gốc lần thứ 2, y hệt lỗi phía nhập hàng).
+    const newBaseQty = oldBaseQty - returnBaseQty
 
     let newBaseCost
     if (newBaseQty <= 0) {
