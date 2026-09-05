@@ -166,7 +166,6 @@ import {
   variantQuyDoiNumber,
 } from './comboCatalog.js'
 import {
-  baseTonKhoFromDisplayNumber,
   displayTonKhoNumber,
   formatRoundedStockQtyVi,
 } from './displayStockQty.js'
@@ -3364,21 +3363,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       }
       const stockTouched = Object.prototype.hasOwnProperty.call(patch, 'stockQty')
       let next = prev
-      // `patch.stockQty` tới từ form "Sửa nhanh sản phẩm" LÀ SỐ ĐANG HIỂN THỊ (đã chia quy đổi —
-      // xem buildGoodsDetailDraft/displayTonKhoNumber ở AdminHub.jsx), KHÔNG PHẢI ton_kho gốc (đơn
-      // vị cơ bản) như target.stockQty/cột ton_kho trên Supabase. Quy về base UNIT NGAY TỪ ĐẦU,
-      // dùng thống nhất cho mọi nhánh phía dưới — trước đây patch giữ nguyên số hiển thị nên: (1)
-      // so sánh "có đổi tồn không" so nhầm 2 đơn vị khác nhau, với sản phẩm nhiều ĐVT (thùng/lóc…)
-      // gần như LUÔN bị coi là "tồn kho đổi" dù người dùng chỉ sửa giá, kích hoạt nhầm việc đồng bộ
-      // lại tồn kho CẢ NHÓM bằng số sai (đúng hiện tượng "sửa giá xong tồn kho tự cộng dồn sai"
-      // gặp phải); (2) ở nhánh KHÔNG kích hoạt đồng bộ nhóm, patch.stockQty (số hiển thị, nhỏ hơn
-      // số gốc) bị ghi thẳng làm ton_kho gốc — âm thầm ghi sai tồn kho ngay cả khi coi là "không
-      // đổi gì".
-      if (stockTouched && target) {
-        const converted = baseTonKhoFromDisplayNumber(patch.stockQty, target)
-        if (converted != null) patch = { ...patch, stockQty: converted }
-      }
-      const stockRaw = patch?.stockQty // đã là base-unit (nếu stockTouched), khớp target.stockQty
+      // HỢP ĐỒNG: `patch.stockQty` (nếu có) PHẢI đã ở ĐƠN VỊ CƠ BẢN — khớp `target.stockQty`/cột
+      // ton_kho trên Supabase — do CALLER tự quy đổi trước khi gọi hàm này (xem
+      // saveProductDetailFromDraft / saveSoloGoodsDetail ở AdminHub.jsx, cả 2 đều dùng
+      // baseTonKhoFromDisplayNumber trên số đang hiển thị ở form trước khi build patch). KHÔNG
+      // được quy đổi lại ở đây — đã từng thử "tự quy đổi hộ" ngay tại đây cho gọn, nhưng 1 trong 2
+      // caller (saveProductDetailFromDraft) đã tự quy đổi sẵn, quy đổi thêm lần nữa ở đây thành ra
+      // NHÂN ĐÔI hệ số quy đổi — lại đúng kiểu lỗi "sửa giá tự cộng sai tồn kho" (lần này ở tab
+      // Hàng hóa) mà nó vốn định sửa.
+      const stockRaw = patch?.stockQty
       const stockNum = Number(stockRaw)
       const targetStockNum = Number(target?.stockQty)
       // So bằng dung sai nhỏ (không dùng stockQtyMeaningfullyChanged/!== thẳng) — quy đổi qua lại
@@ -3421,8 +3414,6 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         }
         affectedIdsForLog = [...patchById.keys()].map((id) => String(id))
       } else {
-        // patch.stockQty (nếu có) đã quy về base-unit ở trên — ghi thẳng an toàn, không còn lẫn
-        // đơn vị hiển thị vào ton_kho gốc.
         next = applyProductDataToCatalog(prev, { type: 'patch_variant', variantId, patch })
         affectedIdsForLog = [String(variantId)]
       }
