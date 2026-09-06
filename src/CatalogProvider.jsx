@@ -111,36 +111,76 @@ export function CatalogProvider({ children }) {
     }
   }, [])
 
-  /** Realtime — listener gắn vào kênh singleton; unmount tab con không đóng WebSocket. */
+  /**
+   * Realtime — listener gắn vào kênh singleton; unmount tab con không đóng WebSocket.
+   *
+   * GỘP payload đến gần nhau thành 1 lần cập nhật thay vì xử lý riêng từng cái. Cửa hàng nhiều
+   * quầy/thiết bị hoạt động cùng lúc phát sinh Realtime liên tục (mỗi đơn bán, mỗi lần sửa hàng ở
+   * máy khác đều bắn 1 sự kiện) — trước đây MỖI sự kiện là 1 lần `setProducts` riêng, tức 1 lần
+   * re-render lại toàn bộ cây (POS + Hàng hóa) VÀ rebuild lại catalog/search-index (~3900 dòng).
+   * Vào giờ đông khách nhiều thao tác dồn dập/giây làm trình duyệt đơ dần, chỉ hết khi tải lại
+   * trang — không phải vòng lặp lỗi, mà là chi phí xử lý mỗi sự kiện quá đắt so với tần suất thật.
+   * Gộp theo cửa sổ ngắn (400ms) giảm hẳn số lần re-render/rebuild, độ trễ hiển thị không đáng kể.
+   */
   useEffect(() => {
     if (!isSupabaseConfigured()) return undefined
+    let pending = []
+    let flushTimer = null
+
+    const flush = () => {
+      flushTimer = null
+      const batch = pending
+      pending = []
+      if (batch.length === 0) return
+      const codes = []
+      setProducts((prev) => {
+        let next = prev
+        for (const payload of batch) {
+          const code = String(payload?.new?.ma_hang ?? payload?.old?.ma_hang ?? '').trim()
+          if (code) codes.push(code)
+          next = applyRealtimeProductChangeToCatalog(next, payload)
+        }
+        if (next === prev) return prev
+        productsRef.current = next
+        const variantCount = flattenDisplayCatalogToVariants(next).length
+        if (variantCount > 0) {
+          queueMicrotask(() => {
+            setInitialCatalogLoadPending(false)
+            setCatalogStoreHydrated(true)
+          })
+        }
+        queueMicrotask(() => {
+          setCsvRowCount(variantCount)
+        })
+        return next
+      })
+      if (codes.length) {
+        const shown = codes.slice(0, 20).join(', ')
+        console.log(
+          `[Realtime products] áp dụng ${codes.length} thay đổi (gộp ${batch.length} sự kiện trong ~400ms): ${shown}${codes.length > 20 ? '…' : ''}`
+        )
+      }
+    }
+
     const onPayload = (payload) => {
       try {
-        const code = String(payload?.new?.ma_hang ?? payload?.old?.ma_hang ?? '').trim()
-        setProducts((prev) => {
-          const next = applyRealtimeProductChangeToCatalog(prev, payload)
-          if (next === prev) return prev
-          productsRef.current = next
-          const variantCount = flattenDisplayCatalogToVariants(next).length
-          if (variantCount > 0) {
-            queueMicrotask(() => {
-              setInitialCatalogLoadPending(false)
-              setCatalogStoreHydrated(true)
-            })
-          }
-          queueMicrotask(() => {
-            setCsvRowCount(variantCount)
-          })
-          return next
-        })
-        if (code) {
-          console.log(`[Realtime products] ${payload?.eventType || '?'} → ${code}`)
+        pending.push(payload)
+        if (flushTimer == null) {
+          flushTimer = window.setTimeout(flush, 400)
         }
       } catch (err) {
         console.warn('[Realtime products] lỗi xử lý payload:', err)
       }
     }
-    return subscribeProductsRealtime(onPayload)
+    const unsubscribe = subscribeProductsRealtime(onPayload)
+    return () => {
+      unsubscribe()
+      if (flushTimer != null) {
+        window.clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      pending = []
+    }
   }, [])
 
   const value = useMemo(
