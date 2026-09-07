@@ -429,7 +429,9 @@ export function AdminHubGoodsExpandedBelow(props) {
                                                 value={d.stockQty}
                                                 onChange={(e) =>
                                                   setGoodsDetailDraft((x) =>
-                                                    x ? { ...x, stockQty: e.target.value } : x
+                                                    x
+                                                      ? { ...x, stockQty: e.target.value, stockQtyTouched: true }
+                                                      : x
                                                   )
                                                 }
                                                 aria-label="Tồn kho"

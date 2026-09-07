@@ -456,6 +456,14 @@ function buildGoodsDetailDraft(v) {
     wholesalePrice: formatMoneyDraftVi(Number(v.wholesalePrice) || 0),
     brand: String(v.brand ?? ''),
     weightRaw: String(v.weightRaw ?? ''),
+    // Cờ "người dùng có thật sự gõ vào ô Tồn kho không" — set true ĐÚNG lúc gõ (xem onChange ô
+    // Tồn kho), reset về false mỗi lần seed/nạp lại nháp (kể cả nạp lại giữa chừng do dữ liệu đổi
+    // ở nơi khác trong lúc form đang mở). Chỉ khi cờ này true thì saveSoloGoodsDetail /
+    // saveProductDetailFromDraft mới gửi stockQty đi — sửa GIÁ/TÊN/... không đụng ô Tồn kho thì
+    // patch không hề có stockQty, khỏi cần so sánh giá trị cũ/mới để đoán "có đổi tồn không" (kiểu
+    // so sánh cũ vẫn có thể sai lệch do nháp cũ hơn dữ liệu thật — gốc rễ của 3-4 lần lỗi
+    // "sửa giá tự cộng tồn kho" trước đó).
+    stockQtyTouched: false,
   }
 }
 
@@ -2734,26 +2742,35 @@ export default function AdminHub({
         price: parseMoneyDraftVi(draft.price),
         wholesalePrice: parseMoneyDraftVi(draft.wholesalePrice ?? '0'),
         cost: parseMoneyDraftVi(draft.cost),
-        // draft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem buildGoodsDetailDraft) — nhân
-        // lại quy đổi trước khi lưu để ra đúng ton_kho GỐC (đơn vị cơ bản). Thiếu bước này thì lưu
-        // thẳng số hiển thị làm tồn kho gốc, sai ngay với sản phẩm nhiều đơn vị tính.
-        stockQty: (() => {
-          const displayVal = parseAdminStockNullable(draft.stockQty)
-          return displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, variant)
-        })(),
         ton_nho_nhat: Number(parseAdminStockNullable(draft.ton_nho_nhat) || 0),
         stockNormMax:
           variant.stockNormMax != null && Number.isFinite(Number(variant.stockNormMax))
             ? Number(variant.stockNormMax)
             : null,
       }
+      // CHỈ gửi stockQty khi người dùng thật sự gõ vào ô Tồn kho (draft.stockQtyTouched — set ở
+      // onChange ô input). Sửa tên/giá/... không đụng ô Tồn kho thì patch không hề có key này —
+      // handleUpdateCatalogVariant (App.jsx) sẽ không đụng gì tới tồn kho, khỏi cần so sánh giá trị
+      // cũ/mới để đoán "có đổi tồn không" nữa (cách so sánh cũ vẫn có thể sai lệch nếu nháp lệch
+      // dữ liệu thật — gốc rễ của loạt lỗi "sửa giá tự cộng tồn kho" trước đó).
+      const stockAfterForVoucher = draft.stockQtyTouched
+        ? (() => {
+            // draft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem buildGoodsDetailDraft) —
+            // nhân lại quy đổi trước khi lưu để ra đúng ton_kho GỐC (đơn vị cơ bản). Thiếu bước
+            // này thì lưu thẳng số hiển thị làm tồn kho gốc, sai ngay với sản phẩm nhiều ĐVT.
+            const displayVal = parseAdminStockNullable(draft.stockQty)
+            const base = displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, variant)
+            patch.stockQty = base
+            return base
+          })()
+        : variant.stockQty
       recordManualStockAdjustmentVoucher({
         variantId: variant.id,
         productName: nameTrim || String(variant.name || '').trim(),
         productCode: patch.code,
         unitLabel: normalizeCatalogUnitLabel(variant.unitLabel),
         beforeQty: variant.stockQty,
-        afterQty: patch.stockQty,
+        afterQty: stockAfterForVoucher,
       })
       const pendingForVariant =
         pendingUnitDraft &&
@@ -3247,15 +3264,6 @@ export default function AdminHub({
       price: parseMoneyDraftVi(soloGoodsDraft.price),
       wholesalePrice: parseMoneyDraftVi(soloGoodsDraft.wholesalePrice ?? '0'),
       cost: parseMoneyDraftVi(soloGoodsDraft.cost),
-      // soloGoodsDraft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem buildGoodsDetailDraft) —
-      // nhân lại quy đổi trước khi gửi đi, khớp đúng đơn vị `target.stockQty` mà
-      // handleUpdateCatalogVariant (App.jsx) kỳ vọng — cùng cách saveProductDetailFromDraft (tab
-      // Hàng hóa) đã làm. Gửi thẳng số hiển thị (chưa quy đổi) khiến hàm dùng chung ở App.jsx hiểu
-      // nhầm là tồn kho vừa đổi, tự đồng bộ sai tồn cả nhóm ĐVT dù chỉ sửa giá bán.
-      stockQty: (() => {
-        const displayVal = parseAdminStockNullable(soloGoodsDraft.stockQty)
-        return displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, soloGoodsVariant)
-      })(),
       ton_nho_nhat: Number(parseAdminStockNullable(soloGoodsDraft.ton_nho_nhat) || 0),
       stockNormMax:
         soloGoodsVariant.stockNormMax != null &&
@@ -3263,6 +3271,23 @@ export default function AdminHub({
           ? Number(soloGoodsVariant.stockNormMax)
           : null,
     }
+    // CHỈ gửi stockQty khi người dùng thật sự gõ vào ô Tồn kho (soloGoodsDraft.stockQtyTouched —
+    // set ở onChange ô input). Sửa tên/giá/... không đụng ô Tồn kho thì patch không hề có key này
+    // — handleUpdateCatalogVariant (App.jsx) sẽ không đụng gì tới tồn kho, khỏi cần so sánh giá
+    // trị cũ/mới để đoán "có đổi tồn không" nữa (cách so sánh cũ vẫn có thể sai lệch nếu nháp lệch
+    // dữ liệu thật — gốc rễ của loạt lỗi "sửa giá tự cộng tồn kho" trước đó).
+    const stockAfterForVoucher = soloGoodsDraft.stockQtyTouched
+      ? (() => {
+          // soloGoodsDraft.stockQty là số ĐANG HIỂN THỊ (đã chia quy đổi, xem
+          // buildGoodsDetailDraft) — nhân lại quy đổi trước khi gửi đi, khớp đúng đơn vị
+          // `target.stockQty` mà handleUpdateCatalogVariant kỳ vọng.
+          const displayVal = parseAdminStockNullable(soloGoodsDraft.stockQty)
+          const base =
+            displayVal == null ? null : baseTonKhoFromDisplayNumber(displayVal, soloGoodsVariant)
+          patch.stockQty = base
+          return base
+        })()
+      : soloGoodsVariant.stockQty
     const pendingForVariant =
       pendingUnitDraft &&
       findVariantContext(catalogListForGoodsEdit, pendingUnitDraft.anchorVariantId)?.variants?.some(
@@ -3303,7 +3328,7 @@ export default function AdminHub({
       productCode: patch.code,
       unitLabel: normalizeCatalogUnitLabel(soloGoodsVariant.unitLabel),
       beforeQty: soloGoodsVariant.stockQty,
-      afterQty: patch.stockQty,
+      afterQty: stockAfterForVoucher,
     })
     if (onUpdateCatalogVariant) {
       recordCostAdjustOnSave(soloGoodsVariant, patch, nameTrim)
@@ -9364,7 +9389,9 @@ export default function AdminHub({
                         inputMode="decimal"
                         value={soloGoodsDraft.stockQty}
                         onChange={(e) =>
-                          patchSoloGoodsDraft((x) => (x ? { ...x, stockQty: e.target.value } : x))
+                          patchSoloGoodsDraft((x) =>
+                            x ? { ...x, stockQty: e.target.value, stockQtyTouched: true } : x
+                          )
                         }
                       />
                     </div>
