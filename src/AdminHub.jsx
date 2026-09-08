@@ -2320,10 +2320,16 @@ export default function AdminHub({
   }, [])
 
   useEffect(() => {
+    // Đóng modal "Sửa nhanh sản phẩm" khi chuyển sang tab KHÔNG liên quan (vd. đang mở modal ở tab
+    // Hàng hóa rồi bấm qua Doanh thu). Phải liệt kê đủ MỌI tab có nút mở modal này — thiếu tab nào
+    // thì mở modal từ đúng tab đó bị effect này tự đóng lại ngay lập tức ("nhấp nháy mở rồi tắt")
+    // — đúng bug gặp phải khi thêm nút mở modal từ Chi tiết đơn hàng (POS) mà quên thêm vào đây.
     const quickEditHostTab =
       activeTab === TAB_GOODS ||
       activeTab === TAB_INBOUND_DRAFT ||
-      isInboundDetailTabId(activeTab)
+      isInboundDetailTabId(activeTab) ||
+      isPosOrderDetailTabId(activeTab) ||
+      activeTab === TAB_ORDERS
     if (!quickEditHostTab && inboundQuickEditExpandId) {
       closeInboundProductQuickEdit()
     }
