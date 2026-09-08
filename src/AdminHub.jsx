@@ -10199,9 +10199,9 @@ export default function AdminHub({
                                       className="ah-inbound-product-name-btn ah-inbound-detail-name-link ah-inbound-product-name-btn--clickable"
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        openProductDetailTab(vid)
+                                        openInboundProductQuickEdit(vid)
                                       }}
-                                      title="Xem chi tiết sản phẩm — bấm tab Đơn hàng để quay lại đơn này"
+                                      title="Sửa nhanh sản phẩm"
                                     >
                                       {it.name || '—'}
                                     </button>
