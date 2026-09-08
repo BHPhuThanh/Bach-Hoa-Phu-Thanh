@@ -21,9 +21,16 @@ import { normalizeCatalogUnitLabel } from './productUnits.js'
 export const INVENTORY_LOG_TABLE = 'inventory_log'
 export const INVENTORY_LOG_UPDATED_EVENT = 'inventory-log-updated'
 
-/** Đúng các cột `insertInventoryLogRows()` ghi (+ id/created_at server sinh) — khớp select khi đọc lại, đỡ egress. */
+/**
+ * Đúng các cột `insertInventoryLogRows()` ghi (+ id/created_at server sinh) — khớp select khi đọc
+ * lại, đỡ egress. `pos_order_id`/`inbound_order_id` từng bị thêm nhầm khi 2 cột này chưa thật sự
+ * tồn tại trên Supabase (chỉ có trong file migration, chưa chạy ALTER trên bảng thật) — làm SELECT
+ * lẫn INSERT bị PostgREST từ chối, sập cả tính năng Lịch sử kho (đã hotfix revert, xem
+ * dcefd3f). Chỉ bật lại sau khi ĐÃ XÁC NHẬN trực tiếp trên Supabase (Table Editor / chạy ALTER
+ * TABLE ADD COLUMN IF NOT EXISTS) — không suy luận từ file migration trong repo nữa.
+ */
 const INVENTORY_LOG_FETCH_COLUMNS =
-  'id,created_at,staff_name,transaction_type,change_qty,stock_after,document_code,ma_hang,ten_hang,product_id,variant_id,txn_qty,txn_unit_label,base_unit_label'
+  'id,created_at,staff_name,transaction_type,change_qty,stock_after,document_code,ma_hang,ten_hang,product_id,variant_id,txn_qty,txn_unit_label,base_unit_label,pos_order_id,inbound_order_id'
 
 /** Tên nhân viên đang thao tác POS/Hub (không có auth SSO — mặc định chủ cửa hàng). */
 export function staffNameForInventoryLog() {
@@ -390,6 +397,10 @@ export async function insertInventoryLogRows(rows) {
         txn_qty: row.txn_qty === undefined ? null : row.txn_qty,
         txn_unit_label: row.txn_unit_label === undefined ? null : row.txn_unit_label,
         base_unit_label: row.base_unit_label === undefined ? null : row.base_unit_label,
+        // Đã xác nhận trực tiếp trên Supabase (ALTER TABLE) là có đủ 2 cột trước khi bật lại —
+        // xem ghi chú ở INVENTORY_LOG_FETCH_COLUMNS.
+        pos_order_id: row.pos_order_id === undefined ? null : row.pos_order_id,
+        inbound_order_id: row.inbound_order_id === undefined ? null : row.inbound_order_id,
       }
     })
   if (!cleanedRows.length) return { ok: true, skipped: true }
