@@ -6293,6 +6293,10 @@ export default function AdminHub({
   const handleStockLedgerDocLinkActivate = useCallback(
     (link) => {
       if (!stockLedgerDocLinkHasTarget(link)) return
+      // Đóng panel "Xem nhanh sản phẩm / Lịch sử kho" (nếu đang mở) TRƯỚC khi chuyển tab — panel
+      // này hiện dạng overlay/modal đè lên trên, tab Đơn hàng/Nhập hàng vừa mở vẫn đổi đúng ở dưới
+      // nhưng bị che khuất, trông như "mở ngầm" không thấy chuyển (đúng hiện tượng gặp phải).
+      closeInboundProductQuickEdit()
       if (link.type === 'pos') {
         void requestOpenPosOrderDetail({
           orderId: link.posOrderId,
@@ -6318,6 +6322,7 @@ export default function AdminHub({
       }
     },
     [
+      closeInboundProductQuickEdit,
       requestOpenPosOrderDetail,
       requestOpenInboundOrderDetail,
       syncHubUrlToMainTab,
@@ -6334,6 +6339,9 @@ export default function AdminHub({
         return
       }
       if (row.inventoryNavSource !== 'supabase') return
+      // Xem chú thích ở handleStockLedgerDocLinkActivate — đóng panel trước khi chuyển tab, không
+      // để đè khuất tab vừa mở (nhánh docLink phía trên đã tự đóng qua lệnh gọi ở trên).
+      closeInboundProductQuickEdit()
       const doc = String(row.docNo ?? '').trim()
       if (/^HD/i.test(doc)) {
         void requestOpenPosOrderDetail({
@@ -6349,7 +6357,12 @@ export default function AdminHub({
         })
       }
     },
-    [handleStockLedgerDocLinkActivate, requestOpenPosOrderDetail, requestOpenInboundOrderDetail]
+    [
+      handleStockLedgerDocLinkActivate,
+      closeInboundProductQuickEdit,
+      requestOpenPosOrderDetail,
+      requestOpenInboundOrderDetail,
+    ]
   )
 
   const [soloGoodsUiTab, setSoloGoodsUiTab] = useState(GOODS_DETAIL_VIEW_TONKHO)
