@@ -23,7 +23,7 @@ export const INVENTORY_LOG_UPDATED_EVENT = 'inventory-log-updated'
 
 /** Đúng các cột `insertInventoryLogRows()` ghi (+ id/created_at server sinh) — khớp select khi đọc lại, đỡ egress. */
 const INVENTORY_LOG_FETCH_COLUMNS =
-  'id,created_at,staff_name,transaction_type,change_qty,stock_after,document_code,ma_hang,ten_hang,product_id,variant_id,txn_qty,txn_unit_label,base_unit_label'
+  'id,created_at,staff_name,transaction_type,change_qty,stock_after,document_code,ma_hang,ten_hang,product_id,variant_id,txn_qty,txn_unit_label,base_unit_label,pos_order_id,inbound_order_id'
 
 /** Tên nhân viên đang thao tác POS/Hub (không có auth SSO — mặc định chủ cửa hàng). */
 export function staffNameForInventoryLog() {
@@ -150,6 +150,7 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
               ten_hang: String(hit.product?.name ?? hit.variant?.name ?? '').trim() || '—',
               transaction_type: 'Bán hàng',
               document_code: doc,
+              pos_order_id: orderId || null,
               change_qty: -q,
               stock_after: stockAfter,
               staff_name: staffName,
@@ -181,6 +182,7 @@ export function buildPosSaleInventoryLogRows(prevProducts, nextProducts, order, 
           ten_hang: String(hit.product?.name ?? v.name ?? '').trim() || '—',
           transaction_type: 'Bán hàng',
           document_code: doc,
+          pos_order_id: orderId || null,
           change_qty: -dq,
           stock_after: stockAfter,
           staff_name: staffName,
@@ -264,6 +266,7 @@ export function buildPosReturnInventoryLogRows(prevProducts, nextProducts, meta,
 /** Nhập hàng sau khi biết patches + catalog trước/sau. */
 export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches, meta) {
   const doc = String(meta?.documentCode ?? '').trim()
+  const inboundOrderId = String(meta?.inboundOrderId ?? '').trim() || null
   const staffName = meta?.staffName ?? staffNameForInventoryLog()
   if (!doc || !patches?.length) return []
 
@@ -295,6 +298,7 @@ export function buildInboundInventoryLogRows(prevProducts, nextProducts, patches
           ten_hang: String(v1.name ?? '').trim() || '—',
           transaction_type: 'Nhập hàng',
           document_code: doc,
+          inbound_order_id: inboundOrderId,
           change_qty: delta,
           stock_after: n1,
           staff_name: staffName,
@@ -386,6 +390,10 @@ export async function insertInventoryLogRows(rows) {
         txn_qty: row.txn_qty === undefined ? null : row.txn_qty,
         txn_unit_label: row.txn_unit_label === undefined ? null : row.txn_unit_label,
         base_unit_label: row.base_unit_label === undefined ? null : row.base_unit_label,
+        // Cột đã có sẵn trong schema từ đầu nhưng chưa nơi nào từng ghi — link "xem hóa đơn" ở
+        // Lịch sử kho vì vậy luôn phải dò theo document_code (dễ trật) thay vì tra thẳng theo id.
+        pos_order_id: row.pos_order_id === undefined ? null : row.pos_order_id,
+        inbound_order_id: row.inbound_order_id === undefined ? null : row.inbound_order_id,
       }
     })
   if (!cleanedRows.length) return { ok: true, skipped: true }
