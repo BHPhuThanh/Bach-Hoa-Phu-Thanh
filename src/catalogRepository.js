@@ -644,6 +644,43 @@ export async function saveProductsTonKhoPatchToSupabase(flatDisplayVariants) {
   }
 }
 
+/**
+ * Cộng/trừ tồn kho TƯƠNG ĐỐI ngay tại server (RPC `adjust_products_stock` — xem migration
+ * 20260910120000) — dùng cho luồng bán hàng POS (thanh toán + hàng chờ offline), KHÔNG dùng cách
+ * cũ "đọc tồn ở máy khách rồi ghi đè số tuyệt đối" của {@link saveProductsTonKhoPatchToSupabase}.
+ *
+ * Lý do: cách ghi đè tuyệt đối bị lỗi mất cập nhật (lost update) — tab thu ngân mở cả ngày, nếu lỡ
+ * chưa kịp nhận Realtime của 1 lần nhập hàng/sửa tồn ở nơi khác thì lần bán tiếp theo tính trên tồn
+ * CŨ trong bộ nhớ rồi ghi đè, xoá mất thay đổi đó dù đơn bán tự nó hoàn toàn đúng — đã gặp thật
+ * (nhập +480 rồi 1 đơn bán -24 ở tab bán hàng mở lâu ghi đè tồn về gần như trước lúc nhập). Cộng
+ * trừ tương đối tại DB miễn nhiễm hoàn toàn với việc máy khách có dữ liệu cũ hay không.
+ *
+ * @param {Array<{ma_hang?: string, code?: string, delta: number}>} deltaPatches
+ * @returns {Promise<{ ok: boolean, rows?: Array, error?: unknown, skipped?: boolean }>}
+ */
+export async function adjustProductsStockAtomic(deltaPatches) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  const patches = (Array.isArray(deltaPatches) ? deltaPatches : [])
+    .map((p) => {
+      const ma = String(p?.ma_hang ?? p?.code ?? '').trim()
+      const delta = Number(p?.delta)
+      if (!ma || !Number.isFinite(delta) || delta === 0) return null
+      return { ma_hang: ma, delta }
+    })
+    .filter(Boolean)
+  if (patches.length === 0) return { ok: true, written: 0 }
+  try {
+    const { data, error } = await sb.rpc('adjust_products_stock', { patches })
+    if (error) throw error
+    return { ok: true, rows: Array.isArray(data) ? data : [], written: patches.length }
+  } catch (error) {
+    notifySupabasePersistFailure(error)
+    return { ok: false, error }
+  }
+}
+
 function catalogSnapshotDedupeKey(products, fileName) {
   const flat = flattenDisplayCatalogToVariants(products || [])
   const sig = flat
