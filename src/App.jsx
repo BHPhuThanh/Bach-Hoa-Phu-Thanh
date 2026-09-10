@@ -113,6 +113,7 @@ import {
   trimCatalogUnitLabel,
 } from './productUnits.js'
 import {
+  adjustProductsStockAtomic,
   applyProductDataToCatalog,
   flattenDisplayCatalogToVariants,
   persistCatalogSnapshotAndProducts,
@@ -3673,21 +3674,33 @@ export default function App({ standaloneInboundCreate = false } = {}) {
           continue
         }
 
-        // ===== BƯỚC 2 (BEST-EFFORT): trừ tồn kho TRỰC TIẾP qua UPDATE ... eq('ma_hang'). =====
-        // Lỗi tồn kho chỉ log ngầm, KHÔNG alert, KHÔNG chặn việc xóa đơn (sales đã an toàn).
+        // ===== BƯỚC 2 (BEST-EFFORT): cộng/trừ tồn kho TƯƠNG ĐỐI qua RPC adjust_products_stock. =====
+        // Lỗi tồn kho chỉ log ngầm, KHÔNG alert, KHÔNG chặn việc xóa đơn (sales đã an toàn). Trước
+        // đây ghi đè số tuyệt đối (`ton_kho: ton`) — hàng chờ OFFLINE càng dễ dính lỗi mất cập nhật
+        // hơn cả luồng online (máy mất mạng càng lâu càng dễ lỡ Realtime của thay đổi ở nơi khác
+        // trong lúc đó); đổi sang cộng/trừ delta tại server, miễn nhiễm với việc máy này offline
+        // bao lâu. Vẫn đỡ luôn hàng chờ CŨ (ghi trước bản này, còn dạng {stockQty} tuyệt đối) bằng
+        // nhánh dự phòng bên dưới — không để hàng chờ dở dang từ trước khi cập nhật bị bỏ qua.
         try {
           const payloadPatchTonKho = Array.isArray(item.tonKhoOnlyVariants)
             ? item.tonKhoOnlyVariants
             : []
-          for (const row of payloadPatchTonKho) {
+          const deltaRows = payloadPatchTonKho.filter((row) => Number.isFinite(Number(row?.delta)))
+          const legacyAbsoluteRows = payloadPatchTonKho.filter(
+            (row) => !Number.isFinite(Number(row?.delta)) && row?.stockQty !== undefined
+          )
+          if (deltaRows.length) {
+            const res = await adjustProductsStockAtomic(deltaRows)
+            if (!res.ok) throw res.error || new Error('adjust_products_stock lỗi.')
+          }
+          // Hàng chờ cũ (queue trước bản sửa lỗi mất cập nhật) — vẫn dạng tuyệt đối, giữ nguyên
+          // cách ghi cũ để không bỏ sót, chỉ áp dụng cho đúng phần queue cũ còn sót lại.
+          for (const row of legacyAbsoluteRows) {
             const ma = String(row?.ma_hang ?? row?.code ?? '').trim()
             if (!ma) continue
             let ton = Number(row?.stockQty)
             if (!Number.isFinite(ton)) ton = 0
-            const { error } = await sb
-              .from('products')
-              .update({ ton_kho: ton })
-              .eq('ma_hang', ma)
+            const { error } = await sb.from('products').update({ ton_kho: ton }).eq('ma_hang', ma)
             if (error) throw new Error(`Lỗi trừ tồn kho ${ma}: ${error.message}`)
           }
         } catch (stockErr) {
@@ -5516,23 +5529,31 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const sellerIdSnap = activeSellerId
     const fileNameSnap = catalogFileNameRef.current
 
-    // Tồn kho tuyệt đối của các biến thể bị chạm (dùng cho persist online).
+    // CHÊNH LỆCH tồn kho (delta) của các biến thể bị chạm — KHÔNG dùng số tuyệt đối nữa. Ghi tuyệt
+    // đối (tồn = X) từng gây mất cập nhật: tab thu ngân mở lâu lỡ chưa nhận kịp Realtime của 1 lần
+    // nhập hàng/sửa tồn ở nơi khác thì lần bán tiếp theo ghi đè bằng tồn CŨ trong bộ nhớ − số bán,
+    // xoá mất luôn thay đổi vừa xảy ra ở nơi khác. Ghi delta (server tự cộng `ton_kho + delta`,
+    // xem adjustProductsStockAtomic/RPC adjust_products_stock) miễn nhiễm với việc bộ nhớ máy này
+    // có đang cũ hay không — luôn cộng trừ đúng trên số THẬT hiện tại của DB.
+    const flatPrevForStock = flattenDisplayCatalogToVariants(productsSnap)
     const flatNext = flattenDisplayCatalogToVariants(nextProducts)
-    const tonKhoOnlyVariants = flatNext.filter((v) => touchedVariantIds.has(String(v.id)))
-    // Payload tồn kho cho hàng đợi OFFLINE: tối giản + ĐẢM BẢO có ma_hang/code/stockQty,
-    // để saveProductsTonKhoPatchToSupabase (đọc `code` làm ma_hang) luôn tìm đúng dòng products.
-    const tonKhoPatchOffline = tonKhoOnlyVariants
-      .map((v) => {
-        const ma = String(v?.code ?? v?.ma_hang ?? '').trim()
+    const stockDeltaPatches = [...touchedVariantIds]
+      .map((vid) => {
+        const before = flatPrevForStock.find((v) => String(v?.id) === vid)
+        const after = flatNext.find((v) => String(v?.id) === vid)
+        const ma = String(after?.code ?? before?.code ?? '').trim()
         if (!ma) return null
-        return {
-          id: v?.id != null ? String(v.id) : undefined,
-          ma_hang: ma,
-          code: ma,
-          stockQty: v?.stockQty,
-        }
+        const beforeNum = Number(before?.stockQty)
+        const afterNum = Number(after?.stockQty)
+        if (!Number.isFinite(beforeNum) || !Number.isFinite(afterNum)) return null
+        const delta = afterNum - beforeNum
+        if (delta === 0) return null
+        return { ma_hang: ma, delta }
       })
       .filter(Boolean)
+    // Payload cho hàng đợi OFFLINE — cùng dạng delta, phát lại qua adjustProductsStockAtomic khi
+    // có mạng trở lại (xem runOfflineQueueSync).
+    const tonKhoPatchOffline = stockDeltaPatches
 
     // Khối hoàn tất đơn trên UI — DÙNG CHUNG cho cả online & offline để thu ngân không bao giờ bị treo.
     const finalizePaidSaleUi = () => {
@@ -5643,9 +5664,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (!catalogStoreHydratedRef.current || initialCatalogLoadPendingRef.current) return
     void (async () => {
       try {
-        const r = await persistCatalogSnapshotAndProducts(nextProducts, fileNameSnap, {
-          tonKhoOnlyVariants,
-        })
+        const r = await adjustProductsStockAtomic(stockDeltaPatches)
         if (r.ok) {
           // KHÔNG tải lại toàn bộ danh mục (~1.6MB/3888 sản phẩm) sau mỗi đơn — quá tốn egress
           // Supabase cho thao tác chạy nhiều lần nhất trong ngày. `nextProducts` (đã trừ tồn) đã
