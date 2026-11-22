@@ -380,6 +380,17 @@
   margin-top: 1rem;
   padding-top: 0.75rem;
   border-top: 1px solid rgba(148, 163, 184, 0.15);
+  /*
+   * Dính đáy vùng cuộn `.cac-page` ở MỌI kích thước — trên máy tính bảng (vd. Xiaomi Pad, ≥1024px
+   * vẫn là bố cục PC) danh sách dài đẩy nút Hoàn thành / Cân bằng kho xuống cuối, bị thanh
+   * trình duyệt che không bấm được.
+   */
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  background: #0b0e12;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .cac-pager {

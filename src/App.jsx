@@ -4304,6 +4304,36 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
   }, [sellOrders, activeSellOrderId, products, fileName])
 
+  /**
+   * Tab Bán hàng: hỏi xác nhận trước khi tải lại / đóng trang (lỡ bấm F5, Ctrl+R, nút reload) — tránh
+   * mất đơn đang bán. Trình duyệt chỉ cho hiện hộp thoại mặc định của nó (không tùy biến được chữ).
+   * Bỏ qua khi chính app chủ động tải lại (banner "có bản mới") — xem `skipPosUnloadConfirmRef`.
+   */
+  const skipPosUnloadConfirmRef = useRef(false)
+  useEffect(() => {
+    if (standaloneInboundCreate || activeView !== 'sell') return undefined
+    const handleBeforeUnload = (e) => {
+      if (skipPosUnloadConfirmRef.current) return
+      // Ghi nháp ngay (không đợi debounce 420ms) — nếu người dùng vẫn chọn tải lại thì đơn được khôi phục.
+      if (productsRef.current?.length && !posDraftHydratingRef.current) {
+        try {
+          syncTabDraftNow(posTabIdRef.current, {
+            products: productsRef.current,
+            fileName: fileNameRef.current,
+            sellOrders: sellOrdersRef.current,
+            activeSellOrderId: activeSellOrderIdRef.current,
+          })
+        } catch {
+          /* ignore */
+        }
+      }
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [activeView, standaloneInboundCreate])
+
   /** Khi catalog đổi (tab Hàng hóa / nhập hàng) — đồng bộ giá vốn, tồn, ĐVT trên mọi đơn đang mở. */
   const catalogCartSyncFingerprintRef = useRef('')
   useEffect(() => {
@@ -6456,7 +6486,10 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     <div className={`app app--dark${isPosMode ? ' app--pos' : ''}`}>
       <AppUpdateBanner
         visible={appUpdateAvailable}
-        onReload={() => window.location.reload()}
+        onReload={() => {
+          skipPosUnloadConfirmRef.current = true
+          window.location.reload()
+        }}
       />
       {toastMessage && (
         <div className="fixed top-10 left-1/2 -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded shadow-lg z-[99999] transition-all">

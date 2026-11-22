@@ -5882,6 +5882,37 @@ li.ah-inbound-suggest-empty {
   }
 }
 
+/*
+ * Máy tính bảng / mobile (<1024px): form xếp một cột, dài hơn màn hình — nút Lưu tạm / Hoàn thành
+ * nằm cuối trang, bị thanh trình duyệt / thanh điều hướng che, không bấm được (vd. Xiaomi Pad).
+ * Dính nút ở đáy vùng cuộn `.admin-hub-main` để luôn nhìn thấy và bấm được.
+ */
+@media (max-width: 1023px) {
+  /* Sticky tính theo mép trong padding của vùng cuộn — bỏ đệm 120px (chỉ dành cho dock ≤768px). */
+  .admin-hub-main.admin-hub-main--inbound-draft {
+    padding-bottom: 0 !important;
+  }
+
+  .ah-inbound-draft-foot {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    background: rgba(12, 15, 20, 0.98);
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ≤768px: thanh điều hướng dưới (.ah-mnav-dock, position: fixed) — chừa đúng chiều cao dock để nút nằm ngay trên nó. */
+@media (max-width: 768px) {
+  .admin-hub-main.admin-hub-main--inbound-draft {
+    padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .admin-hub-main--inbound-draft .ah-inbound-draft-foot {
+    padding-bottom: 0.55rem;
+  }
+}
+
 @media (max-width: 960px) {
   .ah-inbound-draft-body {
     grid-template-columns: minmax(0, 1fr);
