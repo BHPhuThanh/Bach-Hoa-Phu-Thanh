@@ -1295,7 +1295,14 @@ export async function persistCatalogSnapshotAndProducts(products, fileName, opti
         productsWritten: false,
       }
     }
-    await saveCatalogSnapshot(products, fileName)
+    // Bảng `products` đã ghi xong (nguồn sự thật). Snapshot JSON (~8MB) chỉ giữ nhóm/ĐVT — nếu ghi
+    // bị timeout (57014) thì KHÔNG coi là lỗi thao tác: lần tải sau vẫn đúng vì merge lọc theo `products`.
+    try {
+      await saveCatalogSnapshot(products, fileName)
+    } catch (snapErr) {
+      console.warn('[catalogRepository] Ghi catalog_snapshots lỗi (bỏ qua, products đã lưu):', snapErr)
+      return { ok: true, snapshotSaved: false, productsWritten: true }
+    }
     return { ok: true, snapshotSaved: true, productsWritten: true }
   } catch (error) {
     notifySupabasePersistFailure(error)
@@ -2152,13 +2159,20 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
   }
 
   const snapCodes = new Set()
-  const mergedProducts = (snapshotCatalog.products || []).map((p) => {
-    const gvs = (p.groupVariants || [p]).map((v) => {
+  /**
+   * Bảng `products` (đã lọc `is_deleted`) là nguồn sự thật về việc sản phẩm CÒN TỒN TẠI.
+   * Snapshot JSON chỉ dùng để giữ nhóm/ĐVT/thứ tự — biến thể có trong snapshot nhưng không còn
+   * trên `products` (đã xóa/xóa mềm, hoặc snapshot cũ chưa ghi lại được) là "sản phẩm ma": bỏ đi.
+   */
+  const mergedProducts = []
+  for (const p of snapshotCatalog.products || []) {
+    const gvs = []
+    for (const v of p.groupVariants || [p]) {
       const code = String(v.code ?? '').trim()
-      if (code) snapCodes.add(code)
-      const live = liveByCode.get(code)
-      if (!live) return v
-      return applyComboMetadataToDisplayVariant(
+      const live = code ? liveByCode.get(code) : null
+      if (!live) continue
+      snapCodes.add(code)
+      gvs.push(applyComboMetadataToDisplayVariant(
         {
           ...v,
           price: live.price,
@@ -2174,19 +2188,23 @@ function mergeSnapshotCatalogWithProductsTable(snapshotCatalog, productsCatalog)
           weightRaw: live.weightRaw ?? v.weightRaw,
         },
         live
-      )
-    })
-    const rep = gvs[0] ?? p
+      ))
+    }
+    if (gvs.length === 0) continue
+    const rep = gvs[0]
     const comboRep = gvs.find((x) => x.catalogProductType === CATALOG_PRODUCT_TYPE_COMBO) ?? rep
-    return applyComboMetadataToDisplayVariant(
-      {
-        ...p,
-        ...comboRep,
-        groupVariants: gvs,
-      },
-      comboRep
+    mergedProducts.push(
+      applyComboMetadataToDisplayVariant(
+        {
+          ...p,
+          ...comboRep,
+          groupVariants: gvs,
+          multiUnit: gvs.length > 1 ? p.multiUnit : false,
+        },
+        comboRep
+      )
     )
-  })
+  }
 
   /** Dòng chỉ có trên bảng `products` (chưa có trong snapshot JSON) — phải hiện cả hàng thường, không chỉ combo. */
   for (const p of productsCatalog.products || []) {
