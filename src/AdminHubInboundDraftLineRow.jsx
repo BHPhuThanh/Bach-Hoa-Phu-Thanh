@@ -98,10 +98,21 @@ const AdminHubInboundDraftLineRow = memo(function AdminHubInboundDraftLineRow({
             href={buildOpenHangHoaGoodsAbsUrl(ln.variantId, String(ln.code || '').trim()) || '#'}
             target="_blank"
             rel="noopener noreferrer"
-            title="Mở trang Hàng hóa — chi tiết sản phẩm (tab mới)"
+            title="Sửa nhanh sản phẩm (Ctrl+click: mở trang Hàng hóa ở tab mới)"
             onClick={(e) => {
-              const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, String(ln.code || '').trim())
-              if (!u) e.preventDefault()
+              // Bấm thường (nhất là trên điện thoại): mở "Sửa nhanh" ngay trong trang — KHÔNG rời
+              // phiếu nhập. Trước đây link mở /admin/goods, trên điện thoại hay mở đè ngay tab
+              // đang nhập → mất phiếu, không quay lại được. Ctrl/Cmd/Shift+click vẫn mở tab mới.
+              if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) {
+                const u = buildOpenHangHoaGoodsAbsUrl(ln.variantId, String(ln.code || '').trim())
+                if (!u) e.preventDefault()
+                return
+              }
+              e.preventDefault()
+              e.stopPropagation()
+              if (typeof onOpenProductQuickEdit === 'function') {
+                onOpenProductQuickEdit(ln, catalogListForInbound)
+              }
             }}
           >
             {ln.code}

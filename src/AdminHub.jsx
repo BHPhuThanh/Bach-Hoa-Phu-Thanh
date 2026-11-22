@@ -187,6 +187,7 @@ import {
   getInboundOrderByCode,
   getInboundOrderById,
   INBOUND_SYNC_BUMP_EVENT,
+  upsertInboundHistoryEntry,
 } from './supabaseInboundHistory.js'
 import {
   collectInboundMaHangCodes,
@@ -4010,7 +4011,12 @@ export default function AdminHub({
         ? r.rows.map((x) => normalizeInboundRow(x)).filter((x) => x.id && x.code)
         : []
       setInboundOrders((prev) => {
-        const byId = new Map(remote.map((row) => [row.id, row]))
+        // `remote` sắp mới → cũ; dữ liệu cũ có thể còn vài dòng trùng id (trước khi ghi theo id) —
+        // giữ bản MỚI NHẤT (dòng đầu tiên gặp), không để bản cũ ghi đè.
+        const byId = new Map()
+        for (const row of remote) {
+          if (!byId.has(row.id)) byId.set(row.id, row)
+        }
         for (const row of prev) {
           if (row.id && row.code && !byId.has(row.id)) byId.set(row.id, row)
         }
@@ -5738,6 +5744,33 @@ export default function AdminHub({
     inboundCancelModal,
   ])
 
+  /**
+   * Ghi trạng thái phiếu lên Supabase (`inbound_history`, theo id phiếu) để máy khác thấy — dùng cho
+   * Lưu tạm, Hủy phiếu, Hoàn trả (trước đây các thao tác này chỉ nằm trong localStorage của máy đang
+   * dùng). Chạy nền sau khi UI đã cập nhật; lỗi → báo, thay đổi vẫn giữ ở máy này.
+   * @param {object} row
+   * @param {string} [actionLabel] — tên thao tác cho thông báo lỗi
+   */
+  const persistInboundRowRemote = useCallback(
+    (row, actionLabel = 'Lưu tạm') => {
+      if (!isSupabaseConfigured() || !row) return
+      void upsertInboundHistoryEntry(normalizeInboundRow(row)).then((r) => {
+        if (r?.ok) {
+          void refreshInboundInvoices({ quiet: true })
+          return
+        }
+        const e = r?.error
+        setInboundSyncErrMsg(
+          `${actionLabel} phiếu ${row.code || ''} mới chỉ có trên máy này — ${
+            e instanceof Error ? e.message : String(e?.message || e || 'lỗi không xác định')
+          }`
+        )
+      })
+    },
+    [refreshInboundInvoices]
+  )
+  const persistSavedTempInboundRemote = persistInboundRowRemote
+
   const saveInboundForm = useCallback(
     (status) => {
       const supplier = String(inboundFormSupplierName || '').trim()
@@ -5761,6 +5794,7 @@ export default function AdminHub({
         setInboundFormEditOrderId(null)
         completeInboundFlowReturnToList()
         triggerInboundSaveToast()
+        persistSavedTempInboundRemote(row)
         return
       }
       if (status === 'completed') {
@@ -5771,8 +5805,10 @@ export default function AdminHub({
       setInboundOrders((prev) => [row, ...prev])
       completeInboundFlowReturnToList()
       triggerInboundSaveToast()
+      persistSavedTempInboundRemote(row)
     },
     [
+      persistSavedTempInboundRemote,
       inboundFormSupplierName,
       inboundFormEditOrderId,
       inboundOrders,
@@ -5865,6 +5901,7 @@ export default function AdminHub({
     }
     const nextRow = normalizeInboundRow({ ...order, lines: newLines, status })
     setInboundOrders((p) => p.map((o) => (o.id === order.id ? nextRow : o)))
+    persistInboundRowRemote(nextRow, 'Hoàn trả')
     setInboundDetailLineDrafts((prev) => {
       if (!prev[order.id]) return prev
       const n = { ...prev }
@@ -5878,6 +5915,7 @@ export default function AdminHub({
     inboundReturnQtyDraft,
     catalogListForInbound,
     applyInboundFulfillmentPatches,
+    persistInboundRowRemote,
   ])
 
   const requestInboundCancel = useCallback((order) => {
@@ -5935,9 +5973,9 @@ export default function AdminHub({
         }
       }
     }
-    setInboundOrders((p) =>
-      p.map((o) => (o.id === row.id ? normalizeInboundRow({ ...row, status: 'cancelled' }) : o))
-    )
+    const cancelledRow = normalizeInboundRow({ ...row, status: 'cancelled' })
+    setInboundOrders((p) => p.map((o) => (o.id === row.id ? cancelledRow : o)))
+    persistInboundRowRemote(cancelledRow, 'Hủy')
     setInboundDetailLineDrafts((prev) => {
       if (!prev[row.id]) return prev
       const n = { ...prev }
@@ -5945,7 +5983,12 @@ export default function AdminHub({
       return n
     })
     setInboundCancelModal(null)
-  }, [inboundCancelModal, catalogListForInbound, applyInboundFulfillmentPatches])
+  }, [
+    inboundCancelModal,
+    catalogListForInbound,
+    applyInboundFulfillmentPatches,
+    persistInboundRowRemote,
+  ])
 
   const closeInboundDetailTabByOrderId = useCallback((orderId) => {
     const oid = String(orderId ?? '')
@@ -11030,14 +11073,10 @@ export default function AdminHub({
               <ul className="ah-iv-diff-list">
                 {inboundCostDiffModal.diffs.map((d) => (
                   <li key={d.variantId} className="ah-iv-diff-item">
-                    <a
-                      className="ah-iv-diff-code ah-iv-diff-code-link"
-                      href={`/admin/goods?search=${encodeURIComponent(String(d.ma_hang ?? d.code ?? '').trim())}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
+                    {/* Chỉ hiện mã (không link) — bấm nhầm trên điện thoại sẽ rời trang giữa lúc đang Hoàn thành phiếu. */}
+                    <span className="ah-iv-diff-code">
                       {String(d.ma_hang ?? d.code ?? '').trim() || '—'}
-                    </a>
+                    </span>
                     <span className="ah-iv-diff-name"> — {d.name}</span>
                     <div className="ah-iv-diff-prices">
                       <span>Giá vốn cũ: {Number(d.oldCost || 0).toLocaleString('vi-VN')} đ</span>
