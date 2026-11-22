@@ -2554,7 +2554,15 @@ export default function AdminHub({
       const { mode, anchorVariantId, flatRow, replaceCatalogId } = payload
       const codeLc = String(flatRow.code || '').trim().toLowerCase()
       const flat = (Array.isArray(catalogList) ? catalogList : []).flatMap((p) => p.groupVariants || [p])
-      if (mode !== 'edit' && flat.some((r) => String(r.code || '').trim().toLowerCase() === codeLc)) {
+      // Kiểm tra trùng mã cả khi SỬA (đổi SKU) — bỏ qua chính dòng combo đang sửa. Trước đây chỉ kiểm
+      // khi tạo mới: sửa combo sang mã của sản phẩm khác sẽ ghi đè lên sản phẩm đó (products lưu theo ma_hang).
+      const selfId = mode === 'edit' ? String(anchorVariantId || flatRow.id || '') : ''
+      if (
+        flat.some(
+          (r) =>
+            String(r.code || '').trim().toLowerCase() === codeLc && (!selfId || String(r.id) !== selfId)
+        )
+      ) {
         window.alert('Mã hàng đã tồn tại. Vui lòng đổi mã SKU.')
         return
       }

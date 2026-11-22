@@ -209,6 +209,12 @@ export function AdminHubComboModal({
       window.alert('Thêm ít nhất một thành phần trong combo.')
       return
     }
+    // SL = 0 → bán combo sẽ không trừ tồn thành phần đó (bị bỏ qua khi trừ kho).
+    const badQty = lines.find((l) => !(Number(l.qty) > 0))
+    if (badQty) {
+      window.alert(`Số lượng thành phần «${badQty.name || badQty.code || ''}» phải lớn hơn 0.`)
+      return
+    }
     const codeTrim = allocateAutoHhSkuIfEmpty(catalogList, String(code || '').trim())
     setCode(codeTrim)
     const price = parseMoneyDraftVi(comboPrice)
@@ -268,7 +274,8 @@ export function AdminHubComboModal({
         mode === 'edit' ? String(initialDisplayProduct?.groupVariants?.[0]?.id || '') : null,
       flatRow,
     })
-    onClose()
+    // KHÔNG tự đóng ở đây: nơi xử lý lưu tự đóng khi THÀNH CÔNG; lỗi (trùng mã, lỗi Supabase) thì
+    // giữ cửa sổ mở để không mất dữ liệu vừa nhập.
   }
 
   if (!open) return null

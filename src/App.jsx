@@ -157,6 +157,7 @@ import {
   buildComboCartSaleDeltaByVariantId,
   buildNonComboDeductionByMaGoc,
   collectCartSaleTouchedVariantIds,
+  mergeSaleDeductionByMaGoc,
   collectSiblingVariantIds,
   findCanonicalStockRootVariant,
   findRootStockTonKhoForMaGoc,
@@ -1870,17 +1871,22 @@ function rehydrateSellOrdersFromSnapshot(products, rawOrders, options = {}) {
  * Trừ tồn kho catalog khi bán:
  * - Hàng thường: `ma_goc` từ `ma_hh_lien_quan` hoặc `ma_hang`; `tong_xuat = SL × Number(quy_doi)`;
  *   `ton_kho_chuan = ton_kho` của dòng **ma_hang === ma_goc** − Σ(tong_xuat); gán **cùng** `ton_kho_chuan` cho mọi SKU có `ma_hang` hoặc `ma_hh_lien_quan` === `ma_goc`.
- * - Combo: trừ theo BOM (delta theo biến thể thành phần).
+ * - Combo: thành phần BOM quy về cùng `ma_goc` / tồn chuẩn như hàng thường và CỘNG CHUNG
+ *   (`mergeSaleDeductionByMaGoc`) — giỏ có combo + bán lẻ chính thành phần đó vẫn trừ đủ, các ĐVT
+ *   anh em của thành phần luôn cùng một tồn.
  * Trừ thêm từng lô nếu có stockBatches.
  * @param {{
- *   precomputedDeductByMaGoc?: Map<string, number>
+ *   precomputedDeductByMaGoc?: Map<string, number> — CHỈ hàng thường (combo tự gộp bên trong)
  *   precomputedComboDelta?: Map<string, number>
  * }} [options]
  */
 function applySoldQtyToCatalog(products, cartLines, options) {
   if (!products?.length || !cartLines?.length) return products
-  const deductByMaGoc =
-    options?.precomputedDeductByMaGoc ?? buildNonComboDeductionByMaGoc(products, cartLines)
+  const deductByMaGoc = mergeSaleDeductionByMaGoc(
+    products,
+    cartLines,
+    options?.precomputedDeductByMaGoc
+  )
   const comboDelta =
     options?.precomputedComboDelta ?? buildComboCartSaleDeltaByVariantId(products, cartLines)
 
@@ -1927,14 +1933,9 @@ function applySoldQtyToCatalog(products, cartLines, options) {
     for (const v of p.groupVariants || [p]) {
       const vid = String(v.id)
       let nextStock = v.stockQty
+      // Thành phần combo đã gộp vào `deductByMaGoc` — không trừ thêm theo `comboDelta` (tránh trừ 2 lần).
       if (canonicalTonKhoByVid.has(vid)) {
         nextStock = canonicalTonKhoByVid.get(vid)
-      } else {
-        const sold = comboDelta.get(v.id) ?? comboDelta.get(vid) ?? 0
-        if (sold > 0) {
-          const cur = nextStock != null && Number.isFinite(Number(nextStock)) ? Number(nextStock) : 0
-          nextStock = cur - sold
-        }
       }
       let nextBatches = v.stockBatches
       const decMap = batchDecByVariantId.get(String(v.id))
