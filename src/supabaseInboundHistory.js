@@ -51,7 +51,15 @@ function snapshotInboundOrderForHistory(order) {
     orderDiscountMode: order.orderDiscountMode === 'percent' ? 'percent' : 'amount',
     orderDiscountValue: order.orderDiscountValue != null ? Number(order.orderDiscountValue) : 0,
     lines: lines.map((ln) => stripUndefinedDeep({ ...ln })),
+    ...(order.deleted === true
+      ? { deleted: true, deletedAtMs: Number(order.deletedAtMs) || Date.now() }
+      : {}),
   }
+}
+
+/** Phiếu đã bị "Xóa đơn nhập" (đánh dấu mềm trong payload — đồng bộ việc xóa sang mọi máy). */
+export function isInboundHistoryPayloadDeleted(payload) {
+  return payload != null && typeof payload === 'object' && payload.deleted === true
 }
 
 /**
@@ -73,7 +81,8 @@ export function validateInboundHistoryPayload(order) {
   if (!Number.isFinite(payload.createdAtMs)) {
     return { ok: false, error: new Error('Thiếu hoặc sai ngày tạo phiếu (createdAtMs).') }
   }
-  const allowEmptyLines = payload.status === 'saved_temp' || payload.status === 'cancelled'
+  const allowEmptyLines =
+    payload.status === 'saved_temp' || payload.status === 'cancelled' || payload.deleted === true
   if (!Array.isArray(payload.lines) || (payload.lines.length === 0 && !allowEmptyLines)) {
     return { ok: false, error: new Error('Phiếu nhập phải có ít nhất một dòng hàng (lines).') }
   }
@@ -178,6 +187,49 @@ export async function upsertInboundHistoryEntry(order) {
 }
 
 /**
+ * "Xóa đơn nhập": đánh dấu `payload.deleted = true` trên các dòng `inbound_history` theo id phiếu
+ * (xóa mềm — mọi máy khi làm mới sẽ gỡ phiếu khỏi danh sách; dữ liệu vẫn còn để khôi phục khi cần).
+ * Phiếu chưa từng lên máy chủ (chỉ có ở máy này) → bỏ qua, không lỗi.
+ * @param {Iterable<string>} orderIds
+ * @returns {Promise<{ ok: boolean, skipped?: boolean, marked?: number, error?: unknown }>}
+ */
+export async function markInboundHistoryEntriesDeleted(orderIds) {
+  if (!isSupabaseConfigured()) return { ok: true, skipped: true }
+  const sb = getSupabaseClient()
+  if (!sb) return { ok: false, error: new Error('Không tạo được Supabase client.') }
+  const ids = [...new Set([...orderIds].map((x) => String(x ?? '').trim()).filter(Boolean))]
+  if (ids.length === 0) return { ok: true, marked: 0 }
+  try {
+    let marked = 0
+    const deletedAtMs = Date.now()
+    for (const id of ids) {
+      await withSupabaseRetry(async () => {
+        const found = await sb
+          .from(INBOUND_HISTORY_TABLE)
+          .select('id, payload')
+          .eq('payload->>id', id)
+        if (found.error) throw found.error
+        for (const row of found.data || []) {
+          const p = row?.payload && typeof row.payload === 'object' ? row.payload : {}
+          if (isInboundHistoryPayloadDeleted(p)) continue
+          const upd = await sb
+            .from(INBOUND_HISTORY_TABLE)
+            .update({ payload: { ...p, deleted: true, deletedAtMs } })
+            .eq('id', row.id)
+          if (upd.error) throw upd.error
+          marked += 1
+        }
+      })
+    }
+    bumpInboundSync()
+    return { ok: true, marked }
+  } catch (error) {
+    console.error('Lỗi xóa phiếu nhập trên máy chủ:', error)
+    return { ok: false, error }
+  }
+}
+
+/**
  * Đọc danh sách phiếu nhập trực tiếp từ Supabase.
  * Mặc định (không truyền gì) tải toàn bộ tới `limit` dòng — chỉ dùng khi thật sự cần (vd export).
  * Trang "Nhập hàng" dùng `sinceMs`/`beforeMs` để giới hạn theo ngày (xem `refreshInboundInvoices`
@@ -200,10 +252,16 @@ export async function fetchInboundInvoices(opts = {}) {
     if (Number.isFinite(beforeMs)) q = q.lt('created_at', new Date(beforeMs).toISOString())
     const { data, error } = await q
     if (error) return { ok: false, error }
-    const rows = (data || [])
+    const all = (data || [])
       .map((r) => (r && typeof r.payload === 'object' ? r.payload : null))
       .filter(Boolean)
-    return { ok: true, rows }
+    // Phiếu đã xóa: không trả về như phiếu thường, nhưng báo id để máy này gỡ khỏi cache cục bộ.
+    const rows = all.filter((p) => !isInboundHistoryPayloadDeleted(p))
+    const deletedIds = all
+      .filter((p) => isInboundHistoryPayloadDeleted(p))
+      .map((p) => String(p.id ?? '').trim())
+      .filter(Boolean)
+    return { ok: true, rows, deletedIds }
   } catch (error) {
     return { ok: false, error }
   }
@@ -228,7 +286,7 @@ export async function getInboundOrderById(orderIdRaw) {
       .maybeSingle()
     if (error) throw error
     const p = data?.payload
-    return p && typeof p === 'object' ? p : null
+    return p && typeof p === 'object' && !isInboundHistoryPayloadDeleted(p) ? p : null
   } catch (e) {
     console.warn('[inbound_history] getInboundOrderById', orderId, e)
     return null
@@ -254,7 +312,7 @@ export async function getInboundOrderByCode(codeRaw) {
       .maybeSingle()
     if (error) throw error
     let p = data?.payload
-    if (p && typeof p === 'object') return p
+    if (p && typeof p === 'object') return isInboundHistoryPayloadDeleted(p) ? null : p
     const { data: rows, error: err2 } = await sb
       .from(INBOUND_HISTORY_TABLE)
       .select('payload')
@@ -266,7 +324,7 @@ export async function getInboundOrderByCode(codeRaw) {
       (row) => String(row?.payload?.code ?? row?.payload?.order_code ?? '').trim().toUpperCase() === codeUpper
     )
     p = hit?.payload
-    return p && typeof p === 'object' ? p : null
+    return p && typeof p === 'object' && !isInboundHistoryPayloadDeleted(p) ? p : null
   } catch (e) {
     console.warn('[inbound_history] getInboundOrderByCode', code, e)
     return null
