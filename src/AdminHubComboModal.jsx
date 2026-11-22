@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import BarcodeScanModal from './BarcodeScanModal.jsx'
 import { allocateAutoHhSkuIfEmpty } from './autoProductSku.js'
 import { normalizeBarcodeValue } from './catalogCsv.js'
 import { filterAndSortGoodsRowsSimple } from './catalogSearchSimple.js'
@@ -62,7 +63,11 @@ export function AdminHubComboModal({
   initialDisplayProduct,
   onSaveDisplayProduct,
   revenueReadOnly,
+  /** Mở cửa sổ "Sửa nhanh sản phẩm" (giống tab Nhập hàng) — nhận `variant.id`. */
+  onOpenProductQuickEdit,
 }) {
+  const [scanOpen, setScanOpen] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [barcode, setBarcode] = useState('')
@@ -189,6 +194,76 @@ export function AdminHubComboModal({
     setPickQ('')
     requestAnimationFrame(() => {
       pickSearchRef.current?.focus()
+    })
+  }, [])
+
+  /**
+   * Tìm biến thể (không phải combo) theo mã quét / gõ: khớp mã vạch trước, sau đó mã hàng.
+   * @returns {object | null} — dạng dòng gợi ý `{ id, name, code, unitLabel, price, cost }`
+   */
+  const findComponentByExactCode = useCallback((raw) => {
+    const q = String(raw ?? '').trim()
+    if (!q) return null
+    const needle = String(normalizeBarcodeValue(q))
+    const qLc = q.toLowerCase()
+    let byCode = null
+    for (const p of catalogListRef.current || []) {
+      if (isComboCatalogProduct(p)) continue
+      for (const v of p.groupVariants || [p]) {
+        if (needle && String(normalizeBarcodeValue(v.barcode ?? '')) === needle) return v
+        if (!byCode && String(v.code ?? '').trim().toLowerCase() === qLc) byCode = v
+      }
+    }
+    return byCode
+  }, [])
+
+  const addComponentFromScan = useCallback(
+    (raw) => {
+      const q = String(raw ?? '').trim()
+      if (!q) return false
+      const v = findComponentByExactCode(q)
+      if (v) {
+        addLineFromRow(v)
+        setScanMsg(`Đã thêm: ${v.name || v.code} - ${normalizeCatalogUnitLabel(v.unitLabel)}`)
+        return true
+      }
+      // Không khớp chính xác → đưa vào ô tìm để chọn tay trong gợi ý.
+      setPickQ(q)
+      setScanMsg(`Không thấy mã «${q}» — chọn trong danh sách gợi ý.`)
+      return false
+    },
+    [findComponentByExactCode, addLineFromRow]
+  )
+
+  /** Đổi ĐVT của một thành phần — chuyển sang biến thể anh em (mã, giá, giá vốn theo ĐVT đó). */
+  const changeLineUnit = useCallback((key, nextVariantId) => {
+    const ctx = findVariantContext(catalogListRef.current, nextVariantId)
+    const v = (ctx?.variants || []).find((x) => String(x.id) === String(nextVariantId)) || ctx?.clicked
+    if (!v) return
+    setLines((prev) => {
+      // Đã có dòng cùng biến thể đó → gộp số lượng, bỏ dòng đang đổi.
+      const cur = prev.find((x) => x.key === key)
+      const dup = prev.find((x) => x.key !== key && String(x.variantId) === String(v.id))
+      if (cur && dup) {
+        return prev
+          .filter((x) => x.key !== key)
+          .map((x) =>
+            x.key === dup.key ? { ...x, qty: (Number(x.qty) || 0) + (Number(cur.qty) || 0) } : x
+          )
+      }
+      return prev.map((x) =>
+        x.key === key
+          ? {
+              ...x,
+              variantId: v.id,
+              name: v.name || x.name,
+              code: v.code || x.code,
+              unitLabel: normalizeCatalogUnitLabel(v.unitLabel),
+              linePrice: Number(v.price) || 0,
+              lineCost: Number(v.cost) || 0,
+            }
+          : x
+      )
     })
   }, [])
 
@@ -352,16 +427,54 @@ export function AdminHubComboModal({
               className="ah-combo-search-block"
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <input
-                ref={pickSearchRef}
-                className="ah-combo-search"
-                type="search"
-                value={pickQ}
-                onChange={(e) => setPickQ(e.target.value)}
-                placeholder="Tìm theo tên, mã — hoặc quét mã vạch thành phần"
-                autoComplete="off"
-                spellCheck={false}
-              />
+              <div className="ah-combo-search-row">
+                <input
+                  ref={pickSearchRef}
+                  className="ah-combo-search"
+                  type="search"
+                  value={pickQ}
+                  onChange={(e) => {
+                    setPickQ(e.target.value)
+                    if (scanMsg) setScanMsg('')
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return
+                    e.preventDefault()
+                    // Máy quét mã vạch (gõ + Enter) hoặc gõ đúng mã → thêm ngay; không thì lấy gợi ý đầu.
+                    const q = pickQ.trim()
+                    if (!q) return
+                    if (findComponentByExactCode(q)) {
+                      addComponentFromScan(q)
+                    } else if (pickHits[0]) {
+                      addLineFromRow(pickHits[0])
+                    }
+                  }}
+                  placeholder="Tìm theo tên, mã — hoặc quét mã vạch thành phần"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="ah-combo-scan-btn"
+                  title="Quét mã vạch / QR bằng camera để thêm thành phần"
+                  aria-label="Quét mã vạch hoặc QR"
+                  onClick={() => {
+                    setScanMsg('')
+                    setScanOpen(true)
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  Quét mã
+                </button>
+              </div>
+              {scanMsg ? <div className="ah-combo-cell-sub" role="status">{scanMsg}</div> : null}
               {pickQ.trim() ? (
                 <div
                   className="ah-combo-pick-pop"
@@ -402,10 +515,41 @@ export function AdminHubComboModal({
                         <tr key={ln.key}>
                           <td>{idx + 1}</td>
                           <td>
-                            <div className="ah-combo-cell-name">{ln.name}</div>
+                            {typeof onOpenProductQuickEdit === 'function' && ln.variantId ? (
+                              <button
+                                type="button"
+                                className="ah-combo-cell-name ah-combo-cell-name-btn"
+                                title="Xem / sửa nhanh sản phẩm"
+                                onClick={() => onOpenProductQuickEdit(String(ln.variantId))}
+                              >
+                                {ln.name}
+                              </button>
+                            ) : (
+                              <div className="ah-combo-cell-name">{ln.name}</div>
+                            )}
                             <div className="ah-combo-cell-sub">{ln.code}</div>
                           </td>
-                          <td>{ln.unitLabel}</td>
+                          <td>
+                            {(() => {
+                              const unitVariants =
+                                findVariantContext(catalogList, ln.variantId)?.variants || []
+                              if (unitVariants.length <= 1) return ln.unitLabel
+                              return (
+                                <select
+                                  className="ah-combo-unit-select"
+                                  aria-label={`Đơn vị tính — ${ln.name}`}
+                                  value={String(ln.variantId)}
+                                  onChange={(e) => changeLineUnit(ln.key, e.target.value)}
+                                >
+                                  {unitVariants.map((uv) => (
+                                    <option key={uv.id} value={String(uv.id)}>
+                                      {normalizeCatalogUnitLabel(uv.unitLabel) || uv.code}
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </td>
                           <td className="ah-num">
                             <input
                               className="ah-combo-cell-input ah-num"
@@ -538,6 +682,16 @@ export function AdminHubComboModal({
           </button>
         </footer>
       </div>
+      <BarcodeScanModal
+        open={scanOpen}
+        title="Quét mã — thêm thành phần combo"
+        onClose={() => setScanOpen(false)}
+        onScan={(t) => {
+          // Khớp → thêm dòng & đóng camera; không khớp → đóng, đưa mã vào ô tìm để chọn tay.
+          addComponentFromScan(t)
+          setScanOpen(false)
+        }}
+      />
     </div>
   )
 }

@@ -11532,12 +11532,15 @@ export default function AdminHub({
           initialDisplayProduct={comboModal.mode === 'edit' ? comboModal.product : null}
           onSaveDisplayProduct={handleComboSaveDisplay}
           revenueReadOnly={revenueReadOnly}
+          onOpenProductQuickEdit={openInboundProductQuickEdit}
         />
       )}
 
       {inboundQuickEditExpandId ? (
         <div
-          className="ah-inbound-quick-edit-backdrop"
+          className={`ah-inbound-quick-edit-backdrop${
+            comboModal ? ' ah-inbound-quick-edit-backdrop--over-combo' : ''
+          }`}
           role="presentation"
           onClick={(e) => {
             if (e.target === e.currentTarget) closeInboundProductQuickEdit()
