@@ -187,6 +187,7 @@ import {
   getInboundOrderByCode,
   getInboundOrderById,
   INBOUND_SYNC_BUMP_EVENT,
+  markInboundHistoryEntriesDeleted,
   upsertInboundHistoryEntry,
 } from './supabaseInboundHistory.js'
 import {
@@ -4010,6 +4011,8 @@ export default function AdminHub({
       const remote = Array.isArray(r.rows)
         ? r.rows.map((x) => normalizeInboundRow(x)).filter((x) => x.id && x.code)
         : []
+      /** Phiếu đã bị xóa (ở máy này hoặc máy khác) — gỡ khỏi cache cục bộ, không giữ lại bản cũ. */
+      const deletedIdSet = new Set(Array.isArray(r.deletedIds) ? r.deletedIds : [])
       setInboundOrders((prev) => {
         // `remote` sắp mới → cũ; dữ liệu cũ có thể còn vài dòng trùng id (trước khi ghi theo id) —
         // giữ bản MỚI NHẤT (dòng đầu tiên gặp), không để bản cũ ghi đè.
@@ -4018,6 +4021,7 @@ export default function AdminHub({
           if (!byId.has(row.id)) byId.set(row.id, row)
         }
         for (const row of prev) {
+          if (deletedIdSet.has(row.id)) continue
           if (row.id && row.code && !byId.has(row.id)) byId.set(row.id, row)
         }
         return [...byId.values()].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
@@ -4051,8 +4055,9 @@ export default function AdminHub({
         ? r.rows.map((x) => normalizeInboundRow(x)).filter((x) => x.id && x.code)
         : []
       if (older.length === 0) setInboundHistoryFullyLoaded(true)
+      const olderDeleted = new Set(Array.isArray(r.deletedIds) ? r.deletedIds : [])
       setInboundOrders((prev) => {
-        const byId = new Map(prev.map((row) => [row.id, row]))
+        const byId = new Map(prev.filter((row) => !olderDeleted.has(row.id)).map((row) => [row.id, row]))
         for (const row of older) byId.set(row.id, row)
         return [...byId.values()].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
       })
@@ -4138,10 +4143,28 @@ export default function AdminHub({
       alert('Chọn ít nhất một đơn (ô đầu dòng).')
       return
     }
-    if (!window.confirm(`Xóa ${ids.length} đơn nhập đã chọn?`)) return
+    if (
+      !window.confirm(
+        `Xóa ${ids.length} đơn nhập đã chọn?\n\nĐơn sẽ bị xóa trên MỌI máy. Xóa đơn không hoàn lại tồn kho — muốn trả tồn kho hãy dùng «Hủy đơn» thay vì xóa.`
+      )
+    ) {
+      return
+    }
     const idSet = new Set(ids)
+    const ordersSnapshot = snapshotInboundOrdersList(inboundOrdersRef.current)
     setInboundOrders((rows) => rows.filter((r) => !idSet.has(r.id)))
     setInboundSelected({})
+    // Đánh dấu xóa trên máy chủ để máy khác cũng gỡ đơn (trước đây chỉ xóa ở máy này → làm mới lại hiện).
+    void markInboundHistoryEntriesDeleted(ids).then((r) => {
+      if (r?.ok) return
+      setInboundOrders(ordersSnapshot)
+      const e = r?.error
+      setInboundSyncErrMsg(
+        `Xóa ${ids.length} đơn nhập chưa lên được máy chủ — đã hoàn tác. ${
+          e instanceof Error ? e.message : String(e?.message || e || '')
+        }`.trim()
+      )
+    })
   }
 
   const handleInboundExportSelected = () => {
