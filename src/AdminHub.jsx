@@ -11073,14 +11073,10 @@ export default function AdminHub({
               <ul className="ah-iv-diff-list">
                 {inboundCostDiffModal.diffs.map((d) => (
                   <li key={d.variantId} className="ah-iv-diff-item">
-                    <a
-                      className="ah-iv-diff-code ah-iv-diff-code-link"
-                      href={`/admin/goods?search=${encodeURIComponent(String(d.ma_hang ?? d.code ?? '').trim())}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
+                    {/* Chỉ hiện mã (không link) — bấm nhầm trên điện thoại sẽ rời trang giữa lúc đang Hoàn thành phiếu. */}
+                    <span className="ah-iv-diff-code">
                       {String(d.ma_hang ?? d.code ?? '').trim() || '—'}
-                    </a>
+                    </span>
                     <span className="ah-iv-diff-name"> — {d.name}</span>
                     <div className="ah-iv-diff-prices">
                       <span>Giá vốn cũ: {Number(d.oldCost || 0).toLocaleString('vi-VN')} đ</span>
