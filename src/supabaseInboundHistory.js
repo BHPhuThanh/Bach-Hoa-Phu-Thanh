@@ -73,7 +73,8 @@ export function validateInboundHistoryPayload(order) {
   if (!Number.isFinite(payload.createdAtMs)) {
     return { ok: false, error: new Error('Thiếu hoặc sai ngày tạo phiếu (createdAtMs).') }
   }
-  if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+  const allowEmptyLines = payload.status === 'saved_temp' || payload.status === 'cancelled'
+  if (!Array.isArray(payload.lines) || (payload.lines.length === 0 && !allowEmptyLines)) {
     return { ok: false, error: new Error('Phiếu nhập phải có ít nhất một dòng hàng (lines).') }
   }
   return { ok: true, payload, order_code }
@@ -102,10 +103,17 @@ async function findInboundHistoryEntryByOrderId(sb, orderId) {
 }
 
 /**
- * Chèn một dòng sau khi đã cập nhật `products` thành công.
+ * Ghi phiếu lên `inbound_history` theo id phiếu (`payload->>id`): đã có → UPDATE đúng dòng đó,
+ * chưa có → INSERT. Dùng cho mọi trạng thái (Lưu tạm, Hoàn thành, sửa phiếu…) — máy khác thấy
+ * ngay, và phiếu Lưu tạm khi Hoàn thành sẽ cập nhật dòng cũ thay vì sinh thêm phiếu trùng.
  * @returns {Promise<{ ok: boolean, skipped?: boolean, error?: unknown, order?: object, dbRow?: object }>}
  */
 export async function insertInboundHistoryEntry(order) {
+  return upsertInboundHistoryEntry(order)
+}
+
+/** @see insertInboundHistoryEntry */
+export async function upsertInboundHistoryEntry(order) {
   if (!isSupabaseConfigured()) return { ok: true, skipped: true, order }
   const sb = getSupabaseClient()
   if (!sb) {
@@ -125,6 +133,25 @@ export async function insertInboundHistoryEntry(order) {
 
   try {
     const newOrder = await withSupabaseRetry(async () => {
+      // Tra cứu phải báo lỗi thật (không nuốt lỗi) — nếu không sẽ INSERT nhầm thành phiếu trùng.
+      const found = await sb
+        .from(INBOUND_HISTORY_TABLE)
+        .select('id')
+        .eq('payload->>id', payload.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (found.error) throw found.error
+      const existingRow = Array.isArray(found.data) ? found.data[0] : null
+      if (existingRow?.id) {
+        const upd = await sb
+          .from(INBOUND_HISTORY_TABLE)
+          .update(insertPayload)
+          .eq('id', existingRow.id)
+          .select('id, created_at, order_code, payload')
+          .single()
+        if (upd.error) throw upd.error
+        return upd.data
+      }
       const res = await sb
         .from(INBOUND_HISTORY_TABLE)
         .insert(insertPayload)
