@@ -16,8 +16,14 @@
 export const POS_SESSION_DRAFT_PREFIX = 'csv-preview-pos-session-draft-v2::'
 export const POS_SESSION_DRAFT_VERSION = 2
 const POS_TAB_ID_SESSION_KEY = 'csv-preview-pos-tab-id'
-/** Tab không báo sống quá mốc này → coi như đã đóng, cho phép tab khác nhận lại nháp. */
-export const POS_DRAFT_HEARTBEAT_STALE_MS = 12000
+/**
+ * Tab không báo sống quá mốc này → coi như đã đóng, cho phép tab khác nhận lại nháp.
+ * ~5 giây: nhân viên tắt tab bị treo rồi mở lại ngay để bán tiếp. (Tắt tab bình thường còn nhanh
+ * hơn — `markTabDraftClosed` báo «đã đóng» ngay lúc tắt.)
+ */
+export const POS_DRAFT_HEARTBEAT_STALE_MS = 5000
+/** Chu kỳ báo sống — đủ dày so với {@link POS_DRAFT_HEARTBEAT_STALE_MS} (≥3 nhịp trong 1 cửa sổ). */
+export const POS_DRAFT_HEARTBEAT_INTERVAL_MS = 1500
 /** Dọn rác nháp quá cũ (tab đóng rất lâu, không ai nhận) — tránh phình localStorage vô hạn. */
 const POS_DRAFT_GC_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 
@@ -187,6 +193,55 @@ export function touchTabDraftHeartbeat(tabId) {
     localStorage.setItem(key, JSON.stringify(j))
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Tab đang đóng (pagehide): đặt mốc sống về 0 để tab mở lại nhận đơn NGAY, không phải chờ hết
+ * {@link POS_DRAFT_HEARTBEAT_STALE_MS}. F5 cùng tab vẫn đọc lại ô của chính nó (cùng mã tab) nên
+ * không ảnh hưởng; nếu tab chưa đóng thật (bfcache quay lại) nhịp báo sống kế tiếp sẽ ghi lại.
+ */
+export function markTabDraftClosed(tabId) {
+  try {
+    const key = draftKeyForTab(tabId)
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const j = JSON.parse(raw)
+    if (!j || typeof j !== 'object') return
+    j.heartbeatAt = 0
+    localStorage.setItem(key, JSON.stringify(j))
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Có nháp (còn hàng) của tab khác VẪN đang báo sống không — nếu có, trả số ms nữa nó sẽ quá hạn
+ * (dùng để tự thử nhận lại khi tab treo vừa bị tắt nhưng chưa quá mốc). Không có → null.
+ */
+export function msUntilOtherTabDraftClaimable(myTabId) {
+  try {
+    const now = Date.now()
+    const myKey = draftKeyForTab(myTabId)
+    let best = null
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key || !key.startsWith(POS_SESSION_DRAFT_PREFIX) || key === myKey) continue
+      let j = null
+      try {
+        j = JSON.parse(localStorage.getItem(key))
+      } catch {
+        continue
+      }
+      if (!j || !sellOrdersHaveAnyCartLines(j.sellOrders)) continue
+      const age = now - (Number(j.heartbeatAt) || 0)
+      if (age >= POS_DRAFT_HEARTBEAT_STALE_MS) continue
+      const wait = POS_DRAFT_HEARTBEAT_STALE_MS - age
+      if (best == null || wait < best) best = wait
+    }
+    return best
+  } catch {
+    return null
   }
 }
 

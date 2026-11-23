@@ -25,6 +25,9 @@ import {
   getOrCreatePosTabId,
   loadTabDraft,
   releaseClaimedTabDraft,
+  markTabDraftClosed,
+  msUntilOtherTabDraftClaimable,
+  POS_DRAFT_HEARTBEAT_INTERVAL_MS,
   sellOrdersHaveAnyCartLines,
   syncTabDraftNow,
   touchTabDraftHeartbeat,
@@ -2673,6 +2676,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const lastCatalogFingerprintRef = useRef('')
   /** Đã khôi phục (hoặc xác định không có) đơn nháp cho lần mở trang này. */
   const posDraftRestoreDoneRef = useRef(false)
+  const posDraftClaimRetriesRef = useRef(0)
+  const [posDraftRetryTick, setPosDraftRetryTick] = useState(0)
   /**
    * Việc nặng (setProducts catalog, dọn giỏ) sau thanh toán — chờ đúng lúc hộp thoại in đóng
    * (hoặc in lỗi) mới chạy, thay vì đoán bừa 1 mốc thời gian cố định (dễ chạy đè lên lúc máy in
@@ -3933,8 +3938,15 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   useEffect(() => {
     const id = window.setInterval(() => {
       touchTabDraftHeartbeat(posTabIdRef.current)
-    }, 4000)
-    return () => window.clearInterval(id)
+    }, POS_DRAFT_HEARTBEAT_INTERVAL_MS)
+    // Tắt tab bình thường → báo «đã đóng» ngay để tab mở lại nhận đơn liền (tab treo thì không
+    // chạy được sự kiện này — khi đó dựa vào mốc ~5 giây hết báo sống).
+    const onPageHide = () => markTabDraftClosed(posTabIdRef.current)
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      window.clearInterval(id)
+      window.removeEventListener('pagehide', onPageHide)
+    }
   }, [])
 
   const focusHeaderSearchSelect = useCallback(() => {
@@ -4255,8 +4267,21 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     // lưu (thêm/xóa 1 mã ở bất kỳ máy nào) là XÓA LUÔN nháp → tắt tab mở lại mất sạch đơn chưa thanh
     // toán. Rehydrate tự tra lại từng dòng theo variantId / mã + ĐVT, dòng nào không còn thì bỏ.
     if (!parsed) {
-      posDraftRestoreDoneRef.current = true
       posDraftHydratingRef.current = false
+      // Tab treo vừa bị tắt nhưng nháp của nó chưa quá mốc «còn sống» → tự thử lại khi quá mốc
+      // (giỏ vẫn trống), khỏi phải tắt/mở thêm lần nữa. Giới hạn số lần (tab khác thật sự đang mở).
+      const wait = msUntilOtherTabDraftClaimable(tabId)
+      if (wait != null && posDraftClaimRetriesRef.current < 4) {
+        posDraftClaimRetriesRef.current += 1
+        window.setTimeout(() => {
+          if (posDraftRestoreDoneRef.current) return
+          if (sellOrdersHaveAnyCartLines(sellOrdersRef.current)) return
+          lastCatalogFingerprintRef.current = ''
+          setPosDraftRetryTick((x) => x + 1)
+        }, wait + 300)
+        return
+      }
+      posDraftRestoreDoneRef.current = true
       return
     }
 
@@ -4293,7 +4318,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     queueMicrotask(() => {
       posDraftHydratingRef.current = false
     })
-  }, [products, fileName, standaloneInboundCreate])
+  }, [products, fileName, standaloneInboundCreate, posDraftRetryTick])
 
   useEffect(() => {
     if (!products.length) return
