@@ -16,8 +16,40 @@
 export const POS_SESSION_DRAFT_PREFIX = 'csv-preview-pos-session-draft-v2::'
 export const POS_SESSION_DRAFT_VERSION = 2
 const POS_TAB_ID_SESSION_KEY = 'csv-preview-pos-tab-id'
-/** Tab không báo sống quá mốc này → coi như đã đóng, cho phép tab khác nhận lại nháp. */
-export const POS_DRAFT_HEARTBEAT_STALE_MS = 12000
+/**
+ * Tab không báo sống quá mốc này → coi như đã đóng, cho phép tab khác nhận lại nháp.
+ * ~5 giây: nhân viên tắt tab bị treo rồi mở lại ngay để bán tiếp. (Tắt tab bình thường còn nhanh
+ * hơn — `markTabDraftClosed` báo «đã đóng» ngay lúc tắt.)
+ */
+export const POS_DRAFT_HEARTBEAT_STALE_MS = 5000
+/**
+ * Tab đang ẨN (chạy nền): Chrome giới hạn hẹn giờ của tab nền lâu xuống ~1 lần/phút → nhịp báo sống
+ * thưa đi. Dùng mốc dài hơn để tab mới KHÔNG lấy nhầm đơn của tab Bán hàng vẫn đang mở ở nền.
+ */
+export const POS_DRAFT_HIDDEN_STALE_MS = 75000
+
+/** Tab này đã pagehide (đang đóng) — mọi ghi nháp/báo sống sau đó bị bỏ qua (xem markTabDraftClosed). */
+let thisTabClosing = false
+
+/** Tab quay lại từ bfcache (pageshow persisted) — cho ghi/báo sống trở lại. */
+export function resumeTabDraftAfterPageShow() {
+  thisTabClosing = false
+}
+
+function isDocumentHidden() {
+  try {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  } catch {
+    return false
+  }
+}
+
+function draftStaleMs(j) {
+  return j && j.hidden === true ? POS_DRAFT_HIDDEN_STALE_MS : POS_DRAFT_HEARTBEAT_STALE_MS
+}
+
+/** Chu kỳ báo sống — đủ dày so với {@link POS_DRAFT_HEARTBEAT_STALE_MS} (≥3 nhịp trong 1 cửa sổ). */
+export const POS_DRAFT_HEARTBEAT_INTERVAL_MS = 1500
 /** Dọn rác nháp quá cũ (tab đóng rất lâu, không ai nhận) — tránh phình localStorage vô hạn. */
 const POS_DRAFT_GC_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000
 
@@ -135,8 +167,32 @@ function saveTabDraftRaw(tabId, payload) {
   }
 }
 
+/** Trường dòng giỏ cần để khôi phục (giá/tên/ĐVT tra lại từ danh mục lúc mở — xem rehydrate ở App). */
+const DRAFT_LINE_KEYS = ['lineId', 'catalogId', 'variantId', 'code', 'name', 'unitLabel', 'qty', 'selectedBatchId']
+
+/**
+ * Bản gọn của đơn để lưu nháp: bỏ `variantOptions` (danh sách ĐVT của cả nhóm, lặp lại ở MỖI dòng)
+ * và các trường dựng lại được — nháp nhỏ hơn nhiều lần, ghi nhanh hơn (mỗi 420ms) và không dễ
+ * vượt hạn mức LocalStorage (lỗi hạn mức bị nuốt im lặng → tắt tab là mất đơn).
+ */
+function slimSellOrdersForDraft(sellOrders) {
+  return (Array.isArray(sellOrders) ? sellOrders : []).map((o) => {
+    if (!o || typeof o !== 'object') return o
+    const { cart, ...rest } = o
+    return {
+      ...rest,
+      cart: (Array.isArray(cart) ? cart : []).map((l) => {
+        const out = {}
+        for (const k of DRAFT_LINE_KEYS) if (l?.[k] !== undefined) out[k] = l[k]
+        return out
+      }),
+    }
+  })
+}
+
 /** Ghi hoặc xóa nháp của tab này ngay (không debounce). */
 export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeSellOrderId }) {
+  if (thisTabClosing) return
   if (!products?.length || !sellOrdersHaveAnyCartLines(sellOrders)) {
     clearTabDraft(tabId)
     return
@@ -145,15 +201,17 @@ export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeS
     v: POS_SESSION_DRAFT_VERSION,
     fingerprint: buildPosDraftFingerprint(products, fileName),
     fileName: fileName || '',
-    sellOrders,
+    sellOrders: slimSellOrdersForDraft(sellOrders),
     activeSellOrderId,
     savedAt: new Date().toISOString(),
     heartbeatAt: Date.now(),
+    hidden: isDocumentHidden(),
   })
 }
 
 /** Cập nhật mốc "còn sống" — gọi định kỳ trong lúc tab còn mở, không đổi nội dung đơn hàng. */
 export function touchTabDraftHeartbeat(tabId) {
+  if (thisTabClosing) return
   try {
     const key = draftKeyForTab(tabId)
     const raw = localStorage.getItem(key)
@@ -161,6 +219,7 @@ export function touchTabDraftHeartbeat(tabId) {
     const j = JSON.parse(raw)
     if (!j || typeof j !== 'object') return
     j.heartbeatAt = Date.now()
+    j.hidden = isDocumentHidden()
     localStorage.setItem(key, JSON.stringify(j))
   } catch {
     /* ignore */
@@ -168,16 +227,74 @@ export function touchTabDraftHeartbeat(tabId) {
 }
 
 /**
+ * Tab đang đóng (pagehide): đặt mốc sống về 0 để tab mở lại nhận đơn NGAY, không phải chờ hết
+ * {@link POS_DRAFT_HEARTBEAT_STALE_MS}. F5 cùng tab vẫn đọc lại ô của chính nó (cùng mã tab) nên
+ * không ảnh hưởng; nếu tab chưa đóng thật (bfcache quay lại) nhịp báo sống kế tiếp sẽ ghi lại.
+ */
+export function markTabDraftClosed(tabId) {
+  thisTabClosing = true
+  try {
+    const key = draftKeyForTab(tabId)
+    const raw = localStorage.getItem(key)
+    if (!raw) return
+    const j = JSON.parse(raw)
+    if (!j || typeof j !== 'object') return
+    // KHÔNG đặt 0: bộ dọn rác coi mốc quá cũ (> 3 ngày) là nháp bỏ quên và XÓA — mốc 0 bị coi là
+    // «cách đây 50 năm» nên tắt tab là mất đơn. Đặt vừa đủ quá hạn «còn sống» để tab sau nhận ngay.
+    j.heartbeatAt = Date.now() - POS_DRAFT_HEARTBEAT_STALE_MS - 1
+    j.closedAt = Date.now()
+    j.hidden = false
+    localStorage.setItem(key, JSON.stringify(j))
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Có nháp (còn hàng) của tab khác VẪN đang báo sống không — nếu có, trả số ms nữa nó sẽ quá hạn
+ * (dùng để tự thử nhận lại khi tab treo vừa bị tắt nhưng chưa quá mốc). Không có → null.
+ */
+export function msUntilOtherTabDraftClaimable(myTabId) {
+  try {
+    const now = Date.now()
+    const myKey = draftKeyForTab(myTabId)
+    let best = null
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key || !key.startsWith(POS_SESSION_DRAFT_PREFIX) || key === myKey) continue
+      let j = null
+      try {
+        j = JSON.parse(localStorage.getItem(key))
+      } catch {
+        continue
+      }
+      if (!j || !sellOrdersHaveAnyCartLines(j.sellOrders)) continue
+      const age = now - (Number(j.heartbeatAt) || 0)
+      const staleMs = draftStaleMs(j)
+      if (age >= staleMs) continue
+      // Tab khác đang mở ở nền — không tự chờ để nhận (đó là tab còn sống, không phải tab treo).
+      if (j.hidden === true) continue
+      const wait = staleMs - age
+      if (best == null || wait < best) best = wait
+    }
+    return best
+  } catch {
+    return null
+  }
+}
+
+/**
  * Tìm nháp của MỘT TAB KHÁC đã ngưng báo sống (thực sự đã đóng) để tab hiện tại (vừa mở, chưa
  * có nháp riêng) nhận lại — chống mất điện/crash. Bỏ qua nháp của tab vẫn còn đang mở (heartbeat
  * còn mới) để không bao giờ đụng vào dữ liệu tab khác đang hoạt động song song.
- * @returns {object | null} nội dung nháp nhận được (đã xóa khỏi ô cũ), hoặc null nếu không có.
+ * @returns {object | null} nội dung nháp (gộp mọi tab đã đóng, kèm `claimedFromKeys`, ô cũ CHƯA xóa), hoặc null nếu không có.
  */
 export function claimAbandonedTabDraft(myTabId) {
   try {
     const now = Date.now()
     const myKey = draftKeyForTab(myTabId)
-    let best = null
+    /** @type {{ key: string, data: any, savedAtMs: number }[]} */
+    const found = []
     const staleKeys = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
@@ -195,24 +312,56 @@ export function claimAbandonedTabDraft(myTabId) {
       }
       const heartbeatAt = Number(j.heartbeatAt) || 0
       const age = now - heartbeatAt
-      if (age > POS_DRAFT_GC_MAX_AGE_MS || !sellOrdersHaveAnyCartLines(j.sellOrders)) {
+      // Dọn rác theo lần GHI ĐƠN gần nhất (savedAt / closedAt / heartbeat — lấy mốc mới nhất), không
+      // chỉ theo heartbeat: heartbeat có thể bị đặt lùi khi tắt tab.
+      const lastTouched = Math.max(
+        heartbeatAt,
+        Number(j.closedAt) || 0,
+        Date.parse(String(j.savedAt ?? '')) || 0
+      )
+      if (now - lastTouched > POS_DRAFT_GC_MAX_AGE_MS || !sellOrdersHaveAnyCartLines(j.sellOrders)) {
         staleKeys.push(key) // rác quá cũ hoặc rỗng — dọn luôn, không dùng để khôi phục.
         continue
       }
-      if (age < POS_DRAFT_HEARTBEAT_STALE_MS) continue // tab đó vẫn đang mở — không đụng vào.
+      if (age < draftStaleMs(j)) continue // tab đó vẫn đang mở — không đụng vào.
       const savedAtMs = Date.parse(String(j.savedAt ?? '')) || 0
-      if (!best || savedAtMs > best.savedAtMs) {
-        best = { key, data: j, savedAtMs }
-      }
+      found.push({ key, data: j, savedAtMs })
     }
     for (const k of staleKeys) clearRawKey(k)
-    if (best) {
-      clearRawKey(best.key)
-      return best.data
+    if (found.length === 0) return null
+    // GỘP đơn của MỌI tab đã đóng (cũ → mới), mỗi đơn là 1 tab đơn — trước đây chỉ nhận 1 tab mới nhất,
+    // đơn của tab đóng khác phải đợi lần mở sau mới hiện (tưởng là mất).
+    found.sort((a, b) => a.savedAtMs - b.savedAtMs)
+    const newest = found[found.length - 1]
+    const seenOrderIds = new Set()
+    const mergedOrders = []
+    for (let fi = found.length - 1; fi >= 0; fi--) {
+      for (const o of found[fi].data.sellOrders || []) {
+        if (!o || !Array.isArray(o.cart) || o.cart.length === 0) continue
+        const oid = String(o.id ?? '')
+        if (oid && seenOrderIds.has(oid)) continue // trùng id: giữ bản mới hơn
+        if (oid) seenOrderIds.add(oid)
+        mergedOrders.push({ order: o, fi })
+      }
     }
-    return null
+    mergedOrders.sort((a, b) => a.fi - b.fi)
+    // KHÔNG xóa ô cũ ở đây — chỉ xóa sau khi tab này đã khôi phục xong (xem
+    // {@link releaseClaimedTabDraft}); khôi phục lỗi giữa chừng thì đơn vẫn còn để lần sau nhận lại.
+    return {
+      ...newest.data,
+      sellOrders: mergedOrders.map((x) => x.order),
+      claimedFromKeys: found.map((f) => f.key),
+    }
   } catch {
     return null
+  }
+}
+
+/** Xóa ô nháp của tab cũ sau khi đã chuyển đơn sang tab này thành công. */
+export function releaseClaimedTabDraft(claimed) {
+  const keys = Array.isArray(claimed?.claimedFromKeys) ? claimed.claimedFromKeys : []
+  for (const key of keys) {
+    if (typeof key === 'string' && key.startsWith(POS_SESSION_DRAFT_PREFIX)) clearRawKey(key)
   }
 }
 
