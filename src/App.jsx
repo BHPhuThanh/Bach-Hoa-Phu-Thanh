@@ -4308,12 +4308,20 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     }
 
     posDraftRestoreDoneRef.current = true
-    // Đơn của tab cũ đã chuyển sang tab này → mới xóa ô cũ (trước đây xóa TRƯỚC khi khôi phục).
+    const nextAid =
+      savedAid && re.orders.some((o) => o.id === savedAid) ? savedAid : re.orders[0].id
+    // Ghi NGAY đơn vừa khôi phục vào ô của tab này (không đợi debounce 420ms) RỒI mới xóa ô tab cũ:
+    // màn hình có thể dựng lại (remount) ngay sau đó (vd. danh mục server tải xong) — nếu chưa kịp
+    // ghi thì ô cũ đã xóa, ô mới chưa có → mất sạch đơn (lỗi gặp trên bản Preview).
+    syncTabDraftNow(tabId, {
+      products,
+      fileName,
+      sellOrders: re.orders,
+      activeSellOrderId: nextAid,
+    })
     releaseClaimedTabDraft(parsed)
     posDraftHydratingRef.current = true
     setSellOrders(re.orders)
-    const nextAid =
-      savedAid && re.orders.some((o) => o.id === savedAid) ? savedAid : re.orders[0].id
     setActiveSellOrderId(nextAid)
     queueMicrotask(() => {
       posDraftHydratingRef.current = false
