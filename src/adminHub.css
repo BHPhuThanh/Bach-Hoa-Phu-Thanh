@@ -2376,6 +2376,15 @@
   right: 0;
 }
 
+/* Điện thoại: nút Tạo mới nằm sát mép trái → mở menu sang phải để không tràn khỏi màn hình */
+@media (max-width: 768px) {
+  .ah-split-create-menu--toolbar-anchor {
+    left: 0;
+    right: auto;
+    max-width: calc(100vw - 32px);
+  }
+}
+
 .ah-split-create-menu button {
   display: block;
   width: 100%;
@@ -7303,6 +7312,23 @@ li.ah-inbound-suggest-empty {
   min-width: 0;
 }
 
+.ah-goods-create-batch-barcode-wrap--scan {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.35rem;
+}
+
+.ah-goods-create-batch-barcode-wrap--scan .ah-goods-create-batch-field-err {
+  grid-column: 1 / -1;
+}
+
+.ah-goods-create-batch-scan.barcode-scan-trigger {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
 .ah-goods-create-batch-add-unit {
   display: inline-flex;
   align-items: center;
@@ -9795,6 +9821,81 @@ li.ah-inbound-suggest-empty {
   background: rgba(0, 0, 0, 0.6);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
+}
+
+/* Mở "Sửa nhanh" từ cửa sổ combo (.ah-combo-overlay z-index 999999) — phải nổi lên trên combo. */
+.ah-inbound-quick-edit-backdrop.ah-inbound-quick-edit-backdrop--over-combo {
+  z-index: 1000010;
+}
+
+/* Nút quét mã cạnh ô tìm thành phần trong cửa sổ combo. */
+.ah-combo-search-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.ah-combo-search-row .ah-combo-input,
+.ah-combo-search-row .ah-combo-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ah-combo-scan-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0 0.75rem;
+  min-height: 2.4rem;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(11, 132, 255, 0.14);
+  color: #7dd3fc;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ah-combo-scan-btn:hover {
+  background: rgba(11, 132, 255, 0.26);
+}
+
+.ah-combo-unit-select {
+  min-width: 5.5rem;
+  max-width: 9rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid rgba(71, 85, 105, 0.85);
+  background: #12161c;
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.ah-combo-cell-name-btn {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #7dd3fc;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ah-combo-cell-name-btn:hover {
+  color: #bae6fd;
+}
+
+/* Camera quét mã mở từ cửa sổ combo — nằm trong lớp combo nên phải cao hơn hộp thoại combo. */
+.ah-combo-overlay .barcode-scan-backdrop {
+  z-index: 1000005;
 }
 
 @media (min-width: 640px) {

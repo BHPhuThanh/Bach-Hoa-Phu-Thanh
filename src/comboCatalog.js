@@ -317,6 +317,52 @@ export function buildNonComboDeductionByMaGoc(products, cartLines) {
   return deductByMaGoc
 }
 
+/**
+ * Thành phần combo: `ma_goc` → tổng `tong_xuat` (SL combo × SL/combo × quy_doi) — CÙNG cách tính
+ * "tồn chuẩn theo mã gốc" như hàng thường ({@link buildNonComboDeductionByMaGoc}).
+ *
+ * Lý do: trước đây trừ tồn combo chỉ đi theo 1 `variant.id` cơ sở, tách rời nhánh hàng thường ⇒
+ * (1) giỏ có cả combo lẫn chính thành phần đó bán lẻ thì phần combo bị BỎ QUA (nhánh if/else), và
+ * (2) các ĐVT anh em (Thùng/Bịch) của thành phần không được gán cùng tồn chuẩn ⇒ lệch nhau.
+ * Thành phần không tìm thấy trong catalog → bỏ qua ở đây (vẫn còn nhánh dự phòng theo variant).
+ */
+export function buildComboComponentDeductionByMaGoc(products, cartLines) {
+  /** @type {Map<string, number>} */
+  const out = new Map()
+  for (const l of cartLines || []) {
+    const cartQty = Number(l.qty)
+    if (!Number.isFinite(cartQty) || cartQty <= 0) continue
+    const p = findProductContainingVariantId(products, l.variantId)
+    if (!p || !isComboCatalogProduct(p)) continue
+    for (const row of getComboBom(p)) {
+      const compVid = String(row.variantId ?? '').trim()
+      const perCombo = Number(row.qty)
+      if (!compVid || !Number.isFinite(perCombo) || perCombo <= 0) continue
+      const hit = findCatalogVariantInProducts(products, compVid)
+      if (!hit?.variant) continue
+      // Thành phần lại là combo (lồng nhau) — không trừ tồn "vỏ" combo.
+      if (isComboCatalogProduct(hit.product)) continue
+      const ma_goc = resolveMaGocFromVariant(hit.variant)
+      if (!ma_goc) continue
+      const tong_xuat = cartQty * perCombo * variantQuyDoiNumber(hit.variant)
+      out.set(ma_goc, (out.get(ma_goc) || 0) + tong_xuat)
+    }
+  }
+  return out
+}
+
+/**
+ * Tổng trừ tồn chuẩn theo `ma_goc` cho cả giỏ: hàng thường (`baseDeductByMaGoc`, có thể tính sẵn)
+ * + thành phần combo. Dùng trong `applySoldQtyToCatalog` / {@link applyRestoredQtyToCatalog}.
+ */
+export function mergeSaleDeductionByMaGoc(products, cartLines, baseDeductByMaGoc) {
+  const total = new Map(baseDeductByMaGoc ?? buildNonComboDeductionByMaGoc(products, cartLines))
+  for (const [k, v] of buildComboComponentDeductionByMaGoc(products, cartLines)) {
+    total.set(k, (total.get(k) || 0) + v)
+  }
+  return total
+}
+
 export function buildComboCartSaleDeltaByVariantId(products, cartLines) {
   const deltaBaseByVid = new Map()
   for (const l of cartLines || []) {
@@ -330,6 +376,12 @@ export function collectCartSaleTouchedVariantIds(products, cartLines) {
   const deductByMaGoc = buildNonComboDeductionByMaGoc(products, cartLines)
   const touched = new Set()
   for (const ma of deductByMaGoc.keys()) {
+    for (const id of collectSiblingVariantIds(products, ma)) {
+      touched.add(String(id))
+    }
+  }
+  // Thành phần combo: cả nhóm ĐVT anh em (cùng tồn chuẩn) — để gửi delta cho mọi dòng anh em.
+  for (const ma of buildComboComponentDeductionByMaGoc(products, cartLines).keys()) {
     for (const id of collectSiblingVariantIds(products, ma)) {
       touched.add(String(id))
     }
@@ -416,8 +468,12 @@ export function salableComboPackCount(products, bom) {
  */
 export function applyRestoredQtyToCatalog(products, cartLines, options) {
   if (!products?.length || !cartLines?.length) return products
-  const deductByMaGoc =
-    options?.precomputedDeductByMaGoc ?? buildNonComboDeductionByMaGoc(products, cartLines)
+  // Hàng thường + thành phần combo gộp chung theo mã gốc (xem buildComboComponentDeductionByMaGoc).
+  const deductByMaGoc = mergeSaleDeductionByMaGoc(
+    products,
+    cartLines,
+    options?.precomputedDeductByMaGoc
+  )
   const comboDelta =
     options?.precomputedComboDelta ?? buildComboCartSaleDeltaByVariantId(products, cartLines)
 
@@ -446,14 +502,10 @@ export function applyRestoredQtyToCatalog(products, cartLines, options) {
     for (const v of p.groupVariants || [p]) {
       const vid = String(v.id)
       let nextStock = v.stockQty
+      // Thành phần combo đã gộp vào `deductByMaGoc` (tồn chuẩn theo mã gốc) — KHÔNG cộng thêm theo
+      // `comboDelta` nữa, tránh cộng 2 lần.
       if (canonicalTonKhoByVid.has(vid)) {
         nextStock = canonicalTonKhoByVid.get(vid)
-      } else {
-        const restore = comboDelta.get(v.id) ?? comboDelta.get(vid) ?? 0
-        if (restore > 0) {
-          const cur = nextStock != null && Number.isFinite(Number(nextStock)) ? Number(nextStock) : 0
-          nextStock = cur + restore
-        }
       }
       flat.push({ ...v, stockQty: nextStock })
     }
