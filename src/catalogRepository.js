@@ -1705,17 +1705,16 @@ export async function persistCatalogDeleteVariants(products, fileName, variantId
       return { ok: false, error: dr.error, snapshotSaved: false, productsWritten: false }
     }
     const next = applyProductDataToCatalog(prev, { type: 'remove_variants', variantIds })
-    const sr = await persistCatalogSnapshotAndProducts(next, fileName, { snapshotOnly: true })
-    if (!sr.ok) {
-      return {
-        ok: false,
-        error: sr.error,
-        snapshotSaved: false,
-        productsWritten: true,
-        catalogNext: next,
-      }
+    // `products` đã xóa mềm xong (nguồn sự thật). Snapshot JSON (~8MB) hay bị statement timeout (57014)
+    // — KHÔNG coi là lỗi xóa / không bật alert: lần tải sau merge lọc theo `products` nên mã đã xóa không hiện lại.
+    let snapshotSaved = true
+    try {
+      await saveCatalogSnapshot(next, fileName)
+    } catch (snapErr) {
+      snapshotSaved = false
+      console.warn('[persistCatalogDeleteVariants] Ghi catalog_snapshots thất bại (bỏ qua):', snapErr)
     }
-    return { ok: true, snapshotSaved: true, productsWritten: true, catalogNext: next }
+    return { ok: true, snapshotSaved, productsWritten: true, catalogNext: next }
   } catch (error) {
     notifySupabasePersistFailure(error)
     return { ok: false, error, snapshotSaved: false, productsWritten: false }
