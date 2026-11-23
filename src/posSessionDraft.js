@@ -22,6 +22,24 @@ const POS_TAB_ID_SESSION_KEY = 'csv-preview-pos-tab-id'
  * hơn — `markTabDraftClosed` báo «đã đóng» ngay lúc tắt.)
  */
 export const POS_DRAFT_HEARTBEAT_STALE_MS = 5000
+/**
+ * Tab đang ẨN (chạy nền): Chrome giới hạn hẹn giờ của tab nền lâu xuống ~1 lần/phút → nhịp báo sống
+ * thưa đi. Dùng mốc dài hơn để tab mới KHÔNG lấy nhầm đơn của tab Bán hàng vẫn đang mở ở nền.
+ */
+export const POS_DRAFT_HIDDEN_STALE_MS = 75000
+
+function isDocumentHidden() {
+  try {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  } catch {
+    return false
+  }
+}
+
+function draftStaleMs(j) {
+  return j && j.hidden === true ? POS_DRAFT_HIDDEN_STALE_MS : POS_DRAFT_HEARTBEAT_STALE_MS
+}
+
 /** Chu kỳ báo sống — đủ dày so với {@link POS_DRAFT_HEARTBEAT_STALE_MS} (≥3 nhịp trong 1 cửa sổ). */
 export const POS_DRAFT_HEARTBEAT_INTERVAL_MS = 1500
 /** Dọn rác nháp quá cũ (tab đóng rất lâu, không ai nhận) — tránh phình localStorage vô hạn. */
@@ -178,6 +196,7 @@ export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeS
     activeSellOrderId,
     savedAt: new Date().toISOString(),
     heartbeatAt: Date.now(),
+    hidden: isDocumentHidden(),
   })
 }
 
@@ -190,6 +209,7 @@ export function touchTabDraftHeartbeat(tabId) {
     const j = JSON.parse(raw)
     if (!j || typeof j !== 'object') return
     j.heartbeatAt = Date.now()
+    j.hidden = isDocumentHidden()
     localStorage.setItem(key, JSON.stringify(j))
   } catch {
     /* ignore */
@@ -208,7 +228,11 @@ export function markTabDraftClosed(tabId) {
     if (!raw) return
     const j = JSON.parse(raw)
     if (!j || typeof j !== 'object') return
-    j.heartbeatAt = 0
+    // KHÔNG đặt 0: bộ dọn rác coi mốc quá cũ (> 3 ngày) là nháp bỏ quên và XÓA — mốc 0 bị coi là
+    // «cách đây 50 năm» nên tắt tab là mất đơn. Đặt vừa đủ quá hạn «còn sống» để tab sau nhận ngay.
+    j.heartbeatAt = Date.now() - POS_DRAFT_HEARTBEAT_STALE_MS - 1
+    j.closedAt = Date.now()
+    j.hidden = false
     localStorage.setItem(key, JSON.stringify(j))
   } catch {
     /* ignore */
@@ -235,8 +259,11 @@ export function msUntilOtherTabDraftClaimable(myTabId) {
       }
       if (!j || !sellOrdersHaveAnyCartLines(j.sellOrders)) continue
       const age = now - (Number(j.heartbeatAt) || 0)
-      if (age >= POS_DRAFT_HEARTBEAT_STALE_MS) continue
-      const wait = POS_DRAFT_HEARTBEAT_STALE_MS - age
+      const staleMs = draftStaleMs(j)
+      if (age >= staleMs) continue
+      // Tab khác đang mở ở nền — không tự chờ để nhận (đó là tab còn sống, không phải tab treo).
+      if (j.hidden === true) continue
+      const wait = staleMs - age
       if (best == null || wait < best) best = wait
     }
     return best
@@ -273,11 +300,18 @@ export function claimAbandonedTabDraft(myTabId) {
       }
       const heartbeatAt = Number(j.heartbeatAt) || 0
       const age = now - heartbeatAt
-      if (age > POS_DRAFT_GC_MAX_AGE_MS || !sellOrdersHaveAnyCartLines(j.sellOrders)) {
+      // Dọn rác theo lần GHI ĐƠN gần nhất (savedAt / closedAt / heartbeat — lấy mốc mới nhất), không
+      // chỉ theo heartbeat: heartbeat có thể bị đặt lùi khi tắt tab.
+      const lastTouched = Math.max(
+        heartbeatAt,
+        Number(j.closedAt) || 0,
+        Date.parse(String(j.savedAt ?? '')) || 0
+      )
+      if (now - lastTouched > POS_DRAFT_GC_MAX_AGE_MS || !sellOrdersHaveAnyCartLines(j.sellOrders)) {
         staleKeys.push(key) // rác quá cũ hoặc rỗng — dọn luôn, không dùng để khôi phục.
         continue
       }
-      if (age < POS_DRAFT_HEARTBEAT_STALE_MS) continue // tab đó vẫn đang mở — không đụng vào.
+      if (age < draftStaleMs(j)) continue // tab đó vẫn đang mở — không đụng vào.
       const savedAtMs = Date.parse(String(j.savedAt ?? '')) || 0
       if (!best || savedAtMs > best.savedAtMs) {
         best = { key, data: j, savedAtMs }

@@ -3942,10 +3942,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     // Tắt tab bình thường → báo «đã đóng» ngay để tab mở lại nhận đơn liền (tab treo thì không
     // chạy được sự kiện này — khi đó dựa vào mốc ~5 giây hết báo sống).
     const onPageHide = () => markTabDraftClosed(posTabIdRef.current)
+    // Ẩn/hiện tab → ghi ngay cờ «đang ở nền» (mốc chờ dài hơn, xem POS_DRAFT_HIDDEN_STALE_MS).
+    const onVisibility = () => touchTabDraftHeartbeat(posTabIdRef.current)
     window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.clearInterval(id)
       window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
 
