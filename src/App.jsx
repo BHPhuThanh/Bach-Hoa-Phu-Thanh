@@ -24,6 +24,7 @@ import {
   clearTabDraft,
   getOrCreatePosTabId,
   loadTabDraft,
+  releaseClaimedTabDraft,
   sellOrdersHaveAnyCartLines,
   syncTabDraftNow,
   touchTabDraftHeartbeat,
@@ -2670,6 +2671,8 @@ export default function App({ standaloneInboundCreate = false } = {}) {
   const [catalogFlushBusy, setCatalogFlushBusy] = useState(false)
   /** Mỗi fingerprint catalog chỉ thử restore một lần */
   const lastCatalogFingerprintRef = useRef('')
+  /** Đã khôi phục (hoặc xác định không có) đơn nháp cho lần mở trang này. */
+  const posDraftRestoreDoneRef = useRef(false)
   /**
    * Việc nặng (setProducts catalog, dọn giỏ) sau thanh toán — chờ đúng lúc hộp thoại in đóng
    * (hoặc in lỗi) mới chạy, thay vì đoán bừa 1 mốc thời gian cố định (dễ chạy đè lên lúc máy in
@@ -4232,6 +4235,14 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const fp = buildPosDraftFingerprint(products, fileName)
     if (lastCatalogFingerprintRef.current === fp) return
     lastCatalogFingerprintRef.current = fp
+    // Khôi phục đơn nháp CHỈ MỘT LẦN mỗi lần mở trang (lần đầu có danh mục). Sau đó danh mục đổi
+    // (bán hàng trừ tồn, máy khác sửa hàng…) không được nhận/ghi đè nháp nữa.
+    if (posDraftRestoreDoneRef.current) return
+    // Tab mở riêng (vd. phiếu nhập trong tab mới) không bán hàng — không nhận đơn nháp của tab POS.
+    if (standaloneInboundCreate) {
+      posDraftRestoreDoneRef.current = true
+      return
+    }
 
     const tabId = posTabIdRef.current
     // Ưu tiên ô nháp CỦA CHÍNH TAB NÀY (vd. F5) — chỉ nhận nháp "bỏ lại" của một tab khác đã
@@ -4240,8 +4251,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     if (!parsed) {
       parsed = claimAbandonedTabDraft(tabId)
     }
-    if (!parsed || parsed.fingerprint !== fp) {
-      clearTabDraft(tabId)
+    // KHÔNG so «dấu vân tay» danh mục để quyết định khôi phục: trước đây danh mục chỉ cần khác lúc
+    // lưu (thêm/xóa 1 mã ở bất kỳ máy nào) là XÓA LUÔN nháp → tắt tab mở lại mất sạch đơn chưa thanh
+    // toán. Rehydrate tự tra lại từng dòng theo variantId / mã + ĐVT, dòng nào không còn thì bỏ.
+    if (!parsed) {
+      posDraftRestoreDoneRef.current = true
       posDraftHydratingRef.current = false
       return
     }
@@ -4249,6 +4263,7 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const hasLiveSellCart = sellOrdersHaveAnyCartLines(sellOrdersRef.current)
     if (freezePosDraftHydrateRef.current || hasLiveSellCart) {
       console.log('[POS sync] Có đơn đang tít, bỏ qua hydrate từ draft để tránh ghi đè giỏ hàng.')
+      posDraftRestoreDoneRef.current = true
       posDraftHydratingRef.current = false
       return
     }
@@ -4260,14 +4275,16 @@ export default function App({ standaloneInboundCreate = false } = {}) {
       activeOrderId: savedAid,
     })
     if (!re) {
-      clearTabDraft(tabId)
-      const fresh = createEmptySellOrder()
-      setSellOrders([fresh])
-      setActiveSellOrderId(fresh.id)
+      // Không dòng nào khớp danh mục HIỆN TẠI (có thể danh mục chưa tải đủ) — giữ nguyên nháp,
+      // thử lại ở lần danh mục đổi kế tiếp; không xóa.
+      console.warn('[POS draft] Chưa khôi phục được đơn nháp (không khớp danh mục) — sẽ thử lại.')
       posDraftHydratingRef.current = false
       return
     }
 
+    posDraftRestoreDoneRef.current = true
+    // Đơn của tab cũ đã chuyển sang tab này → mới xóa ô cũ (trước đây xóa TRƯỚC khi khôi phục).
+    releaseClaimedTabDraft(parsed)
     posDraftHydratingRef.current = true
     setSellOrders(re.orders)
     const nextAid =
@@ -4276,12 +4293,18 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     queueMicrotask(() => {
       posDraftHydratingRef.current = false
     })
-  }, [products, fileName])
+  }, [products, fileName, standaloneInboundCreate])
 
   useEffect(() => {
     if (!products.length) return
     if (posDraftHydratingRef.current) return
     if (suspendPosDraftPersistRef.current) return
+    // Chưa khôi phục xong đơn nháp mà giỏ đang trống → KHÔNG ghi (ghi giỏ trống = xóa nháp cũ).
+    // Người dùng đã bắt đầu tít hàng mới thì coi như bỏ nháp cũ, lưu bình thường.
+    if (!posDraftRestoreDoneRef.current) {
+      if (!sellOrdersHaveAnyCartLines(sellOrders)) return
+      posDraftRestoreDoneRef.current = true
+    }
 
     if (posSessionPersistTimerRef.current != null) {
       window.clearTimeout(posSessionPersistTimerRef.current)
@@ -4316,7 +4339,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
     const handleBeforeUnload = (e) => {
       if (skipPosUnloadConfirmRef.current) return
       // Ghi nháp ngay (không đợi debounce 420ms) — nếu người dùng vẫn chọn tải lại thì đơn được khôi phục.
-      if (productsRef.current?.length && !posDraftHydratingRef.current) {
+      if (
+        productsRef.current?.length &&
+        !posDraftHydratingRef.current &&
+        (posDraftRestoreDoneRef.current || sellOrdersHaveAnyCartLines(sellOrdersRef.current))
+      ) {
         try {
           syncTabDraftNow(posTabIdRef.current, {
             products: productsRef.current,

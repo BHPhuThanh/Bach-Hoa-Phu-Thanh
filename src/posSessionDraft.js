@@ -135,6 +135,29 @@ function saveTabDraftRaw(tabId, payload) {
   }
 }
 
+/** Trường dòng giỏ cần để khôi phục (giá/tên/ĐVT tra lại từ danh mục lúc mở — xem rehydrate ở App). */
+const DRAFT_LINE_KEYS = ['lineId', 'catalogId', 'variantId', 'code', 'name', 'unitLabel', 'qty', 'selectedBatchId']
+
+/**
+ * Bản gọn của đơn để lưu nháp: bỏ `variantOptions` (danh sách ĐVT của cả nhóm, lặp lại ở MỖI dòng)
+ * và các trường dựng lại được — nháp nhỏ hơn nhiều lần, ghi nhanh hơn (mỗi 420ms) và không dễ
+ * vượt hạn mức LocalStorage (lỗi hạn mức bị nuốt im lặng → tắt tab là mất đơn).
+ */
+function slimSellOrdersForDraft(sellOrders) {
+  return (Array.isArray(sellOrders) ? sellOrders : []).map((o) => {
+    if (!o || typeof o !== 'object') return o
+    const { cart, ...rest } = o
+    return {
+      ...rest,
+      cart: (Array.isArray(cart) ? cart : []).map((l) => {
+        const out = {}
+        for (const k of DRAFT_LINE_KEYS) if (l?.[k] !== undefined) out[k] = l[k]
+        return out
+      }),
+    }
+  })
+}
+
 /** Ghi hoặc xóa nháp của tab này ngay (không debounce). */
 export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeSellOrderId }) {
   if (!products?.length || !sellOrdersHaveAnyCartLines(sellOrders)) {
@@ -145,7 +168,7 @@ export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeS
     v: POS_SESSION_DRAFT_VERSION,
     fingerprint: buildPosDraftFingerprint(products, fileName),
     fileName: fileName || '',
-    sellOrders,
+    sellOrders: slimSellOrdersForDraft(sellOrders),
     activeSellOrderId,
     savedAt: new Date().toISOString(),
     heartbeatAt: Date.now(),
@@ -171,7 +194,7 @@ export function touchTabDraftHeartbeat(tabId) {
  * Tìm nháp của MỘT TAB KHÁC đã ngưng báo sống (thực sự đã đóng) để tab hiện tại (vừa mở, chưa
  * có nháp riêng) nhận lại — chống mất điện/crash. Bỏ qua nháp của tab vẫn còn đang mở (heartbeat
  * còn mới) để không bao giờ đụng vào dữ liệu tab khác đang hoạt động song song.
- * @returns {object | null} nội dung nháp nhận được (đã xóa khỏi ô cũ), hoặc null nếu không có.
+ * @returns {object | null} nội dung nháp (kèm `claimedFromKey`, ô cũ CHƯA xóa), hoặc null nếu không có.
  */
 export function claimAbandonedTabDraft(myTabId) {
   try {
@@ -207,13 +230,20 @@ export function claimAbandonedTabDraft(myTabId) {
     }
     for (const k of staleKeys) clearRawKey(k)
     if (best) {
-      clearRawKey(best.key)
-      return best.data
+      // KHÔNG xóa ô cũ ở đây — chỉ xóa sau khi tab này đã khôi phục xong (xem
+      // {@link releaseClaimedTabDraft}); khôi phục lỗi giữa chừng thì đơn vẫn còn để lần sau nhận lại.
+      return { ...best.data, claimedFromKey: best.key }
     }
     return null
   } catch {
     return null
   }
+}
+
+/** Xóa ô nháp của tab cũ sau khi đã chuyển đơn sang tab này thành công. */
+export function releaseClaimedTabDraft(claimed) {
+  const key = claimed && typeof claimed.claimedFromKey === 'string' ? claimed.claimedFromKey : ''
+  if (key && key.startsWith(POS_SESSION_DRAFT_PREFIX)) clearRawKey(key)
 }
 
 function clearRawKey(key) {
