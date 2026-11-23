@@ -26,6 +26,7 @@ import {
   loadTabDraft,
   releaseClaimedTabDraft,
   markTabDraftClosed,
+  resumeTabDraftAfterPageShow,
   msUntilOtherTabDraftClaimable,
   POS_DRAFT_HEARTBEAT_INTERVAL_MS,
   sellOrdersHaveAnyCartLines,
@@ -3936,19 +3937,38 @@ export default function App({ standaloneInboundCreate = false } = {}) {
    * để biết ô nháp nào đã thực sự bị bỏ lại (tab đã đóng) mới được nhận lại.
    */
   useEffect(() => {
+    // Sau pagehide (tab đang đóng) KHÔNG ghi gì nữa: Chrome bắn visibilitychange(hidden) SAU pagehide
+    // — nếu vẫn báo sống thì nháp bị đánh dấu «đang ở nền» (chờ 75s) → tab mở lại không nhận được đơn.
+    let closing = false
     const id = window.setInterval(() => {
+      if (closing) return
       touchTabDraftHeartbeat(posTabIdRef.current)
     }, POS_DRAFT_HEARTBEAT_INTERVAL_MS)
     // Tắt tab bình thường → báo «đã đóng» ngay để tab mở lại nhận đơn liền (tab treo thì không
     // chạy được sự kiện này — khi đó dựa vào mốc ~5 giây hết báo sống).
-    const onPageHide = () => markTabDraftClosed(posTabIdRef.current)
+    const onPageHide = () => {
+      closing = true
+      markTabDraftClosed(posTabIdRef.current)
+    }
+    // Quay lại từ bfcache (tab không thực sự đóng) → báo sống lại.
+    const onPageShow = (e) => {
+      if (!e.persisted) return
+      closing = false
+      resumeTabDraftAfterPageShow()
+      touchTabDraftHeartbeat(posTabIdRef.current)
+    }
     // Ẩn/hiện tab → ghi ngay cờ «đang ở nền» (mốc chờ dài hơn, xem POS_DRAFT_HIDDEN_STALE_MS).
-    const onVisibility = () => touchTabDraftHeartbeat(posTabIdRef.current)
+    const onVisibility = () => {
+      if (closing) return
+      touchTabDraftHeartbeat(posTabIdRef.current)
+    }
     window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onPageShow)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.clearInterval(id)
       window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onPageShow)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])

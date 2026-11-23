@@ -28,6 +28,14 @@ export const POS_DRAFT_HEARTBEAT_STALE_MS = 5000
  */
 export const POS_DRAFT_HIDDEN_STALE_MS = 75000
 
+/** Tab này đã pagehide (đang đóng) — mọi ghi nháp/báo sống sau đó bị bỏ qua (xem markTabDraftClosed). */
+let thisTabClosing = false
+
+/** Tab quay lại từ bfcache (pageshow persisted) — cho ghi/báo sống trở lại. */
+export function resumeTabDraftAfterPageShow() {
+  thisTabClosing = false
+}
+
 function isDocumentHidden() {
   try {
     return typeof document !== 'undefined' && document.visibilityState === 'hidden'
@@ -184,6 +192,7 @@ function slimSellOrdersForDraft(sellOrders) {
 
 /** Ghi hoặc xóa nháp của tab này ngay (không debounce). */
 export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeSellOrderId }) {
+  if (thisTabClosing) return
   if (!products?.length || !sellOrdersHaveAnyCartLines(sellOrders)) {
     clearTabDraft(tabId)
     return
@@ -202,6 +211,7 @@ export function syncTabDraftNow(tabId, { products, fileName, sellOrders, activeS
 
 /** Cập nhật mốc "còn sống" — gọi định kỳ trong lúc tab còn mở, không đổi nội dung đơn hàng. */
 export function touchTabDraftHeartbeat(tabId) {
+  if (thisTabClosing) return
   try {
     const key = draftKeyForTab(tabId)
     const raw = localStorage.getItem(key)
@@ -222,6 +232,7 @@ export function touchTabDraftHeartbeat(tabId) {
  * không ảnh hưởng; nếu tab chưa đóng thật (bfcache quay lại) nhịp báo sống kế tiếp sẽ ghi lại.
  */
 export function markTabDraftClosed(tabId) {
+  thisTabClosing = true
   try {
     const key = draftKeyForTab(tabId)
     const raw = localStorage.getItem(key)
@@ -276,13 +287,14 @@ export function msUntilOtherTabDraftClaimable(myTabId) {
  * Tìm nháp của MỘT TAB KHÁC đã ngưng báo sống (thực sự đã đóng) để tab hiện tại (vừa mở, chưa
  * có nháp riêng) nhận lại — chống mất điện/crash. Bỏ qua nháp của tab vẫn còn đang mở (heartbeat
  * còn mới) để không bao giờ đụng vào dữ liệu tab khác đang hoạt động song song.
- * @returns {object | null} nội dung nháp (kèm `claimedFromKey`, ô cũ CHƯA xóa), hoặc null nếu không có.
+ * @returns {object | null} nội dung nháp (gộp mọi tab đã đóng, kèm `claimedFromKeys`, ô cũ CHƯA xóa), hoặc null nếu không có.
  */
 export function claimAbandonedTabDraft(myTabId) {
   try {
     const now = Date.now()
     const myKey = draftKeyForTab(myTabId)
-    let best = null
+    /** @type {{ key: string, data: any, savedAtMs: number }[]} */
+    const found = []
     const staleKeys = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
@@ -313,17 +325,33 @@ export function claimAbandonedTabDraft(myTabId) {
       }
       if (age < draftStaleMs(j)) continue // tab đó vẫn đang mở — không đụng vào.
       const savedAtMs = Date.parse(String(j.savedAt ?? '')) || 0
-      if (!best || savedAtMs > best.savedAtMs) {
-        best = { key, data: j, savedAtMs }
-      }
+      found.push({ key, data: j, savedAtMs })
     }
     for (const k of staleKeys) clearRawKey(k)
-    if (best) {
-      // KHÔNG xóa ô cũ ở đây — chỉ xóa sau khi tab này đã khôi phục xong (xem
-      // {@link releaseClaimedTabDraft}); khôi phục lỗi giữa chừng thì đơn vẫn còn để lần sau nhận lại.
-      return { ...best.data, claimedFromKey: best.key }
+    if (found.length === 0) return null
+    // GỘP đơn của MỌI tab đã đóng (cũ → mới), mỗi đơn là 1 tab đơn — trước đây chỉ nhận 1 tab mới nhất,
+    // đơn của tab đóng khác phải đợi lần mở sau mới hiện (tưởng là mất).
+    found.sort((a, b) => a.savedAtMs - b.savedAtMs)
+    const newest = found[found.length - 1]
+    const seenOrderIds = new Set()
+    const mergedOrders = []
+    for (let fi = found.length - 1; fi >= 0; fi--) {
+      for (const o of found[fi].data.sellOrders || []) {
+        if (!o || !Array.isArray(o.cart) || o.cart.length === 0) continue
+        const oid = String(o.id ?? '')
+        if (oid && seenOrderIds.has(oid)) continue // trùng id: giữ bản mới hơn
+        if (oid) seenOrderIds.add(oid)
+        mergedOrders.push({ order: o, fi })
+      }
     }
-    return null
+    mergedOrders.sort((a, b) => a.fi - b.fi)
+    // KHÔNG xóa ô cũ ở đây — chỉ xóa sau khi tab này đã khôi phục xong (xem
+    // {@link releaseClaimedTabDraft}); khôi phục lỗi giữa chừng thì đơn vẫn còn để lần sau nhận lại.
+    return {
+      ...newest.data,
+      sellOrders: mergedOrders.map((x) => x.order),
+      claimedFromKeys: found.map((f) => f.key),
+    }
   } catch {
     return null
   }
@@ -331,8 +359,10 @@ export function claimAbandonedTabDraft(myTabId) {
 
 /** Xóa ô nháp của tab cũ sau khi đã chuyển đơn sang tab này thành công. */
 export function releaseClaimedTabDraft(claimed) {
-  const key = claimed && typeof claimed.claimedFromKey === 'string' ? claimed.claimedFromKey : ''
-  if (key && key.startsWith(POS_SESSION_DRAFT_PREFIX)) clearRawKey(key)
+  const keys = Array.isArray(claimed?.claimedFromKeys) ? claimed.claimedFromKeys : []
+  for (const key of keys) {
+    if (typeof key === 'string' && key.startsWith(POS_SESSION_DRAFT_PREFIX)) clearRawKey(key)
+  }
 }
 
 function clearRawKey(key) {
