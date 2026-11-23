@@ -346,6 +346,11 @@ export function AdminHubComboModal({
       createdAtMs: mode === 'edit' && v0?.createdAtMs ? Number(v0.createdAtMs) : Date.now(),
       raw: [],
     }
+    // Sửa: Supabase UPDATE theo ma_hang CŨ (cho phép đổi SKU) — thiếu là lỗi «Thiếu mã hàng cũ (old_ma_hang)».
+    if (mode === 'edit') {
+      const oldMa = String(v0?.persistMaHang ?? v0?.code ?? '').trim()
+      if (oldMa) flatRow.persistMaHang = oldMa
+    }
 
     onSaveDisplayProduct({
       mode,

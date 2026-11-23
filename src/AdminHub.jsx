@@ -2567,10 +2567,13 @@ export default function AdminHub({
         return
       }
       if (onReplaceCatalogGroup && mode === 'edit' && anchorVariantId) {
-        onReplaceCatalogGroup(anchorVariantId, [flatRow])
-        setComboModal(null)
-        setGoodsDetailShelfTab(GOODS_DETAIL_VIEW_COMBO)
-        triggerGoodsSaveSuccessToast()
+        void (async () => {
+          const res = await onReplaceCatalogGroup(anchorVariantId, [flatRow])
+          // Lỗi đồng bộ: App đã báo toast & hoàn tác — giữ cửa sổ mở để không mất dữ liệu vừa sửa.
+          if (res && res.ok === false) return
+          setComboModal(null)
+          triggerGoodsSaveSuccessToast()
+        })()
         return
       }
       if (onAppendCatalogVariants) {
@@ -6740,7 +6743,8 @@ export default function AdminHub({
         comboDetailProduct={inboundQuickEditCtx?.product ?? null}
         onEditComboProduct={() => {
           if (inboundQuickEditCtx?.product && isComboCatalogProduct(inboundQuickEditCtx.product)) {
-            setComboModal({ mode: 'edit', product: inboundQuickEditCtx.product })
+            // Mở TỪ cửa sổ Sửa nhanh → combo phải nổi trên Sửa nhanh (không bị che phía sau).
+            setComboModal({ mode: 'edit', product: inboundQuickEditCtx.product, overQuickEdit: true })
           }
         }}
         goodsBrandAutocompleteOptions={supplierNameOptions}
@@ -11532,14 +11536,18 @@ export default function AdminHub({
           initialDisplayProduct={comboModal.mode === 'edit' ? comboModal.product : null}
           onSaveDisplayProduct={handleComboSaveDisplay}
           revenueReadOnly={revenueReadOnly}
-          onOpenProductQuickEdit={openInboundProductQuickEdit}
+          onOpenProductQuickEdit={(vid) => {
+            // Bấm tên thành phần trong combo → Sửa nhanh thành phần đó nổi TRÊN cửa sổ combo.
+            setComboModal((m) => (m && m.overQuickEdit ? { ...m, overQuickEdit: false } : m))
+            openInboundProductQuickEdit(vid)
+          }}
         />
       )}
 
       {inboundQuickEditExpandId ? (
         <div
           className={`ah-inbound-quick-edit-backdrop${
-            comboModal ? ' ah-inbound-quick-edit-backdrop--over-combo' : ''
+            comboModal && !comboModal.overQuickEdit ? ' ah-inbound-quick-edit-backdrop--over-combo' : ''
           }`}
           role="presentation"
           onClick={(e) => {
