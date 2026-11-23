@@ -9835,6 +9835,7 @@ li.ah-inbound-suggest-empty {
   align-items: stretch;
 }
 
+.ah-combo-search-row .ah-combo-input,
 .ah-combo-search-row .ah-combo-search {
   flex: 1 1 auto;
   min-width: 0;

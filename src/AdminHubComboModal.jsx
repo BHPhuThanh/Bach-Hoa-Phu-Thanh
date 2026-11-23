@@ -67,6 +67,8 @@ export function AdminHubComboModal({
   onOpenProductQuickEdit,
 }) {
   const [scanOpen, setScanOpen] = useState(false)
+  /** Camera quét mã vạch cho chính combo (ô «Mã vạch / Barcode»). */
+  const [barcodeScanOpen, setBarcodeScanOpen] = useState(false)
   const [scanMsg, setScanMsg] = useState('')
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
@@ -405,12 +407,34 @@ export function AdminHubComboModal({
               </label>
               <label className="ah-combo-field ah-combo-field--full">
                 <span className="ah-combo-lbl">Mã vạch / Barcode</span>
-                <input
-                  className="ah-combo-input ah-combo-input--mono"
-                  value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
-                  placeholder="Nhập tay hoặc quét mã"
-                />
+                <div className="ah-combo-search-row">
+                  <input
+                    className="ah-combo-input ah-combo-input--mono"
+                    value={barcode}
+                    onChange={(e) => setBarcode(e.target.value)}
+                    placeholder="Nhập tay hoặc quét mã"
+                  />
+                  <button
+                    type="button"
+                    className="ah-combo-scan-btn"
+                    title="Quét mã vạch / QR bằng camera cho combo"
+                    aria-label="Quét mã vạch hoặc QR cho combo"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      setBarcodeScanOpen(true)
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    Quét mã
+                  </button>
+                </div>
               </label>
               <label className="ah-combo-field">
                 <span className="ah-combo-lbl">Đơn vị tính combo</span>
@@ -696,6 +720,16 @@ export function AdminHubComboModal({
           // Khớp → thêm dòng & đóng camera; không khớp → đóng, đưa mã vào ô tìm để chọn tay.
           addComponentFromScan(t)
           setScanOpen(false)
+        }}
+      />
+      <BarcodeScanModal
+        open={barcodeScanOpen}
+        title="Quét mã — mã vạch combo"
+        onClose={() => setBarcodeScanOpen(false)}
+        onScan={(t) => {
+          const code = String(normalizeBarcodeValue(t ?? '')).trim()
+          if (code) setBarcode(code)
+          setBarcodeScanOpen(false)
         }}
       />
     </div>
