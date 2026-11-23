@@ -82,6 +82,8 @@ export function AdminHubComboModal({
   const [comboWholesale, setComboWholesale] = useState('')
   const [comboCost, setComboCost] = useState('')
   const [costOverride, setCostOverride] = useState(false)
+  /** Người dùng đã tự sửa «Giá bán lẻ» → ngừng tự điền theo tổng giá thành phần (kể cả khi xoá trống). */
+  const comboPriceTouchedRef = useRef(false)
 
   /** Chỉ reset form khi mở/đổi mode hoặc đổi sản phẩm sửa — không phụ thuộc catalogList để tránh reset khi parent re-render. */
   useEffect(() => {
@@ -131,6 +133,7 @@ export function AdminHubComboModal({
     setComboWholesale('')
     setComboCost('')
     setCostOverride(false)
+    comboPriceTouchedRef.current = false
   }, [open, mode, initialDisplayProduct?.id])
 
   const bomForCost = useMemo(
@@ -156,10 +159,10 @@ export function AdminHubComboModal({
 
   useEffect(() => {
     if (!open || mode === 'edit') return
-    if (comboPrice.trim() !== '') return
+    if (comboPriceTouchedRef.current) return
     if (sumPartsRetail <= 0) return
     setComboPrice(formatMoneyDraftVi(sumPartsRetail))
-  }, [open, mode, sumPartsRetail, comboPrice])
+  }, [open, mode, sumPartsRetail])
 
   const pickHits = useMemo(() => {
     const rows = searchRowsExcludingCombos || []
@@ -630,7 +633,10 @@ export function AdminHubComboModal({
                   className="ah-combo-input ah-num"
                   inputMode="numeric"
                   value={comboPrice}
-                  onChange={(e) => setComboPrice(formatMoneyThousandsTyping(e.target.value))}
+                  onChange={(e) => {
+                    comboPriceTouchedRef.current = true
+                    setComboPrice(formatMoneyThousandsTyping(e.target.value))
+                  }}
                 />
               </label>
               <label className="ah-combo-field">

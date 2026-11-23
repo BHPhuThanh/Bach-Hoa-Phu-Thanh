@@ -2376,6 +2376,15 @@
   right: 0;
 }
 
+/* Điện thoại: nút Tạo mới nằm sát mép trái → mở menu sang phải để không tràn khỏi màn hình */
+@media (max-width: 768px) {
+  .ah-split-create-menu--toolbar-anchor {
+    left: 0;
+    right: auto;
+    max-width: calc(100vw - 32px);
+  }
+}
+
 .ah-split-create-menu button {
   display: block;
   width: 100%;
