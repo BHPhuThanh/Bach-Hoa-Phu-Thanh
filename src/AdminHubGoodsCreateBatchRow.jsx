@@ -44,12 +44,13 @@ function BarcodeInput({
   onPatch,
   onBlur,
   placeholder,
+  onScan,
   className = 'ah-goods-create-input ah-goods-create-input--barcode',
 }) {
   const errMsg = barcodeErrors[fieldKey]
   const inputClass = `${className}${errMsg ? ' ah-goods-create-input--err' : ''}`
   return (
-    <div className="ah-goods-create-batch-barcode-wrap">
+    <div className={`ah-goods-create-batch-barcode-wrap${typeof onScan === 'function' ? ' ah-goods-create-batch-barcode-wrap--scan' : ''}`}>
       <input
         className={inputClass}
         type="text"
@@ -61,6 +62,25 @@ function BarcodeInput({
         onChange={(e) => onPatch(e.target.value)}
         onBlur={onBlur}
       />
+      {typeof onScan === 'function' ? (
+        <button
+          type="button"
+          className="barcode-scan-trigger ah-goods-create-batch-scan"
+          aria-label="Quét mã vạch bằng camera"
+          title="Quét mã vạch / QR bằng camera"
+          onClick={onScan}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      ) : null}
       {errMsg ? (
         <span className="ah-goods-create-batch-field-err" role="alert">
           {errMsg}
@@ -79,6 +99,7 @@ function ExtraUnitsPanel({
   onAddExtra,
   onRemoveExtra,
   onBarcodeBlur,
+  onScanBarcode,
 }) {
   const units = row.donViTinh || []
   if (!row.extraUnitsOpen && units.length === 0) {
@@ -165,6 +186,7 @@ function ExtraUnitsPanel({
                 barcodeErrors={barcodeErrors}
                 onPatch={(v) => onPatchExtra(index, ui, 'barcode', v)}
                 onBlur={() => onBarcodeBlur(index, unit.unitId)}
+                onScan={onScanBarcode ? () => onScanBarcode(index, ui) : undefined}
                 placeholder="QR (tuỳ chọn)"
               />
             </label>
@@ -193,6 +215,7 @@ export default function AdminHubGoodsCreateBatchRow({
   onRemoveExtra,
   onRemove,
   onBarcodeBlur,
+  onScanBarcode,
   canRemove,
   rowLabel,
 }) {
@@ -242,6 +265,7 @@ export default function AdminHubGoodsCreateBatchRow({
               barcodeErrors={barcodeErrors}
               onPatch={(v) => onPatch(index, 'barcode', v)}
               onBlur={() => onBarcodeBlur(index, null)}
+              onScan={onScanBarcode ? () => onScanBarcode(index, null) : undefined}
             />
           </label>
           <div className="ah-goods-create-batch-card-row2">
@@ -309,6 +333,7 @@ export default function AdminHubGoodsCreateBatchRow({
             onAddExtra={onAddExtra}
             onRemoveExtra={onRemoveExtra}
             onBarcodeBlur={onBarcodeBlur}
+            onScanBarcode={onScanBarcode}
           />
         </div>
       </article>
@@ -356,6 +381,7 @@ export default function AdminHubGoodsCreateBatchRow({
             barcodeErrors={barcodeErrors}
             onPatch={(v) => onPatch(index, 'barcode', v)}
             onBlur={() => onBarcodeBlur(index, null)}
+              onScan={onScanBarcode ? () => onScanBarcode(index, null) : undefined}
             placeholder="QR"
           />
         </td>
@@ -419,6 +445,7 @@ export default function AdminHubGoodsCreateBatchRow({
             onAddExtra={onAddExtra}
             onRemoveExtra={onRemoveExtra}
             onBarcodeBlur={onBarcodeBlur}
+            onScanBarcode={onScanBarcode}
           />
         </td>
       </tr>

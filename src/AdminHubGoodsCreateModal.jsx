@@ -140,6 +140,8 @@ export default function AdminHubGoodsCreateModal({
   const [goodsNewMultiVariants, setGoodsNewMultiVariants] = useState(null)
   const [goodsNewBarcodeDupMsg, setGoodsNewBarcodeDupMsg] = useState('')
   const [goodsCreateBarcodeScanOpen, setGoodsCreateBarcodeScanOpen] = useState(false)
+  /** Ô mã vạch đang quét trong chế độ «Nhiều sản phẩm»: { rowIndex, unitIndex|null } */
+  const [batchScanTarget, setBatchScanTarget] = useState(null)
   const [goodsCreateSaving, setGoodsCreateSaving] = useState(false)
   const [goodsCreateSaveError, setGoodsCreateSaveError] = useState('')
   /** `single` = một SP; `batch` = nhiều dòng, mỗi dòng state độc lập (tên/mã/giá riêng). */
@@ -282,6 +284,25 @@ export default function AdminHubGoodsCreateModal({
       })
     },
     [recomputeBatchBarcodeErrors]
+  )
+
+  const openBatchBarcodeScan = useCallback((rowIndex, unitIndex = null) => {
+    setBatchScanTarget({ rowIndex, unitIndex })
+  }, [])
+
+  const applyBatchScannedBarcode = useCallback(
+    (raw) => {
+      const code = String(normalizeBarcodeValue(raw ?? '')).trim()
+      const target = batchScanTarget
+      setBatchScanTarget(null)
+      if (!code || !target) return
+      if (target.unitIndex == null) {
+        patchGoodsCreateBatchRowField(target.rowIndex, 'barcode', code)
+      } else {
+        patchGoodsCreateBatchExtraField(target.rowIndex, target.unitIndex, 'barcode', code)
+      }
+    },
+    [batchScanTarget, patchGoodsCreateBatchRowField, patchGoodsCreateBatchExtraField]
   )
 
   const addGoodsCreateBatchExtraUnitRow = useCallback((rowIndex) => {
@@ -1057,6 +1078,7 @@ export default function AdminHubGoodsCreateModal({
                               onAddExtra={addGoodsCreateBatchExtraUnitRow}
                               onRemoveExtra={removeGoodsCreateBatchExtraUnitRow}
                               onBarcodeBlur={runBatchBarcodeCheck}
+                              onScanBarcode={openBatchBarcodeScan}
                               onRemove={removeGoodsCreateBatchRow}
                               canRemove={goodsCreateBatchRows.length > 1}
                             />
@@ -1080,6 +1102,7 @@ export default function AdminHubGoodsCreateModal({
                         onAddExtra={addGoodsCreateBatchExtraUnitRow}
                         onRemoveExtra={removeGoodsCreateBatchExtraUnitRow}
                         onBarcodeBlur={runBatchBarcodeCheck}
+                        onScanBarcode={openBatchBarcodeScan}
                         onRemove={removeGoodsCreateBatchRow}
                         canRemove={goodsCreateBatchRows.length > 1}
                       />
@@ -1718,6 +1741,18 @@ export default function AdminHubGoodsCreateModal({
         onClose={() => setGoodsCreateBarcodeScanOpen(false)}
         title="Quét mã — mã vạch sản phẩm mới"
         onScan={applyGoodsCreateScannedBarcode}
+      />
+      <BarcodeScanModal
+        open={batchScanTarget != null}
+        onClose={() => setBatchScanTarget(null)}
+        title={
+          batchScanTarget
+            ? `Quét mã — sản phẩm ${batchScanTarget.rowIndex + 1}${
+                batchScanTarget.unitIndex != null ? ' (ĐVT quy đổi)' : ''
+              }`
+            : 'Quét mã'
+        }
+        onScan={applyBatchScannedBarcode}
       />
     </>
   )

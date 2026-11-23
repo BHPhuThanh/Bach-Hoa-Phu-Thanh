@@ -7303,6 +7303,23 @@ li.ah-inbound-suggest-empty {
   min-width: 0;
 }
 
+.ah-goods-create-batch-barcode-wrap--scan {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.35rem;
+}
+
+.ah-goods-create-batch-barcode-wrap--scan .ah-goods-create-batch-field-err {
+  grid-column: 1 / -1;
+}
+
+.ah-goods-create-batch-scan.barcode-scan-trigger {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
 .ah-goods-create-batch-add-unit {
   display: inline-flex;
   align-items: center;
