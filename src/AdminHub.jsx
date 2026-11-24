@@ -3562,9 +3562,9 @@ export default function AdminHub({
         Number.isFinite(Number(v.conversion))
           ? String(v.conversion)
           : String(v.raw?.quy_doi ?? v.quy_doi ?? prev?.conversion ?? '1')
-      const quyDoiNum = Math.max(1, Number(quy_doi) || 1)
+      /* ton_kho dùng chung cả nhóm theo đơn vị cơ bản — ĐVT mới nhận nguyên số gốc, không chia quy đổi. */
       const ton_kho = isNewRow
-        ? parseFloat((tonKhoGoc / quyDoiNum).toFixed(3))
+        ? parseFloat(tonKhoGoc.toFixed(3))
         : sqRaw != null && sqRaw !== '' && Number.isFinite(sqNum)
           ? parseFloat(Math.max(0, sqNum).toFixed(3))
           : 0

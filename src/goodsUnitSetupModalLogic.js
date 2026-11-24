@@ -103,12 +103,13 @@ function newCatalogVariantId() {
     : `v-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
 }
 
-/** Tồn kho ĐVT theo đơn vị cơ bản: ton_kho_goc / quy_doi (tối đa 3 chữ số thập phân). */
-export function deriveUnitStockQtyFromBase(baseStockRaw, conversion) {
+/**
+ * `ton_kho` của MỌI ĐVT trong nhóm là cùng một số theo đơn vị cơ bản (hiển thị = ton_kho / quy_doi).
+ * Không chia trước theo quy đổi — nếu chia ở đây thì lưới chia thêm lần nữa (10 hộp → 0,1 thùng).
+ */
+export function baseUnitStockQty(baseStockRaw) {
   const baseNum = Number(baseStockRaw)
-  const tonKhoGoc = Number.isFinite(baseNum) ? Math.max(0, baseNum) : 0
-  const quyDoiNum = Math.max(1, parsePositiveConversion(conversion) ?? 1)
-  return parseFloat((tonKhoGoc / quyDoiNum).toFixed(3))
+  return Number.isFinite(baseNum) ? parseFloat(Math.max(0, baseNum).toFixed(3)) : 0
 }
 
 /**
@@ -171,8 +172,9 @@ export function buildCatalogVariantsFromUnitModal({
       conversionValue: conv,
       cost,
       price,
-      wholesalePrice: Number(templateVariant?.wholesalePrice) || 0,
-      stockQty: deriveUnitStockQtyFromBase(baseStockRaw, conv),
+      /* Giá sỉ chỉ thuộc ĐVT gốc — ĐVT mới không chép giá sỉ của gốc. */
+      wholesalePrice: i === 0 ? Number(templateVariant?.wholesalePrice) || 0 : 0,
+      stockQty: baseUnitStockQty(baseStockRaw),
       supplier: String(templateVariant?.supplier ?? '').trim(),
       brand: String(templateVariant?.brand ?? '').trim(),
       linkedMasterCode: i === 0 ? '' : rootCode,

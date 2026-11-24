@@ -564,8 +564,31 @@ export default function AdminHubGoodsCreateModal({
         }
       }
       const brandTrim = String(goodsNewBrand ?? '').trim()
+      /* Ô Tồn kho / Giá sỉ trên form có thể sửa SAU khi thiết lập ĐVT: lấy giá trị mới nhất.
+         ton_kho cả nhóm = cùng một số theo đơn vị cơ bản; giá sỉ chỉ cho ĐVT gốc. */
+      const formStockQty = Math.max(0, parseMoneyDraftVi(goodsNewStock))
+      const formWholesale = parseMoneyDraftVi(goodsNewWholesale)
+      const baseVariant = sortVariantsSmallestUnitFirst(goodsNewMultiVariants)[0]
+      const baseVariantId = String(baseVariant?.id ?? '')
+      /* Giá bán lẻ / Giá vốn trên form cũng sửa được sau khi thiết lập ĐVT → ĐVT gốc lấy số trên form;
+         ĐVT khác: nếu đang là giá tự tính theo gốc cũ (hoặc 0) thì tính lại theo gốc mới × quy đổi,
+         còn giá đã nhập tay khác đi thì giữ nguyên. */
+      const formPrice = parseMoneyDraftVi(goodsNewPrice)
+      const formCost = parseMoneyDraftVi(goodsNewCost)
+      const baseConv = parsePositiveConversion(baseVariant?.conversion) ?? 1
+      const oldBasePrice = Number(baseVariant?.price) || 0
+      const oldBaseCost = Number(baseVariant?.cost) || 0
+      const syncMoney = (cur, oldBase, nextBase, ratio) => {
+        const c = Number(cur) || 0
+        if (c === 0 || c === Math.round(oldBase * ratio)) return Math.round(nextBase * ratio)
+        return c
+      }
       const rows = applyExpiryToVariants(
         goodsNewMultiVariants.map((v) => {
+          const isBase = String(v.id ?? '') === baseVariantId
+          const ratio = (parsePositiveConversion(v.conversion) ?? 1) / baseConv
+          const price = isBase ? formPrice : syncMoney(v.price, oldBasePrice, formPrice, ratio)
+          const cost = isBase ? formCost : syncMoney(v.cost, oldBaseCost, formCost, ratio)
           const rowName =
             String(v.name ?? v.nameRaw ?? '')
               .replace(/\u00A0/g, ' ')
@@ -576,6 +599,10 @@ export default function AdminHubGoodsCreateModal({
             name: rowName,
             nameRaw: rowName,
             brand: brandTrim || String(v.brand ?? '').trim(),
+            price,
+            cost,
+            stockQty: formStockQty,
+            wholesalePrice: isBase ? formWholesale : Number(v.wholesalePrice) || 0,
           }
         })
       )
