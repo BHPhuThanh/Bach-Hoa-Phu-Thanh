@@ -564,8 +564,14 @@ export default function AdminHubGoodsCreateModal({
         }
       }
       const brandTrim = String(goodsNewBrand ?? '').trim()
+      /* Ô Tồn kho / Giá sỉ trên form có thể sửa SAU khi thiết lập ĐVT: lấy giá trị mới nhất.
+         ton_kho cả nhóm = cùng một số theo đơn vị cơ bản; giá sỉ chỉ cho ĐVT gốc. */
+      const formStockQty = Math.max(0, parseMoneyDraftVi(goodsNewStock))
+      const formWholesale = parseMoneyDraftVi(goodsNewWholesale)
+      const baseVariantId = String(sortVariantsSmallestUnitFirst(goodsNewMultiVariants)[0]?.id ?? '')
       const rows = applyExpiryToVariants(
         goodsNewMultiVariants.map((v) => {
+          const isBase = String(v.id ?? '') === baseVariantId
           const rowName =
             String(v.name ?? v.nameRaw ?? '')
               .replace(/\u00A0/g, ' ')
@@ -576,6 +582,8 @@ export default function AdminHubGoodsCreateModal({
             name: rowName,
             nameRaw: rowName,
             brand: brandTrim || String(v.brand ?? '').trim(),
+            stockQty: formStockQty,
+            wholesalePrice: isBase ? formWholesale : Number(v.wholesalePrice) || 0,
           }
         })
       )
