@@ -152,25 +152,33 @@ export async function upsertInboundHistoryEntry(order) {
       if (found.error) throw found.error
       const existingRow = Array.isArray(found.data) ? found.data[0] : null
       if (existingRow?.id) {
+        // Không dùng `.single()`: khi UPDATE khớp 0 dòng (RLS/policy UPDATE trên DB thật chặn, hoặc
+        // trigger huỷ) PostgREST trả 406 «Cannot coerce the result to a single JSON object».
         const upd = await sb
           .from(INBOUND_HISTORY_TABLE)
           .update(insertPayload)
           .eq('id', existingRow.id)
           .select('id, created_at, order_code, payload')
-          .single()
         if (upd.error) throw upd.error
-        return upd.data
+        const updatedRow = Array.isArray(upd.data) ? upd.data[0] : null
+        if (updatedRow) return updatedRow
+        // UPDATE không ghi được dòng nào → ghi dòng mới cho phiếu (danh sách luôn lấy bản MỚI NHẤT
+        // theo `payload->>id`, nên phiếu vẫn hiện đúng trạng thái trên mọi máy).
+        console.warn(
+          '[inbound_history] UPDATE không khớp dòng nào (kiểm tra policy UPDATE của bảng inbound_history) — ghi dòng mới thay thế.',
+          { rowId: existingRow.id, orderId: payload.id }
+        )
       }
       const res = await sb
         .from(INBOUND_HISTORY_TABLE)
         .insert(insertPayload)
         .select('id, created_at, order_code, payload')
-        .single()
-      if (!res.error) return res.data
+      const insertedRow = Array.isArray(res.data) ? res.data[0] : null
+      if (!res.error && insertedRow) return insertedRow
       // Trước khi retry: kiểm tra phiếu này đã tồn tại chưa (xem comment hàm tìm ở trên).
       const existing = await findInboundHistoryEntryByOrderId(sb, payload.id)
       if (existing) return existing
-      throw res.error
+      throw res.error || new Error('Không ghi được phiếu vào «inbound_history» (máy chủ không trả về dòng nào).')
     })
 
     const persisted =
