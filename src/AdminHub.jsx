@@ -6116,6 +6116,15 @@ export default function AdminHub({
     })
   }, [])
 
+  /** Xóa dòng khỏi bản nháp sửa chi tiết phiếu (chỉ dùng cho phiếu chưa cộng tồn — vd. Lưu tạm). */
+  const removeInboundDetailDraftLine = useCallback((orderId, lineId) => {
+    setInboundDetailLineDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur) return prev
+      return { ...prev, [orderId]: cur.filter((l) => l.lineId !== lineId) }
+    })
+  }, [])
+
   const changeInboundDetailDraftUnit = useCallback((orderId, line, newLabelRaw) => {
     const res = applyInboundLineUnitChange(catalogListForInbound, line, newLabelRaw)
     if (!res.ok || !res.changed) return
@@ -9980,7 +9989,23 @@ export default function AdminHub({
                                   {renderInboundLineCodeLink(ln, openInboundProductQuickEdit, catalogListForInbound)}
                                 </td>
                                 <td className="ah-inbound-detail-line-name" data-label="Tên hàng">
-                                  {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                  {inboundDetailIsEditing &&
+                                  !inboundStatusAppliedStock(inboundDetailOrderRow.status) ? (
+                                    <span className="ah-inbound-detail-line-name-wrap">
+                                      <button
+                                        type="button"
+                                        className="ah-inbound-row-del ah-inbound-detail-line-del"
+                                        aria-label={`Xóa dòng ${ln.name || ln.code}`}
+                                        title="Xóa dòng"
+                                        onClick={() => removeInboundDetailDraftLine(inboundDetailTabOid, ln.lineId)}
+                                      >
+                                        ×
+                                      </button>
+                                      {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                    </span>
+                                  ) : (
+                                    renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)
+                                  )}
                                 </td>
                                 <td className="ah-inbound-ln-dvt-cell" data-label="ĐVT">
                                   {inboundDetailIsEditing ? (
