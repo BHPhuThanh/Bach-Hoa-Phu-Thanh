@@ -867,6 +867,20 @@ function inboundOrderCanPartialReturn(r) {
   return row.lines.some((l) => inboundLineReturnableQty(l) > 0 && l.variantId)
 }
 
+/**
+ * Phiếu đã thực sự cộng tồn / tính giá vốn chưa. Phiếu Lưu tạm / Phiếu tạm / Đang nhập / Hủy CHƯA
+ * ghi gì vào tồn kho — khi Hoàn thành phải tính toàn bộ dòng là nhập mới (không trừ "dòng cũ").
+ */
+function inboundStatusAppliedStock(status) {
+  return status === 'completed' || status === 'returned_partial' || status === 'returned_full'
+}
+
+/** Dòng "đã ghi vào tồn" của phiếu cũ — dùng làm mốc tính chênh lệch khi sửa phiếu. */
+function inboundPriorAppliedLines(row) {
+  if (!row || !inboundStatusAppliedStock(row.status)) return undefined
+  return Array.isArray(row.lines) && row.lines.length ? row.lines : undefined
+}
+
 /** Trạng thái hiển thị sau khi lưu dòng (giữ Hoàn trả một phần / toàn bộ nếu còn returnedQty). */
 function computeInboundStatusAfterLines(lines) {
   const ns = (lines || []).map(normalizeInboundLine)
@@ -5541,8 +5555,9 @@ export default function AdminHub({
       try {
         const linesSnap = inboundFormLinesRef.current
         const catSnap = catalogForInboundRef.current
+        // Phiếu Lưu tạm chưa cộng tồn → không lấy dòng cũ làm mốc (nếu không, chênh lệch = 0).
         const priorLines = inboundFormEditOrderId
-          ? inboundOrders.find((o) => o.id === inboundFormEditOrderId)?.lines
+          ? inboundPriorAppliedLines(inboundOrders.find((o) => o.id === inboundFormEditOrderId))
           : null
         const codes = collectInboundMaHangCodes(catSnap, linesSnap)
         let serverMap = new Map()
@@ -6101,6 +6116,15 @@ export default function AdminHub({
     })
   }, [])
 
+  /** Xóa dòng khỏi bản nháp sửa chi tiết phiếu (chỉ dùng cho phiếu chưa cộng tồn — vd. Lưu tạm). */
+  const removeInboundDetailDraftLine = useCallback((orderId, lineId) => {
+    setInboundDetailLineDrafts((prev) => {
+      const cur = prev[orderId]
+      if (!cur) return prev
+      return { ...prev, [orderId]: cur.filter((l) => l.lineId !== lineId) }
+    })
+  }, [])
+
   const changeInboundDetailDraftUnit = useCallback((orderId, line, newLabelRaw) => {
     const res = applyInboundLineUnitChange(catalogListForInbound, line, newLabelRaw)
     if (!res.ok || !res.changed) return
@@ -6168,7 +6192,8 @@ export default function AdminHub({
         catSnap,
         normLines,
         serverMap,
-        prevRow.lines
+        // Phiếu Lưu tạm chưa cộng tồn → toàn bộ dòng là nhập mới khi Hoàn thành.
+        inboundPriorAppliedLines(prevRow)
       )
       patches = applyTonNhoNhatFromInboundLinesToPatches(patches, normLines)
       if (!patches?.length) {
@@ -9964,7 +9989,23 @@ export default function AdminHub({
                                   {renderInboundLineCodeLink(ln, openInboundProductQuickEdit, catalogListForInbound)}
                                 </td>
                                 <td className="ah-inbound-detail-line-name" data-label="Tên hàng">
-                                  {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                  {inboundDetailIsEditing &&
+                                  !inboundStatusAppliedStock(inboundDetailOrderRow.status) ? (
+                                    <span className="ah-inbound-detail-line-name-wrap">
+                                      <button
+                                        type="button"
+                                        className="ah-inbound-row-del ah-inbound-detail-line-del"
+                                        aria-label={`Xóa dòng ${ln.name || ln.code}`}
+                                        title="Xóa dòng"
+                                        onClick={() => removeInboundDetailDraftLine(inboundDetailTabOid, ln.lineId)}
+                                      >
+                                        ×
+                                      </button>
+                                      {renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)}
+                                    </span>
+                                  ) : (
+                                    renderInboundLineNameButton(ln, openInboundProductQuickEdit, catalogListForInbound)
+                                  )}
                                 </td>
                                 <td className="ah-inbound-ln-dvt-cell" data-label="ĐVT">
                                   {inboundDetailIsEditing ? (

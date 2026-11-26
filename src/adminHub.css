@@ -4488,6 +4488,21 @@ a.ah-inbound-line-code-link:hover {
   background: rgba(248, 113, 113, 0.22);
 }
 
+/* Nút X đầu tên hàng — chế độ sửa chi tiết phiếu Lưu tạm */
+.ah-inbound-detail-line-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ah-inbound-detail-line-del {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  font-size: 1.1rem;
+}
+
 .ah-inbound-cell-input {
   width: 100%;
   max-width: 7.5rem;
