@@ -23,7 +23,9 @@ const MODULE_SRC_RE = /<script[^>]*type=["']module["'][^>]*\ssrc=["']([^"']+)["'
 const CHECK_INTERVAL_MS = 15 * 60 * 1000
 
 function currentModuleScriptSrc() {
-  return document.querySelector('script[type="module"]')?.getAttribute('src') || ''
+  // `[src]`: bỏ qua script module inline do trình duyệt/webview (Zalo, Facebook, dịch trang…) chèn
+  // vào trước — trùng regex phía server (cũng chỉ bắt script module có src).
+  return document.querySelector('script[type="module"][src]')?.getAttribute('src') || ''
 }
 
 async function fetchLatestModuleScriptSrc() {
@@ -77,9 +79,16 @@ export function useAppUpdateAvailable() {
       if (document.visibilityState === 'visible') check()
     }, CHECK_INTERVAL_MS)
 
+    // `controllerchange` KHÔNG đồng nghĩa có bản mới: nó cũng nổ khi SW lần đầu `clients.claim()`
+    // trang (trang mở lúc chưa có SW điều khiển). Trên điện thoại chuyện này rất hay xảy ra — hệ
+    // điều hành/trình duyệt dọn SW khi thiếu bộ nhớ, iOS xoá dữ liệu PWA, mở từ Zalo/Facebook… —
+    // nên trước đây cứ mở app là báo "có bản cập nhật" dù không có. Giờ chỉ coi đây là gợi ý để dò
+    // lại `index.html` ngay; banner chỉ hiện khi tên bundle JS thật sự khác.
     let onControllerChange
     if ('serviceWorker' in navigator) {
-      onControllerChange = () => markFound()
+      onControllerChange = () => {
+        check()
+      }
       navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
     }
 

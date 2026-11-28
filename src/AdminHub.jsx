@@ -2059,6 +2059,33 @@ export default function AdminHub({
   useEffect(() => {
     if (activeTab !== TAB_GOODS) setGoodsMobileFiltersOpen(false)
   }, [activeTab])
+  /**
+   * Ctrl+F / Cmd+F trên tab Hàng hóa → nhảy vào ô tìm kiếm của app.
+   * Lưới hàng hóa là danh sách ảo (react-window) — chỉ ~20 dòng đang hiện mới có trong DOM, nên
+   * Ctrl+F của trình duyệt hay báo 0/0 (không thấy hàng ngoài màn hình, cuộn xong cũng không tự
+   * tìm lại). Ô tìm của app lọc trên toàn bộ danh mục. Đang đứng trong ô tìm mà bấm Ctrl+F lần nữa
+   * thì để trình duyệt xử lý như bình thường.
+   */
+  const goodsSearchInputRef = useRef(null)
+  useEffect(() => {
+    if (activeTab !== TAB_GOODS) return undefined
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (String(e.key).toLowerCase() !== 'f') return
+      const input = goodsSearchInputRef.current
+      if (!input || !input.isConnected || document.activeElement === input) return
+      // Có modal/panel đè lên ô tìm (vd. Sửa nhanh sản phẩm) → để Ctrl+F của trình duyệt làm việc.
+      const rect = input.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      if (hit !== input && !input.contains(hit)) return
+      e.preventDefault()
+      input.focus()
+      input.select()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeTab])
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 768px)')
     const on = () => {
@@ -8172,6 +8199,7 @@ export default function AdminHub({
                 <div className="ah-goods-toolbar__row1-search ah-goods-toolbar__row1-search--with-loc">
                   <div className="ah-goods-search-combo ah-goods-search-combo--clearable">
                     <input
+                      ref={goodsSearchInputRef}
                       className="ah-goods-search ah-goods-search--with-scan"
                       type="search"
                       placeholder="Tìm kiếm sản phẩm (mã, tên)…"
