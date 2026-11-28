@@ -4933,6 +4933,9 @@ export default function App({ standaloneInboundCreate = false } = {}) {
         return true
       const ae = document.activeElement
       if (ae && ae === headerSearchRef.current) return true
+      // Ô chọn ĐVT trên dòng giỏ: sau khi chọn đơn vị, focus vẫn nằm ở <select> — trước đây chặn luôn
+      // máy quét, phải bấm ESC mới quét tiếp. <select> không gõ chữ được nên cho quét bình thường.
+      if (ae?.tagName === 'SELECT' && ae.classList.contains('pos-dvt-select')) return false
       if (ae && isEditableFieldElement(ae)) return true
       if (ae?.closest?.('[aria-modal="true"]')) return true
       return false
@@ -5411,6 +5414,26 @@ export default function App({ standaloneInboundCreate = false } = {}) {
 
   const onCartQtyInputKeyDown = useCallback(
     (e, lineId, idx) => {
+      // Enter: chốt số lượng dòng này rồi xuống ô SL dòng dưới; dòng cuối thì rời ô (lưu SL) để
+      // máy quét / phím tắt dùng được tiếp.
+      if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault()
+        const nextIdx = idx + 1
+        if (nextIdx >= cartRef.current.length) {
+          e.currentTarget.blur()
+          return
+        }
+        const nid = cartRef.current[nextIdx].lineId
+        setSelectedCartLineId(nid)
+        setSelectedItemIndex(nextIdx)
+        queueMicrotask(() => {
+          const el = cartQtyInputRefs.current.get(nid)
+          el?.focus()
+          el?.select()
+          scrollCartLineIntoView(nid)
+        })
+        return
+      }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault()
         const dir = e.key === 'ArrowDown' ? 1 : -1
@@ -7437,7 +7460,11 @@ export default function App({ standaloneInboundCreate = false } = {}) {
                           <select
                             className="pos-dvt-select pos-dvt-select--cart"
                             value={l.variantId}
-                            onChange={(e) => setLineVariant(l.lineId, e.target.value)}
+                            onChange={(e) => {
+                              setLineVariant(l.lineId, e.target.value)
+                              // Trả focus về trang để phím tắt / máy quét chạy ngay, khỏi phải bấm ESC.
+                              e.currentTarget.blur()
+                            }}
                             aria-label="Đơn vị tính"
                           >
                             {l.variantOptions.map((o) => (
